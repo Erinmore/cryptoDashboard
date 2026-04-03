@@ -80,8 +80,15 @@ async function loadData() {
   const { coin, tf } = getState();
 
   setLoading(true);
+  console.log('[CRYPTEX] loadData start:', { coin, tf });
   try {
     const data = await fetchData(coin, tf);
+    console.log('[CRYPTEX] loadData received:', {
+      candles: data.candles?.length,
+      hasTechnical: !!data.technical,
+      techKeys: Object.keys(data.technical || {}),
+      hasTfData: !!data.technical?.[tf],
+    });
 
     const newCandles = data.candles ?? [];
     const prevVP     = getState().viewport;

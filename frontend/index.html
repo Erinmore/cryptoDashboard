@@ -70,40 +70,42 @@
       <!-- Sentimiento -->
       <section class="sidebar-section" id="sentiment-panel">
         <h3 class="section-title" data-icon="🔮">Sentimiento</h3>
-        <div class="sentiment-row">
-          <span class="sent-label" title="Fear &amp; Greed Index — Índice de Miedo y Codicia (0–100). Mide el estado emocional colectivo del mercado cripto combinando 6 fuentes: volatilidad del precio, momentum del mercado, redes sociales, dominancia de Bitcoin, volumen y encuestas. Es un indicador contrario: los extremos suelen marcar puntos de giro. 0–24 (Extreme Fear, rojo): el pánico domina, muchos inversores venden impulsados por el miedo. Históricamente estos niveles coinciden con suelos de mercado y oportunidades de compra. 25–49 (Fear): precaución, más vendedores que compradores. 50–74 (Greed): optimismo, el mercado está comprando con entusiasmo. 75–100 (Extreme Greed, verde): euforia. Todo el mundo quiere comprar, lo que históricamente suele coincidir con techos de mercado. Regla clásica de Warren Buffett aplicada a cripto: 'sé codicioso cuando otros tienen miedo, y ten miedo cuando otros son codiciosos'.">Fear &amp; Greed</span>
-          <span id="fear-greed-value" class="sent-value">—</span>
-          <span id="fear-greed-label" class="sent-signal">—</span>
-        </div>
-        <div class="sentiment-row">
-          <span class="sent-label" title="CryptoPanic — Sentimiento de noticias en tiempo real. Analiza las noticias más relevantes de cripto y cuenta los votos bullish (alcistas) y bearish (bajistas) que la comunidad asigna a cada noticia. El score (0–1) indica la proporción de votos positivos: 0.5 = equilibrio exacto entre compradores y vendedores, mayor de 0.5 = más noticias positivas que negativas, menor de 0.5 = más negativas. La barra verde/roja visualiza esa proporción de forma intuitiva. Limitación: requiere suscripción de pago a CryptoPanic para recibir datos en tiempo real.">CryptoPanic</span>
-          <span id="cryptopanic-score" class="sent-value">—</span>
-          <div class="votes-bar" id="votes-bar">
-            <div class="votes-bullish" id="votes-bullish" style="width:50%"></div>
-            <div class="votes-bearish" id="votes-bearish" style="width:50%"></div>
+        <div class="section-body">
+          <div class="sentiment-row">
+            <span class="sent-label" title="Fear &amp; Greed Index — Índice de Miedo y Codicia (0–100). Mide el estado emocional colectivo del mercado cripto combinando 6 fuentes: volatilidad del precio, momentum del mercado, redes sociales, dominancia de Bitcoin, volumen y encuestas. Es un indicador contrario: los extremos suelen marcar puntos de giro. 0–24 (Extreme Fear, rojo): el pánico domina, muchos inversores venden impulsados por el miedo. Históricamente estos niveles coinciden con suelos de mercado y oportunidades de compra. 25–49 (Fear): precaución, más vendedores que compradores. 50–74 (Greed): optimismo, el mercado está comprando con entusiasmo. 75–100 (Extreme Greed, verde): euforia. Todo el mundo quiere comprar, lo que históricamente suele coincidir con techos de mercado. Regla clásica de Warren Buffett aplicada a cripto: 'sé codicioso cuando otros tienen miedo, y ten miedo cuando otros son codiciosos'.">Fear &amp; Greed</span>
+            <span id="fear-greed-value" class="sent-value">—</span>
+            <span id="fear-greed-label" class="sent-signal">—</span>
           </div>
-        </div>
+          <div class="sentiment-row">
+            <span class="sent-label" title="CryptoPanic — Sentimiento de noticias en tiempo real. Analiza las noticias más relevantes de cripto y cuenta los votos bullish (alcistas) y bearish (bajistas) que la comunidad asigna a cada noticia. El score (0–1) indica la proporción de votos positivos: 0.5 = equilibrio exacto entre compradores y vendedores, mayor de 0.5 = más noticias positivas que negativas, menor de 0.5 = más negativas. La barra verde/roja visualiza esa proporción de forma intuitiva. Limitación: requiere suscripción de pago a CryptoPanic para recibir datos en tiempo real.">CryptoPanic</span>
+            <span id="cryptopanic-score" class="sent-value">—</span>
+            <div class="votes-bar" id="votes-bar">
+              <div class="votes-bullish" id="votes-bullish" style="width:50%"></div>
+              <div class="votes-bearish" id="votes-bearish" style="width:50%"></div>
+            </div>
+          </div>
 
-        <!-- Noticias CryptoPanic -->
-        <div id="news-list" class="news-list"></div>
+          <!-- Noticias CryptoPanic -->
+          <div id="news-list" class="news-list"></div>
 
-        <!-- Derivados (Coinalyze) -->
-        <div class="derivatives-block" id="derivatives-block">
-          <div class="sentiment-row">
-            <span class="sent-label" title="Funding Rate — Tasa de financiación de contratos perpetuos. Los perpetuos son contratos de futuros sin fecha de vencimiento. Para que su precio se mantenga anclado al precio real (spot), los exchanges cobran una tasa periódica (cada 8 horas) entre posiciones largas y cortas. Positivo (verde): los que apuestan al alza (longs) pagan a los que apuestan a la baja (shorts). Significa que hay más demanda de longs que de shorts → mercado sesgado alcista, pero con riesgo de liquidaciones en cascada si el precio baja. Negativo (rojo): los shorts pagan a los longs → más posiciones bajistas abiertas, mercado sesgado a la baja. Cerca de 0%: equilibrio entre longs y shorts. Valores extremos (+0.1% o más, o -0.05% o menos) suelen preceder correcciones porque muchas posiciones están apalancadas en la misma dirección.">Funding Rate</span>
-            <span id="funding-rate" class="sent-value">—</span>
-          </div>
-          <div class="sentiment-row">
-            <span class="sent-label" title="Open Interest — Interés abierto en contratos de futuros perpetuos. Es la cantidad total de dinero (en USD) que está actualmente comprometida en posiciones de futuros abiertas (tanto longs como shorts) en todos los exchanges. Un OI alto significa que muchos traders están apalancados → el mercado es más volátil porque cualquier movimiento brusco puede desencadenar liquidaciones en cadena. Un OI que sube junto al precio indica convicción en la tendencia (nuevo dinero entrando). Un OI que sube pero el precio no sube puede indicar acumulación de shorts esperando una caída. Un OI que cae bruscamente mientras el precio cae indica liquidaciones masivas de longs (capitulación). Dato: Coinalyze agrega datos de múltiples exchanges para dar una visión global del mercado de derivados.">Open Interest</span>
-            <span id="open-interest" class="sent-value">—</span>
-          </div>
-          <div class="sentiment-row">
-            <span class="sent-label" title="Long/Short Ratio — Proporción de posiciones largas vs cortas. Muestra qué porcentaje de los traders de futuros está apostando al alza (long) y cuántos a la baja (short) en este momento. Es un indicador contrario: cuando la mayoría apuesta en la misma dirección, el mercado tiende a moverse en sentido contrario para 'cazar' sus stops. Más del 60% de longs: mercado muy sesgado al alza → riesgo de squeeze bajista (caída brusca para liquidar longs). Menos del 40% de longs (más del 60% shorts): mercado sesgado a la baja → riesgo de short squeeze (subida brusca para liquidar shorts). Zona 45–55%: equilibrio razonable, sin sesgo extremo. Útil combinado con Funding Rate: FR positivo + L/S alto en longs = señal de alerta de corrección inminente.">L/S Ratio</span>
-            <span id="long-short" class="sent-value">—</span>
-          </div>
-          <div class="sentiment-row">
-            <span class="sent-label" title="Liquidaciones 24h — Posiciones forzadas a cerrar en las últimas 24 horas. Cuando el precio se mueve bruscamente en una dirección, los traders apalancados que apostaron en la dirección contraria no pueden mantener sus posiciones y el exchange las cierra automáticamente (liquidación). L (longs liquidados): posiciones alcistas destruidas porque el precio cayó. Un número alto indica que ha habido una caída fuerte y muchos compradores apalancados han sido barridos — puede señalar capitulación y posible suelo. S (shorts liquidados): posiciones bajistas destruidas porque el precio subió (short squeeze). Un short squeeze con mucho volumen puede alimentar subidas explosivas. Cuanto mayor el volumen total de liquidaciones, más violento fue el movimiento. Dato aportado por Coinalyze agregando múltiples exchanges.">Liq 24h</span>
-            <span id="liquidations" class="sent-value">—</span>
+          <!-- Derivados (Coinalyze) -->
+          <div class="derivatives-block" id="derivatives-block">
+            <div class="sentiment-row">
+              <span class="sent-label" title="Funding Rate — Tasa de financiación de contratos perpetuos. Los perpetuos son contratos de futuros sin fecha de vencimiento. Para que su precio se mantenga anclado al precio real (spot), los exchanges cobran una tasa periódica (cada 8 horas) entre posiciones largas y cortas. Positivo (verde): los que apuestan al alza (longs) pagan a los que apuestan a la baja (shorts). Significa que hay más demanda de longs que de shorts → mercado sesgado alcista, pero con riesgo de liquidaciones en cascada si el precio baja. Negativo (rojo): los shorts pagan a los longs → más posiciones bajistas abiertas, mercado sesgado a la baja. Cerca de 0%: equilibrio entre longs y shorts. Valores extremos (+0.1% o más, o -0.05% o menos) suelen preceder correcciones porque muchas posiciones están apalancadas en la misma dirección.">Funding Rate</span>
+              <span id="funding-rate" class="sent-value">—</span>
+            </div>
+            <div class="sentiment-row">
+              <span class="sent-label" title="Open Interest — Interés abierto en contratos de futuros perpetuos. Es la cantidad total de dinero (en USD) que está actualmente comprometida en posiciones de futuros abiertas (tanto longs como shorts) en todos los exchanges. Un OI alto significa que muchos traders están apalancados → el mercado es más volátil porque cualquier movimiento brusco puede desencadenar liquidaciones en cadena. Un OI que sube junto al precio indica convicción en la tendencia (nuevo dinero entrando). Un OI que sube pero el precio no sube puede indicar acumulación de shorts esperando una caída. Un OI que cae bruscamente mientras el precio cae indica liquidaciones masivas de longs (capitulación). Dato: Coinalyze agrega datos de múltiples exchanges para dar una visión global del mercado de derivados.">Open Interest</span>
+              <span id="open-interest" class="sent-value">—</span>
+            </div>
+            <div class="sentiment-row">
+              <span class="sent-label" title="Long/Short Ratio — Proporción de posiciones largas vs cortas. Muestra qué porcentaje de los traders de futuros está apostando al alza (long) y cuántos a la baja (short) en este momento. Es un indicador contrario: cuando la mayoría apuesta en la misma dirección, el mercado tiende a moverse en sentido contrario para 'cazar' sus stops. Más del 60% de longs: mercado muy sesgado al alza → riesgo de squeeze bajista (caída brusca para liquidar longs). Menos del 40% de longs (más del 60% shorts): mercado sesgado a la baja → riesgo de short squeeze (subida brusca para liquidar shorts). Zona 45–55%: equilibrio razonable, sin sesgo extremo. Útil combinado con Funding Rate: FR positivo + L/S alto en longs = señal de alerta de corrección inminente.">L/S Ratio</span>
+              <span id="long-short" class="sent-value">—</span>
+            </div>
+            <div class="sentiment-row">
+              <span class="sent-label" title="Liquidaciones 24h — Posiciones forzadas a cerrar en las últimas 24 horas. Cuando el precio se mueve bruscamente en una dirección, los traders apalancados que apostaron en la dirección contraria no pueden mantener sus posiciones y el exchange las cierra automáticamente (liquidación). L (longs liquidados): posiciones alcistas destruidas porque el precio cayó. Un número alto indica que ha habido una caída fuerte y muchos compradores apalancados han sido barridos — puede señalar capitulación y posible suelo. S (shorts liquidados): posiciones bajistas destruidas porque el precio subió (short squeeze). Un short squeeze con mucho volumen puede alimentar subidas explosivas. Cuanto mayor el volumen total de liquidaciones, más violento fue el movimiento. Dato aportado por Coinalyze agregando múltiples exchanges.">Liq 24h</span>
+              <span id="liquidations" class="sent-value">—</span>
+            </div>
           </div>
         </div>
       </section>
@@ -111,124 +113,134 @@
       <!-- Indicadores técnicos -->
       <section class="sidebar-section" id="indicators-panel">
         <h3 class="section-title" data-icon="📊">Indicadores <span id="indicators-tf" style="font-size: var(--fs-sm); font-weight: normal;">4h</span></h3>
-        <div class="indicator-row" id="ind-rsi">
-          <span class="ind-name">RSI</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
-        </div>
-        <div class="indicator-row" id="ind-macd">
-          <span class="ind-name">MACD</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
-        </div>
-        <div class="indicator-row" id="ind-stochrsi">
-          <span class="ind-name">StochRSI</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
-        </div>
-        <div class="indicator-row" id="ind-bb">
-          <span class="ind-name">BB</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
-        </div>
-        <div class="indicator-row" id="ind-adx">
-          <span class="ind-name">ADX</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
-        </div>
-        <div class="indicator-row" id="ind-supertrend">
-          <span class="ind-name">ST</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
-        </div>
-        <div class="indicator-row" id="ind-wavetrend">
-          <span class="ind-name">WT</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
-        </div>
-        <div class="indicator-row" id="ind-voldelta">
-          <span class="ind-name">VolDelta</span>
-          <span class="ind-value">—</span>
-          <span class="ind-signal">→</span>
+        <div class="section-body">
+          <div class="indicator-row" id="ind-rsi">
+            <span class="ind-name">RSI</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
+          <div class="indicator-row" id="ind-macd">
+            <span class="ind-name">MACD</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
+          <div class="indicator-row" id="ind-stochrsi">
+            <span class="ind-name">StochRSI</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
+          <div class="indicator-row" id="ind-bb">
+            <span class="ind-name">BB</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
+          <div class="indicator-row" id="ind-adx">
+            <span class="ind-name">ADX</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
+          <div class="indicator-row" id="ind-supertrend">
+            <span class="ind-name">ST</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
+          <div class="indicator-row" id="ind-wavetrend">
+            <span class="ind-name">WT</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
+          <div class="indicator-row" id="ind-voldelta">
+            <span class="ind-name">VolDelta</span>
+            <span class="ind-value">—</span>
+            <span class="ind-signal">→</span>
+          </div>
         </div>
       </section>
 
       <!-- Muros Binance -->
       <section class="sidebar-section" id="binance-panel">
         <h3 class="section-title" data-icon="🧱">Muros Binance</h3>
-        <div class="sentiment-row">
-          <span class="sent-label">Compra</span>
-          <span id="binance-buy-wall" class="sent-value">—</span>
-        </div>
-        <div class="sentiment-row">
-          <span class="sent-label">Venta</span>
-          <span id="binance-sell-wall" class="sent-value">—</span>
+        <div class="section-body">
+          <div class="sentiment-row">
+            <span class="sent-label">Compra</span>
+            <span id="binance-buy-wall" class="sent-value">—</span>
+          </div>
+          <div class="sentiment-row">
+            <span class="sent-label">Venta</span>
+            <span id="binance-sell-wall" class="sent-value">—</span>
+          </div>
         </div>
       </section>
 
       <!-- Soportes & Resistencias -->
       <section class="sidebar-section" id="sr-panel">
         <h3 class="section-title" data-icon="📍">Soportes y Resistencias</h3>
-        <div class="sr-table">
-          <div class="sr-row sr-support" id="sr-support-1">—</div>
-          <div class="sr-row sr-support" id="sr-support-2">—</div>
-          <div class="sr-row sr-support" id="sr-support-3">—</div>
-          <div style="border-top: 1px solid var(--border-subtle); margin: var(--sp-sm) 0;"></div>
-          <div class="sr-row sr-resistance" id="sr-resistance-1">—</div>
-          <div class="sr-row sr-resistance" id="sr-resistance-2">—</div>
-          <div class="sr-row sr-resistance" id="sr-resistance-3">—</div>
+        <div class="section-body">
+          <div class="sr-table">
+            <div class="sr-row sr-support" id="sr-support-1">—</div>
+            <div class="sr-row sr-support" id="sr-support-2">—</div>
+            <div class="sr-row sr-support" id="sr-support-3">—</div>
+            <div style="border-top: 1px solid var(--border-subtle); margin: var(--sp-sm) 0;"></div>
+            <div class="sr-row sr-resistance" id="sr-resistance-1">—</div>
+            <div class="sr-row sr-resistance" id="sr-resistance-2">—</div>
+            <div class="sr-row sr-resistance" id="sr-resistance-3">—</div>
+          </div>
         </div>
       </section>
 
       <!-- Último Análisis -->
       <section class="sidebar-section" id="last-analysis-panel">
         <h3 class="section-title" data-icon="📜">Análisis Previo</h3>
-        <div class="sentiment-row">
-          <span class="sent-label">Acción</span>
-          <span id="last-analysis-action" class="sent-value">—</span>
-        </div>
-        <div class="sentiment-row">
-          <span class="sent-label">Hace</span>
-          <span id="last-analysis-timestamp" class="sent-value">—</span>
+        <div class="section-body">
+          <div class="sentiment-row">
+            <span class="sent-label">Acción</span>
+            <span id="last-analysis-action" class="sent-value">—</span>
+          </div>
+          <div class="sentiment-row">
+            <span class="sent-label">Hace</span>
+            <span id="last-analysis-timestamp" class="sent-value">—</span>
+          </div>
         </div>
       </section>
 
       <!-- Recomendación IA -->
       <section class="sidebar-section" id="recommendation-panel">
         <h3 class="section-title" data-icon="⚡">Análisis IA</h3>
-        <div id="recommendation-empty" class="recommendation-empty">
-          Pulsa <strong>&#x26A1; Analizar</strong> para obtener una recomendación.
-        </div>
-        <div id="recommendation-loading" class="recommendation-loading hidden">
-          <div class="spinner spinner-sm"></div>
-          <span>Analizando...</span>
-        </div>
-        <div id="recommendation-content" class="recommendation-content hidden">
-          <div class="rec-action-row">
-            <span id="rec-action" class="rec-action">—</span>
-            <span id="rec-confidence" class="rec-confidence">—</span>
+        <div class="section-body">
+          <div id="recommendation-empty" class="recommendation-empty">
+            Pulsa <strong>&#x26A1; Analizar</strong> para obtener una recomendación.
           </div>
-          <p id="rec-rationale" class="rec-rationale">—</p>
-          <div class="rec-levels">
-            <div class="rec-level-row">
-              <span class="rec-level-label">Entrada</span>
-              <span id="rec-entry" class="rec-level-value">—</span>
-            </div>
-            <div class="rec-level-row">
-              <span class="rec-level-label">Stop Loss</span>
-              <span id="rec-sl" class="rec-level-value rec-sl">—</span>
-            </div>
-            <div class="rec-level-row">
-              <span class="rec-level-label">TP1</span>
-              <span id="rec-tp1" class="rec-level-value rec-tp">—</span>
-            </div>
-            <div class="rec-level-row">
-              <span class="rec-level-label">TP2</span>
-              <span id="rec-tp2" class="rec-level-value rec-tp">—</span>
-            </div>
+          <div id="recommendation-loading" class="recommendation-loading hidden">
+            <div class="spinner spinner-sm"></div>
+            <span>Analizando...</span>
           </div>
-          <div id="rec-alerts" class="rec-alerts"></div>
-          <div id="rec-timestamp" class="rec-timestamp">—</div>
+          <div id="recommendation-content" class="recommendation-content hidden">
+            <div class="rec-action-row">
+              <span id="rec-action" class="rec-action">—</span>
+              <span id="rec-confidence" class="rec-confidence">—</span>
+            </div>
+            <p id="rec-rationale" class="rec-rationale">—</p>
+            <div class="rec-levels">
+              <div class="rec-level-row">
+                <span class="rec-level-label">Entrada</span>
+                <span id="rec-entry" class="rec-level-value">—</span>
+              </div>
+              <div class="rec-level-row">
+                <span class="rec-level-label">Stop Loss</span>
+                <span id="rec-sl" class="rec-level-value rec-sl">—</span>
+              </div>
+              <div class="rec-level-row">
+                <span class="rec-level-label">TP1</span>
+                <span id="rec-tp1" class="rec-level-value rec-tp">—</span>
+              </div>
+              <div class="rec-level-row">
+                <span class="rec-level-label">TP2</span>
+                <span id="rec-tp2" class="rec-level-value rec-tp">—</span>
+              </div>
+            </div>
+            <div id="rec-alerts" class="rec-alerts"></div>
+            <div id="rec-timestamp" class="rec-timestamp">—</div>
+          </div>
         </div>
       </section>
 
