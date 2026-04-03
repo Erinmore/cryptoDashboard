@@ -72,14 +72,48 @@ function signalClass(signal) {
   return 'neutral';
 }
 
+/**
+ * Convierte una señal de texto a un indicador visual con flechas.
+ * Devuelve un objeto { icon, class } para renderizar en el sidebar.
+ *
+ * Mapeo:
+ * - 'healthy', 'neutral' → "→" (gris)
+ * - 'up', 'bullish' → "↑" / "↑↑" / "↑↑↑" según intensidad
+ * - 'down', 'bearish' → "↓" / "↓↓" / "↓↓↓" según intensidad
+ * - 'overbought' → "↑↑" (bullish fuerte)
+ * - 'oversold' → "↓↓" (bearish fuerte)
+ * - cruces y cambios → ajuste de flechas
+ */
+function signalToArrow(signal) {
+  if (!signal) return { icon: '→', class: 'neutral' };
+
+  const s = signal.toLowerCase();
+
+  // Neutro
+  if (s === 'neutral' || s === 'healthy') return { icon: '→', class: 'neutral' };
+
+  // Bullish
+  if (s.includes('bullish') || s === 'up') return { icon: '↑', class: 'bullish' };
+  if (s === 'overbought' || s === 'cross up') return { icon: '↑↑', class: 'bullish' };
+  if (s.includes('strong bullish') || s.includes('extreme bullish')) return { icon: '↑↑↑', class: 'bullish' };
+
+  // Bearish
+  if (s.includes('bearish') || s === 'down') return { icon: '↓', class: 'bearish' };
+  if (s === 'oversold' || s === 'cross down') return { icon: '↓↓', class: 'bearish' };
+  if (s.includes('strong bearish') || s.includes('extreme bearish')) return { icon: '↓↓↓', class: 'bearish' };
+
+  return { icon: '→', class: 'neutral' };
+}
+
 function setIndicatorRow(id, value, signal, signalText) {
   const row = $(id);
   if (!row) return;
   const [, valEl, sigEl] = row.children;
   if (valEl) valEl.textContent = value ?? '—';
   if (sigEl) {
-    sigEl.textContent = signalText ?? '—';
-    setClass(sigEl, signalClass(signal));
+    const arrow = signalToArrow(signal || signalText);
+    sigEl.textContent = arrow.icon;
+    setClass(sigEl, arrow.class);
   }
 }
 
@@ -284,14 +318,18 @@ export function updateSentiment(state) {
 
     const fgEl = $('fear-greed-label');
     if (fgEl) {
-      // Clasificación + cambio 7 días si disponible
-      let label = fearGreed.classification ?? '—';
-      if (fearGreed.trend_7d_change != null) {
-        const sign = fearGreed.trend_7d_change >= 0 ? '+' : '';
-        label += ` (${sign}${fearGreed.trend_7d_change} 7d)`;
+      // Indicador de flechas basado en valor y tendencia
+      const signalClass = fgSignalClass(fearGreed.value);
+      let arrow = '→';
+      if (fearGreed.trend === 'improving') {
+        arrow = fearGreed.value > 50 ? '↑↑' : '↑';
+      } else if (fearGreed.trend === 'worsening') {
+        arrow = fearGreed.value < 50 ? '↓↓' : '↓';
+      } else {
+        arrow = fearGreed.value > 50 ? '↑' : fearGreed.value < 50 ? '↓' : '→';
       }
-      fgEl.textContent = label;
-      fgEl.className   = 'sent-signal ' + fgSignalClass(fearGreed.value);
+      fgEl.textContent = arrow;
+      fgEl.className   = 'sent-signal ' + signalClass;
     }
   }
 

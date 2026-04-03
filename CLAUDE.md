@@ -150,6 +150,60 @@ frontend/
 
 ---
 
+## Convenciones CSS (Frontend)
+
+**IMPORTANTE**: El archivo `frontend/assets/css/styles.css` usa un **sistema completo de variables CSS**. **Nunca hardcodees valores** — siempre usa variables definidas en `:root`.
+
+Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de variables:
+
+### Colores principales
+
+```css
+--bg-app, --bg-surface, --bg-card, --bg-hover          /* Fondos */
+--text-primary, --text-secondary, --text-muted         /* Texto */
+--accent, --accent-dim, --accent-hover                  /* Azul principal */
+--bullish, --bearish, --neutral                         /* Señales */
+--bullish-dim, --bearish-dim, --neutral-dim             /* Fondos señales */
+--alert-danger-bg/text, --alert-warning-bg/text, --alert-info-bg/text  /* Alertas */
+```
+
+### Tipografía (escala 8px)
+
+```css
+--fs-xs (8px) → --fs-sm (9px) → --fs-base (10px) → --fs-md (11px) 
+→ --fs-lg (12px) → --fs-xl (13px) → --fs-2xl (16px) → --fs-3xl (18px)
+```
+
+### Espaciado (escala 4px)
+
+```css
+--sp-xs (2px) → --sp-sm (4px) → --sp-md (6px) → --sp-lg (8px) 
+→ --sp-xl (10px) → --sp-2xl (12px)
+```
+
+### Border radius
+
+```css
+--radius-sm (3px) → --radius-md (4px) → --radius-lg (6px) → --radius-full (50%)
+```
+
+### Transiciones
+
+```css
+--transition-fast (0.15s) → --transition-base (0.2s) → --transition-slow (0.4s) → --transition-anim (0.7s)
+```
+
+**Reglas de oro:**
+- ❌ Nunca: `background: #1a1e2a;` → ✅ Siempre: `background: var(--bg-card);`
+- ❌ Nunca: `font-size: 11px;` → ✅ Siempre: `font-size: var(--fs-md);`
+- ❌ Nunca: `padding: 8px;` → ✅ Siempre: `padding: var(--sp-lg);`
+- ❌ Nunca: `border-radius: 4px;` → ✅ Siempre: `border-radius: var(--radius-md);`
+- ❌ Nunca: `transition: all 0.15s;` → ✅ Siempre: `transition: all var(--transition-fast);`
+
+**Ventaja:** Cambiar un color/tamaño global = editar una variable en `:root`. Nuevo componentes heredan automáticamente el diseño.
+
+---
+
 ## APIs externas
 
 | Servicio | Uso | Auth | TTL cache | Notas |
@@ -296,6 +350,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 - **Tooltips sentimiento**: Fear & Greed, CryptoPanic, Funding Rate, Open Interest, L/S Ratio, Liquidaciones — mismo estilo que indicadores, con icono punto azul en hover (`::after` en `.sent-label[title]`)
 - **Tooltips indicadores**: reescritos con nivel didáctico para alguien nuevo en trading
 - **Sistema de históricos**: módulo `historyService.js` gestiona 7-30 días de contexto temporal para análisis LLM. Incluye: F&G 30d, FR 48h, OI 7d, L/S 7d, Liq 7d
+- **Refactorización CSS (2026-04)**: Se eliminaron ~60 valores hardcodeados del CSS. Implementado sistema modular de variables (colores, tipografía, espaciado, border-radius, transiciones). Estilos duplicados consolidados. Documentación en `CSS_CONVENTIONS.md`
 
 ---
 
@@ -386,3 +441,4 @@ El stub ya tiene `buildPrompt()` completo y el código de integración SDK en co
 - No exponer API keys al frontend — todas las keys son exclusivamente backend
 - No lanzar errores en servicios externos que rompan `/api/data` — usar degraded mode
 - No usar `last_funding_rate`, `open_interest` ni `long_ratio` en Coinalyze — los campos reales son `value` (FR/OI) y `l`/`s` (LSR)
+- **No hardcodear valores CSS** — siempre usar variables definidas en `:root` (colores, tamaños, espaciado, border-radius, transiciones). Ver `CSS_CONVENTIONS.md`
