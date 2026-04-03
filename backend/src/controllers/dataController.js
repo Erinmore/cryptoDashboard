@@ -2,6 +2,7 @@ import { fetchOHLC, fetchCurrentPrice, fetchBTCDominance } from '../services/coi
 import { fetchSentiment } from '../services/cryptopanicService.js';
 import { fetchFearGreed } from '../services/fearGreedService.js';
 import { fetchDerivativesData } from '../services/coinalyzeService.js';
+import { fetchOrderBookWalls } from '../services/binanceOrderBookService.js';
 import { getHistories } from '../services/historyService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { getLastAnalysis } from '../services/dbService.js';
@@ -26,6 +27,9 @@ export async function getData(req, res, next) {
 
     logger.debug({ coin, primaryTf }, 'GET /api/data');
 
+    // Mapeo de coins a símbolos Binance
+    const binanceSymbols = { BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT' };
+
     // Fetch todo en paralelo
     const [
       ohlc15m,
@@ -39,6 +43,7 @@ export async function getData(req, res, next) {
       derivatives,
       btcDominance,
       lastAnalysis,
+      binanceWalls,
     ] = await Promise.allSettled([
       fetchOHLC(coin, '15m'),
       fetchOHLC(coin, '1h'),
@@ -51,6 +56,7 @@ export async function getData(req, res, next) {
       fetchDerivativesData(coin),
       fetchBTCDominance(),
       Promise.resolve(getLastAnalysis(coin)),
+      fetchOrderBookWalls(binanceSymbols[coin]),
     ]);
 
     // Extraer valores, los fallos devuelven null
@@ -99,6 +105,7 @@ export async function getData(req, res, next) {
         action: lastAnalysis.recommendation_action,
         confidence: lastAnalysis.recommendation_confidence,
       } : null,
+      binance_walls: resolve(binanceWalls),
       history: histories,
     });
   } catch (err) {

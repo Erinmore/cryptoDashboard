@@ -20,6 +20,9 @@ import {
   updateIndicators,
   updateSentiment,
   updateRecommendation,
+  updateSupportResistance,
+  updateLastAnalysis,
+  updateBinanceWalls,
   showRecommendationLoading,
   hideRecommendationLoading,
 } from './ui/sidebar.js';
@@ -42,6 +45,9 @@ function updateUI(state) {
   updateRegimeBadge(state);
   updateIndicators(state);
   updateSentiment(state);
+  updateSupportResistance(state);
+  updateLastAnalysis(state);
+  updateBinanceWalls(state);
   renderChart();
 }
 
@@ -64,9 +70,7 @@ function restoreRecommendationPanel(rec) {
   if (rec) {
     updateRecommendation(rec);
   } else {
-    document.getElementById('recommendation-content')?.classList.add('hidden');
-    document.getElementById('recommendation-loading')?.classList.add('hidden');
-    document.getElementById('recommendation-empty')?.classList.remove('hidden');
+    hideRecommendationLoading();
   }
 }
 
@@ -87,16 +91,18 @@ async function loadData() {
       : prevVP;
 
     setState({
-      candles:      newCandles,
+      candles:       newCandles,
       viewport,
-      technical:    data.technical    ?? null,
-      sentiment:    data.sentiment    ?? null,
-      fearGreed:    data.fear_greed   ?? null,
-      derivatives:  data.derivatives  ?? null,
-      btcDominance: data.btc_dominance ?? null,
-      lastAnalysis: data.last_analysis ?? null,
-      priceCurrent: data.price_current ?? null,
-      priceChange:  data.price_change_24h_pct ?? null,
+      technical:     data.technical     ?? null,
+      sentiment:     data.sentiment     ?? null,
+      fearGreed:     data.fear_greed    ?? null,
+      derivatives:   data.derivatives   ?? null,
+      btcDominance:  data.btc_dominance ?? null,
+      lastAnalysis:  data.last_analysis ?? null,
+      binanceWalls:  data.binance_walls ?? null,
+      history:       data.history       ?? null,
+      priceCurrent:  data.price_current ?? null,
+      priceChange:   data.price_change_24h_pct ?? null,
     });
   } catch (err) {
     console.error('[CRYPTEX] fetchData error:', err.message);

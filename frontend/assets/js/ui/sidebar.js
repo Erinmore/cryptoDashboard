@@ -49,6 +49,14 @@ function setClass(el, ...classes) {
   el.classList.add(...classes.filter(Boolean));
 }
 
+function setValueRow(id, value, cssClass = null) {
+  const el = $(id);
+  if (el) {
+    el.textContent = value ?? '—';
+    if (cssClass) setClass(el, cssClass);
+  }
+}
+
 function fmt(n, decimals = 2) {
   if (n == null) return '—';
   return parseFloat(n).toLocaleString('en-US', {
@@ -460,10 +468,10 @@ export function updateSentiment(state) {
 
 function fgSignalClass(value) {
   if (value == null) return '';
-  if (value <= 24) return 'bearish';
-  if (value <= 49) return 'bearish';
-  if (value <= 74) return 'bullish';
-  return 'bullish';
+  if (value <= 24) return 'bearish';        // [0, 24] — Extreme Fear
+  if (value < 50)  return 'bearish';        // [25, 49] — Fear
+  if (value < 75)  return 'bullish';        // [50, 74] — Greed
+  return 'bullish';                         // [75, 100] — Extreme Greed
 }
 
 // ── Recommendation panel ───────────────────────────────────────────
@@ -528,5 +536,105 @@ export function updateRecommendation(rec) {
   if (tsEl) {
     const now = new Date();
     tsEl.textContent = `Análisis a las ${now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+}
+
+// ── Soportes & Resistencias ────────────────────────────────────────
+
+export function updateSupportResistance(state) {
+  const tech = state.technical?.[state.tf];
+  const sr = tech?.support_resistance;
+
+  if (!sr) {
+    // Ocultar panel si no hay datos
+    const panel = $('sr-panel');
+    if (panel) panel.style.display = 'none';
+    return;
+  }
+
+  const panel = $('sr-panel');
+  if (panel) panel.style.display = '';
+
+  // Soportes (máximo 3)
+  const supports = sr.supports || [];
+  for (let i = 0; i < 3; i++) {
+    const id = `sr-support-${i + 1}`;
+    const el = $(id);
+    if (!el) continue;
+
+    if (supports[i]) {
+      const sup = supports[i];
+      el.textContent = `${fmtPrice(sup.price)} (${sup.touches || 0} touches)`;
+      const strength = sup.strength ?? 0.5;
+      setClass(el, strength > 0.7 ? 'bullish' : strength > 0.4 ? 'neutral' : 'bearish');
+    } else {
+      el.textContent = '—';
+      setClass(el);
+    }
+  }
+
+  // Resistencias (máximo 3)
+  const resistances = sr.resistances || [];
+  for (let i = 0; i < 3; i++) {
+    const id = `sr-resistance-${i + 1}`;
+    const el = $(id);
+    if (!el) continue;
+
+    if (resistances[i]) {
+      const res = resistances[i];
+      el.textContent = `${fmtPrice(res.price)} (${res.touches || 0} touches)`;
+      const strength = res.strength ?? 0.5;
+      setClass(el, strength > 0.7 ? 'bearish' : strength > 0.4 ? 'neutral' : 'bullish');
+    } else {
+      el.textContent = '—';
+      setClass(el);
+    }
+  }
+}
+
+// ── Último Análisis ────────────────────────────────────────────────
+
+export function updateLastAnalysis(state) {
+  const last = state.lastAnalysis;
+  const el = $('last-analysis-action');
+  const tsEl = $('last-analysis-timestamp');
+
+  if (!last) {
+    if (el) el.textContent = '—';
+    if (tsEl) tsEl.textContent = '—';
+    return;
+  }
+
+  if (el) {
+    el.textContent = last.action ?? '—';
+    setClass(el, last.action ?? '');
+  }
+
+  if (tsEl) {
+    tsEl.textContent = last.timestamp ? timeAgo(last.timestamp) : '—';
+  }
+}
+
+// ── Muros Binance ──────────────────────────────────────────────────
+
+export function updateBinanceWalls(state) {
+  const walls = state.binanceWalls;
+  const buyEl = $('binance-buy-wall');
+  const sellEl = $('binance-sell-wall');
+
+  if (!walls) {
+    if (buyEl) buyEl.textContent = '—';
+    if (sellEl) sellEl.textContent = '—';
+    return;
+  }
+
+  if (walls.buyWall && buyEl) {
+    buyEl.textContent = `${fmtPrice(walls.buyWall.price)} (${fmt(walls.buyWall.volume, 2)} BTC)`;
+    setClass(buyEl, 'bullish');
+  }
+
+  if (walls.sellWall && sellEl) {
+    sellEl.textContent = `${fmtPrice(walls.sellWall.price)} (${fmt(walls.sellWall.volume, 2)} BTC)`;
+    setClass(sellEl, 'bearish');
   }
 }

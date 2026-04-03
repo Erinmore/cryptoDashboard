@@ -625,5 +625,49 @@ html, body {
 .news-source,
 .news-time { font-size: var(--fs-xs); color: var(--text-muted); }
 
+/* ── S/R Table ────────────────────────────────────────────────────── */
+.sr-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+}
+
+.sr-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fs-md);
+  padding: var(--sp-md) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sr-row:last-child {
+  border-bottom: none;
+}
+
+.sr-support {
+  color: var(--bullish);
+}
+
+.sr-support.bearish {
+  color: var(--bearish);
+}
+
+.sr-support.neutral {
+  color: var(--text-muted);
+}
+
+.sr-resistance {
+  color: var(--bearish);
+}
+
+.sr-resistance.bullish {
+  color: var(--bullish);
+}
+
+.sr-resistance.neutral {
+  color: var(--text-muted);
+}
+
 /* ── Utility ──────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
