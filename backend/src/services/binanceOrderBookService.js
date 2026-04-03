@@ -9,7 +9,7 @@
  */
 
 import axios from 'axios';
-import { logger } from '../middleware/logger.js';
+import logger from '../middleware/logger.js';
 
 const BINANCE_API_BASE = 'https://api.binance.com/api/v3';
 const DEPTH_LIMIT = 20; // Top 20 niveles de bid/ask
