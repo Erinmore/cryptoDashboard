@@ -67,53 +67,6 @@
     <!-- SIDEBAR -->
     <aside class="sidebar">
 
-      <!-- Indicadores técnicos -->
-      <section class="sidebar-section" id="indicators-panel">
-        <h3 class="section-title" data-icon="📊">Indicadores <span id="indicators-tf" class="tf-label">4h</span></h3>
-        <div class="indicators-grid" id="indicators-grid">
-          <div class="indicator-row" id="ind-rsi">
-            <span class="ind-name" title="RSI — Relative Strength Index (14 periodos). Imagínalo como un termómetro de velocidad del precio: mide cuánto y qué tan rápido ha subido o bajado en las últimas 14 velas. Escala de 0 a 100. Por encima de 70: el precio ha subido demasiado rápido (sobrecompra), los compradores se agotan y es probable una corrección. Por debajo de 30: el precio ha caído demasiado rápido (sobreventa), los vendedores se agotan y es probable un rebote. Entre 30 y 70 ('healthy'): zona neutra, el precio se mueve de forma sostenible sin señales extremas. Importante: en bull markets fuertes el RSI puede mantenerse en sobrecompra mucho tiempo.">RSI</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-          <div class="indicator-row" id="ind-macd">
-            <span class="ind-name" title="MACD — Moving Average Convergence Divergence (12/26/9). Compara dos medias móviles exponenciales del precio para detectar cambios de momentum. El valor mostrado es la línea MACD (diferencia entre EMA de 12 y 26 periodos): positivo = la EMA rápida está por encima de la lenta (momentum alcista), negativo = lo contrario. La señal (EMA de 9 sobre el MACD) actúa como gatillo: cuando el MACD cruza por encima de la señal es bullish, por debajo es bearish. El histograma visualiza esa diferencia con 4 colores: verde brillante (alcista acelerando) → verde oscuro (alcista desacelerando) → rojo oscuro (bajista desacelerando) → rojo brillante (bajista acelerando). Un histograma que cambia de color antes de que el precio gire puede anticipar reversiones.">MACD</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-          <div class="indicator-row" id="ind-stochrsi">
-            <span class="ind-name" title="StochRSI — Stochastic RSI (K / D). Es un indicador de indicador: aplica la fórmula del Estocástico sobre el RSI, lo que lo hace más sensible y rápido que el RSI solo. K (línea rápida, 0–100): indica dónde está el RSI actual dentro de su propio rango de los últimos 14 periodos. Valor 0 = el RSI está en el mínimo de ese rango; 100 = en el máximo. D (línea lenta): media móvil de K, suaviza las señales. Lecturas extremas: K por debajo de 20 = sobreventa extrema (posible rebote inminente), K por encima de 80 = sobrecompra (posible techo). La señal más fiable es el cruce de K sobre D viniendo desde zonas extremas: si K cruza a D hacia arriba desde zona de sobreventa, es una señal de entrada alcista. En cripto, los cruces rápidos son habituales, así que confirmar con otro indicador evita falsas señales.">StochRSI</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-          <div class="indicator-row" id="ind-bb">
-            <span class="ind-name" title="Bollinger Bands %B (20 periodos, 2 desviaciones estándar). Las Bandas de Bollinger son un canal dinámico alrededor del precio formado por: una media móvil central (SMA 20) y dos bandas a ±2 desviaciones estándar. Cuando el mercado es volátil, el canal se ensancha; cuando está tranquilo, se estrecha. %B indica en qué parte del canal está el precio ahora: 0 = precio toca la banda inferior, 1 = toca la superior, 0.5 = está en la media central. Por debajo de 0 = precio rompió la banda inferior (sobreventa extrema, pero en tendencias bajistas puede continuar). Por encima de 1 = rompió la banda superior (sobrecompra, pero en rallies fuertes puede continuar). Zona 0.4–0.6 sin señal clara. Las bandas que se aprietan mucho suelen preceder a movimientos explosivos.">BB %B</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-          <div class="indicator-row" id="ind-adx">
-            <span class="ind-name" title="ADX — Average Directional Index (14 periodos). Mide la FUERZA de la tendencia, no su dirección. Un ADX alto no significa que el precio suba, solo que se mueve con convicción. Por debajo de 20: mercado en rango lateral, sin tendencia definida (los indicadores de tendencia como MACD dan falsas señales aquí). Entre 20 y 40: tendencia moderada y fiable. Por encima de 40: tendencia muy fuerte, seguirla tiene mayor probabilidad de éxito. La dirección (bullish/bearish) la indica el cruce del +DI (línea de fuerza alcista) y el -DI (línea de fuerza bajista): si +DI está por encima, la tendencia es alcista; si -DI está por encima, es bajista. Regla práctica: solo operar en la dirección de la tendencia cuando ADX > 25.">ADX</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-          <div class="indicator-row" id="ind-supertrend">
-            <span class="ind-name" title="SuperTrend adaptativo (basado en ATR). Es una línea dinámica que sigue el precio actuando como soporte o resistencia móvil. Se calcula usando el ATR (volatilidad reciente) multiplicado por un factor, por lo que se adapta al estado del mercado: en momentos volátiles se aleja del precio para no dar falsas señales; en momentos tranquilos se acerca. UP (verde): el precio está por encima de la línea SuperTrend, que actúa de suelo dinámico. Mientras el precio no la cruce a la baja, la tendencia alcista sigue activa. DOWN (rojo): el precio está por debajo, la línea actúa de techo. Un cambio de UP a DOWN es una señal de venta; de DOWN a UP, señal de compra. El precio mostrado es ese nivel de soporte (UP) o resistencia (DOWN) en este momento.">SuperTrend</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-          <div class="indicator-row" id="ind-wavetrend">
-            <span class="ind-name" title="WaveTrend Oscillator (WT1 / WT2). Uno de los indicadores más populares en trading de criptomonedas. Mide ciclos de momentum aplicando medias móviles sobre el precio típico (high+low+close/3). WT1 (línea rápida): reacciona rápido a los cambios de precio. WT2 (línea lenta): es la media suavizada de WT1, actúa como señal. Cuando WT1 cruza por encima de WT2: momentum alcista. Cuando WT1 cruza por debajo de WT2: momentum bajista. Las señales más potentes se dan en zonas extremas: si WT1 cruza a WT2 hacia arriba desde zona de sobreventa (por debajo de -60), es una señal de compra muy fiable. Si cruza hacia abajo desde sobrecompra (por encima de +60), es señal de venta. En la zona central (entre -60 y +60) los cruces son menos fiables.">WaveTrend</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-          <div class="indicator-row" id="ind-voldelta">
-            <span class="ind-name" title="Volume Delta — Presión compradora vs vendedora en el volumen reciente. El volumen total de una vela se divide en volumen comprador (operaciones que se ejecutaron al precio ask, iniciadas por compradores) y volumen vendedor (operaciones al bid, iniciadas por vendedores). El % mostrado es la parte del volumen que fue compradora: por encima del 50% = los compradores dominaron esa vela (presión alcista), por debajo del 50% = los vendedores dominaron (presión bajista). 'Strong bullish': la última vela cerró con dominio claro de compradores y el precio subió. 'Strong bearish': dominio de vendedores y precio bajó. Es muy útil para confirmar movimientos: si el precio sube pero el Volume Delta es bajista, el movimiento es sospechoso y podría revertir.">Vol Delta</span>
-            <span class="ind-value">—</span>
-            <span class="ind-signal">—</span>
-          </div>
-        </div>
-      </section>
-
       <!-- Sentimiento -->
       <section class="sidebar-section" id="sentiment-panel">
         <h3 class="section-title" data-icon="🔮">Sentimiento</h3>
@@ -155,9 +108,22 @@
         </div>
       </section>
 
+      <!-- Muros Binance -->
+      <section class="sidebar-section" id="binance-panel">
+        <h3 class="section-title" data-icon="🧱">Muros Binance</h3>
+        <div class="sentiment-row">
+          <span class="sent-label">Compra</span>
+          <span id="binance-buy-wall" class="sent-value">—</span>
+        </div>
+        <div class="sentiment-row">
+          <span class="sent-label">Venta</span>
+          <span id="binance-sell-wall" class="sent-value">—</span>
+        </div>
+      </section>
+
       <!-- Soportes & Resistencias -->
       <section class="sidebar-section" id="sr-panel">
-        <h3 class="section-title" data-icon="📍">S/R</h3>
+        <h3 class="section-title" data-icon="📍">Soportes y Resistencias</h3>
         <div class="sr-table">
           <div class="sr-row sr-support" id="sr-support-1">—</div>
           <div class="sr-row sr-support" id="sr-support-2">—</div>
@@ -179,19 +145,6 @@
         <div class="sentiment-row">
           <span class="sent-label">Hace</span>
           <span id="last-analysis-timestamp" class="sent-value">—</span>
-        </div>
-      </section>
-
-      <!-- Muros Binance -->
-      <section class="sidebar-section" id="binance-panel">
-        <h3 class="section-title" data-icon="🧱">Muros Binance</h3>
-        <div class="sentiment-row">
-          <span class="sent-label">Compra</span>
-          <span id="binance-buy-wall" class="sent-value">—</span>
-        </div>
-        <div class="sentiment-row">
-          <span class="sent-label">Venta</span>
-          <span id="binance-sell-wall" class="sent-value">—</span>
         </div>
       </section>
 
