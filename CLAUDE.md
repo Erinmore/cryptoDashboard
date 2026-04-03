@@ -94,7 +94,7 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   anthropicService.js        ← Stub: buildPrompt() completo, analyzeMarket() pendiente API key
   dbService.js               ← saveAnalysis(), getAnalysisHistory(), getLastAnalysis()
   indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores
-  coingeckoService.js        ← fetchOHLC (15m/1h/4h/8h/1D), fetchCurrentPrice, fetchBTCDominance
+  coingeckoService.js        ← fetchOHLC (1h/4h/1D/1W), fetchCurrentPrice, fetchBTCDominance
   cryptopanicService.js      ← fetchSentiment — degraded si sin suscripción
   fearGreedService.js        ← fetchFearGreed (alternative.me, gratis) + alimenta históricos
   coinalyzeService.js        ← fetchFundingRate, fetchOpenInterest, fetchLongShortRatio, fetchLiquidations + históricos
@@ -107,7 +107,7 @@ src/utils/
 
 **Flujo de una request:** `route → controller → services (en paralelo) → response`
 
-**`GET /api/data` devuelve:** `candles` (TF principal), `technical` (5 TFs), `sentiment`, `fear_greed`, `derivatives`, `btc_dominance`, `last_analysis`, precio, **`history`** (históricos para análisis LLM).
+**`GET /api/data` devuelve:** `candles` (TF principal), `technical` (4 TFs), `sentiment`, `fear_greed`, `derivatives`, `btc_dominance`, `last_analysis`, precio, **`history`** (históricos para análisis LLM).
 
 ## Arquitectura del frontend
 
@@ -208,7 +208,7 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 
 | Servicio | Uso | Auth | TTL cache | Notas |
 |----------|-----|------|-----------|-------|
-| CoinGecko v3 | OHLC (5 TFs), precio, BTC Dominance | Opcional (free tier) | 60s OHLC, 30s precio, 10min dominance | — |
+| CoinGecko v3 | OHLC (4 TFs), precio, BTC Dominance | Opcional (free tier) | 60s–1800s OHLC (per-TF), 30s precio, 10min dominance | — |
 | CryptoPanic v2 | Sentimiento noticias | `CRYPTOPANIC_TOKEN` | 5min | **Requiere plan de pago desde 2026.** Sin suscripción devuelve `results: []` → dashboard muestra "—" |
 | alternative.me | Fear & Greed Index | Ninguna | 10min | Completamente gratis, sin registro |
 | Coinalyze v1 | Funding Rate, OI, L/S Ratio, Liquidaciones | `COINALYZE_API_KEY` (gratis) | 30min FR, 5min OI/LSR, 5min Liq | Ver estructura de respuesta real abajo |
@@ -231,15 +231,14 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 
 ## Timeframes
 
-`TIMEFRAMES = ['15m', '1h', '4h', '8h', '1D']` — ordenados de menor a mayor.
+`TIMEFRAMES = ['1h', '4h', '1D', '1W']` — ordenados de menor a mayor.
 
-| TF | Fuente CoinGecko | Candles aprox. | Notas |
-|----|-----------------|----------------|-------|
-| 15m | `/ohlc?days=1` | ~48 | Granularidad ~30min real de CoinGecko |
-| 1h | `market_chart?days=7&interval=hourly` | ~168 | 1 tick/hora → `open = prev.close` para evitar dojis planos |
-| 4h | `/ohlc?days=30` | ~180 | Granularidad 4h nativa |
-| 8h | `market_chart?days=60&interval=hourly` | ~180 | Buckets de 8h con OHLCV real (múltiples ticks) |
-| 1D | `/ohlc?days=365` | ~365 | Granularidad diaria nativa |
+| TF | Fuente CoinGecko | Candles aprox. | Cache TTL | Notas |
+|----|-----------------|----------------|-----------|-------|
+| 1h | `market_chart?days=7&interval=hourly` | ~168 | 60s | 1 tick/hora → `open = prev.close` para evitar dojis planos |
+| 4h | `/ohlc?days=30` | ~180 | 300s | Granularidad 4h nativa |
+| 1D | `/ohlc?days=365` | ~365 | 600s | Granularidad diaria nativa |
+| 1W | `market_chart?days=365` | ~52 | 1800s | CoinGecko devuelve daily para days>90; se agrupa en buckets de 168h (7 días) |
 
 `draw.js → formatTime`: si intervalo entre velas ≥ 6h → `DD/MM`; si < 6h → `HH:MM`.
 
@@ -340,7 +339,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 ### Fixes y mejoras adicionales implementados
 
 - **Bug 1h**: velas planas (open=close) corregido en `fetchMarketChartAggregated` usando `prev.close` como `open`
-- **Timeframes ampliados**: añadidos 8h y 1D; botones ordenados 15m → 1h → 4h → 8h → 1D
+- **Timeframes optimizados**: reducidos a 1h → 4h → 1D → 1W; cache per-TF (60s–1800s); 1W implementado vía agregación de datos diarios en buckets de 7 días
 - **WaveTrend sidebar**: señal corregida — usa `wt.signal` del backend (`cross up/down`, `overbought/oversold`) en vez de solo `wt1 > 0`
 - **Coinalyze**: campos de respuesta corregidos tras verificar la API real (`value` en FR y OI; `l`/`s` en LSR)
 - **CryptoPanic**: ahora muestra "—" correctamente cuando la API no retorna resultados (plan de pago requerido)

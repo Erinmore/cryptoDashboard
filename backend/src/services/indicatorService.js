@@ -20,7 +20,7 @@ import { RSI_OVERBOUGHT, RSI_OVERSOLD } from '../config/constants.js';
 /**
  * Calcula todos los indicadores técnicos para un conjunto de candles.
  * @param {Array} candles  Array de {t, o, h, l, c, v}
- * @param {string} timeframe  '15m' | '1h' | '4h'
+ * @param {string} timeframe  '1h' | '4h' | '1D' | '1W'
  * @returns {object}  Objeto con todos los indicadores
  */
 export function computeIndicators(candles, timeframe) {

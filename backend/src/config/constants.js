@@ -1,5 +1,5 @@
 export const COINS = ['BTC', 'ETH', 'SOL'];
-export const TIMEFRAMES = ['15m', '1h', '4h', '8h', '1D'];
+export const TIMEFRAMES = ['1h', '4h', '1D', '1W'];
 
 export const COINGECKO_IDS = {
   BTC: 'bitcoin',

@@ -7,30 +7,67 @@ import { ExternalApiError } from '../utils/errors.js';
 
 const BASE_URL = 'https://api.coingecko.com/api/v3';
 
-const client = axios.create({
+const rawClient = axios.create({
   baseURL: BASE_URL,
-  timeout: 10000,
+  timeout: 15000,
   headers: env.coingeckoApiKey
     ? { 'x-cg-demo-api-key': env.coingeckoApiKey }
     : {},
 });
 
+// ─── Rate limiter: retry automático en 429 ───────────────────────────────────
+
+const MAX_RETRIES = 2;
+const RETRY_BASE_MS = 1500;
+
 /**
- * CoinGecko free tier granularidades del endpoint /ohlc:
- *   days=1   → ~30 min candles (~48 candles)
- *   days=7   → 4h candles (~42 candles)
- *   days=30  → 4h candles (~180 candles)
- *   days=365 → daily candles (~365 candles)
+ * Wrapper que reintenta automáticamente si CoinGecko devuelve 429.
+ * No serializa requests — solo añade retry con backoff exponencial.
+ */
+async function requestWithRetry(method, url, config) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await rawClient.request({ method, url, ...config });
+    } catch (err) {
+      if (err.response?.status === 429 && attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_MS * (attempt + 1);
+        logger.warn({ url, attempt: attempt + 1, delay }, 'CoinGecko 429, retrying');
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/** Client with automatic 429 retry */
+const client = {
+  get(url, config) {
+    return requestWithRetry('get', url, config);
+  },
+};
+
+/**
+ * CoinGecko free tier granularidades:
+ *   /ohlc: days=30 → 4h candles, days=365 → daily candles
+ *   /market_chart: days≤90 hourly, days>90 daily
  *
- * Para 1h y 8h usamos market_chart (hourly) y construimos OHLCV
- * agrupando en buckets del tamaño indicado por bucketHours.
+ * Para 1h: market_chart hourly (7d) → buckets de 1h.
+ * Para 1W: market_chart daily (365d, CoinGecko devuelve diario para days>90) → buckets de 168h.
  */
 const TF_CONFIG = {
-  '15m': { source: 'ohlc',         days: 1,   label: '30m' },
-  '1h':  { source: 'market_chart', days: 7,   bucketHours: 1,  label: '1h'  },
-  '4h':  { source: 'ohlc',         days: 30,  label: '4h'  },
-  '8h':  { source: 'market_chart', days: 60,  bucketHours: 8,  label: '8h'  },
-  '1D':  { source: 'ohlc',         days: 365, label: '1D'  },
+  '1h': { source: 'market_chart', days: 7,   bucketHours: 1,   label: '1h' },
+  '4h': { source: 'ohlc',         days: 30,  label: '4h' },
+  '1D': { source: 'ohlc',         days: 365, label: '1D' },
+  '1W': { source: 'market_chart', days: 365, bucketHours: 168, label: '1W' },
+};
+
+/** Cache TTL por TF (segundos) — TFs altos cambian menos. */
+const TF_CACHE_TTL = {
+  '1h': 60,
+  '4h': 300,
+  '1D': 600,
+  '1W': 1800,
 };
 
 // ─── OHLC ─────────────────────────────────────────────────────────────────────
@@ -64,7 +101,7 @@ export async function fetchOHLC(coin, timeframe) {
       candles = await fetchMarketChartAggregated(coinId, config.days, config.bucketHours);
     }
 
-    cacheSet(cacheKey, candles, env.cache.ohlcTtl);
+    cacheSet(cacheKey, candles, TF_CACHE_TTL[timeframe] ?? env.cache.ohlcTtl);
     return candles;
   } catch (err) {
     if (err instanceof ExternalApiError) throw err;

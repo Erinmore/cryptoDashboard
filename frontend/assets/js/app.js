@@ -197,7 +197,8 @@ function init() {
   // ── Restaurar estado persistido ──────────────────────────────────
   const savedCoin      = loadLastCoin();
   const savedCoinState = loadCoinState(savedCoin);
-  const savedTf        = savedCoinState.tf ?? '4h';
+  const VALID_TFS = ['1h', '4h', '1D', '1W'];
+  const savedTf        = VALID_TFS.includes(savedCoinState.tf) ? savedCoinState.tf : '4h';
 
   setState({ coin: savedCoin, tf: savedTf });
   syncTfButtons(savedTf);
@@ -247,10 +248,21 @@ function init() {
     const newTf        = newCoinState.tf ?? getState().tf;
     const savedRec     = newCoinState.recommendation ?? null;
 
+    // Limpiar datos de la coin anterior para que no se muestren stale
     setState({
       coin:           newCoin,
       tf:             newTf,
       viewport:       null,
+      candles:        null,
+      technical:      null,
+      sentiment:      null,
+      fearGreed:      null,
+      derivatives:    null,
+      lastAnalysis:   null,
+      binanceWalls:   null,
+      history:        null,
+      priceCurrent:   null,
+      priceChange:    null,
       recommendation: savedRec,
     });
 

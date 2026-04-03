@@ -13,7 +13,7 @@ const _state = {
 
   // Datos del backend (GET /api/data)
   candles:      null,   // Array<{t, open, high, low, close, volume}>
-  technical:    null,   // { '15m': {...}, '1h': {...}, '4h': {...} }
+  technical:    null,   // { '1h': {...}, '4h': {...}, '1D': {...}, '1W': {...} }
   sentiment:    null,   // { score, bullish_votes, bearish_votes, ... }
   fearGreed:    null,   // { value, classification, trend, ... }
   derivatives:  null,   // { funding_rate, open_interest, long_short_ratio }

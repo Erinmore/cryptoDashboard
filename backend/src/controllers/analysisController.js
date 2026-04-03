@@ -28,9 +28,9 @@ export async function analyze(req, res, next) {
 
     // Fetch todo en paralelo (mismo patrón que dataController)
     const [
-      ohlc15m,
       ohlc1h,
       ohlc4h,
+      ohlc1D,
       priceResult,
       sentimentResult,
       fearGreedResult,
@@ -38,9 +38,9 @@ export async function analyze(req, res, next) {
       btcDominanceResult,
       lastAnalysisResult,
     ] = await Promise.allSettled([
-      fetchOHLC(coin, '15m'),
       fetchOHLC(coin, '1h'),
       fetchOHLC(coin, '4h'),
+      fetchOHLC(coin, '1D'),
       fetchCurrentPrice(coin),
       fetchSentiment(coin),
       fetchFearGreed(),
@@ -52,9 +52,9 @@ export async function analyze(req, res, next) {
     const resolve = r => r.status === 'fulfilled' ? r.value : null;
 
     const candles = {
-      '15m': resolve(ohlc15m),
-      '1h':  resolve(ohlc1h),
-      '4h':  resolve(ohlc4h),
+      '1h': resolve(ohlc1h),
+      '4h': resolve(ohlc4h),
+      '1D': resolve(ohlc1D),
     };
 
     const price      = resolve(priceResult);

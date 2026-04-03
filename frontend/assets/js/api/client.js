@@ -9,7 +9,7 @@
  * GET /api/data — datos técnicos + sentimiento + candles del TF principal.
  *
  * @param {string} coin   'BTC' | 'ETH' | 'SOL'
- * @param {string} tf     '15m' | '1h' | '4h' | '8h' | '1D'
+ * @param {string} tf     '1h' | '4h' | '1D' | '1W'
  * @returns {Promise<object>}
  */
 export async function fetchData(coin, tf) {
