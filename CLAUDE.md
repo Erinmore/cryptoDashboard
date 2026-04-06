@@ -234,7 +234,7 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 | Coinalyze v1 | Funding Rate, OI, L/S Ratio, Liquidaciones | `COINALYZE_API_KEY` (gratis) | 30min FR, 5min OI/LSR, 5min Liq | Ver estructura de respuesta real abajo |
 | Anthropic | Análisis IA | `ANTHROPIC_API_KEY` | Sin cache (on-demand) | — |
 
-**Endpoints y estructura de respuesta Coinalyze (verificados 2026-04-03):**
+**Endpoints y estructura de respuesta Coinalyze (verificados 2026-04-06):**
 - Funding Rate: `GET /v1/funding-rate?symbols=X` → `[{ symbol, value, update }]` — campo `value` (no `last_funding_rate`)
 - Funding Rate History: `GET /v1/funding-rate-history?symbols=X&interval=6hour&from=T&to=T` → `[{ symbol, history: [{t, o, h, l, c}] }]` — candles de 6h para tendencia 48h
 - Open Interest: `GET /v1/open-interest?symbols=X` → `[{ symbol, value, update }]` — campo `value` (no `open_interest`)
@@ -315,23 +315,23 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | `calculateRSI(closes, period?)` | RSI Wilder |
 | `calculateEMA(values, period)` | EMA helper |
 | `calculateATR(candles, period?)` | ATR Wilder |
-| `calculateMACD(closes, fast?, slow?, signal?)` | MACD + histograma 4 colores |
+| `calculateMACD(closes, fast?, slow?, signal?)` | MACD + 4 estados momentum: `bullish_accelerating/bullish_decelerating/bearish_accelerating/bearish_decelerating` |
 | `calculateStochRSI(closes, ...)` | Stochastic RSI |
 | `calculateWaveTrend(candles, n1?, n2?)` | WaveTrend Oscillator — devuelve `{ wt1, wt2, signal }` donde signal puede ser `neutral/overbought/oversold/oversold_cross_up/overbought_cross_down` |
 | `calculateADX(candles, period?)` | ADX + DMI |
-| `calculateBollingerBands(closes, period?, mult?)` | BB + width + %B |
+| `calculateBollingerBands(closes, period?, mult?)` | BB + width_pct + position (0.0-1.0, no status) |
 | `calculateSuperTrend(candles, ...)` | SuperTrend adaptativo — usar `st.support` (UP) o `st.resistance` (DOWN) para el nivel |
 | `calculateVolumeDelta(candles)` | Presión compradora/vendedora |
 | `calculateCVD(candles)` | Cumulative Volume Delta |
 | `calculateOBV(candles)` | On-Balance Volume |
 | `calculateFibonacci(high, low, levels?)` | Niveles Fibonacci |
-| `calculateSupportResistance(candles, ...)` | Soporte & Resistencia |
+| `calculateSupportResistance(candles, ...)` | Soporte & Resistencia — devuelve `{supports, resistances}` sin campo `type` (ya declarado por la lista) |
 | `detectRSIDivergence(closes, ...)` | Divergencias RSI |
 | `detectMarketRegime(candles, closes)` | Régimen TRENDING/RANGING/HIGH_VOLATILITY — devuelve string plano, no objeto |
 
 ---
 
-## Estado del proyecto (2026-04-03)
+## Estado del proyecto (2026-04-06)
 
 | Bloque | Contenido | Estado |
 |--------|-----------|--------|
@@ -366,6 +366,12 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 - **Tooltips indicadores**: reescritos con nivel didáctico para alguien nuevo en trading
 - **Sistema de históricos**: módulo `historyService.js` gestiona 7-30 días de contexto temporal para análisis LLM. Incluye: F&G 30d, FR 48h, OI 7d, L/S 7d, Liq 7d
 - **Refactorización CSS (2026-04)**: Se eliminaron ~60 valores hardcodeados del CSS. Implementado sistema modular de variables (colores, tipografía, espaciado, border-radius, transiciones). Estilos duplicados consolidados. Documentación en `CSS_CONVENTIONS.md`
+- **Mejoras semántica JSON (2026-04-06)**:
+  - Eliminado campo redundante `type` de support/resistance (la lista ya lo declara)
+  - Renombrado `histogram_color` → `momentum_state` en MACD para semántica clara (`bullish_accelerating`, etc.)
+  - Eliminados campos `status` de MACD (redundante) y Bollinger Bands (nombre semánticamente incorrecto)
+  - Añadido campo `severity` a funding_rate (normal/elevated/high/extreme)
+  - Añadidos campos `distance_to_nearest_support_pct` y `distance_to_nearest_resistance_pct` a cada timeframe para acción inmediata del LLM
 
 ---
 
