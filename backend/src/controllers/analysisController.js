@@ -55,6 +55,54 @@ function computeLinearTrend(values) {
   return slope > threshold ? 'rising' : slope < -threshold ? 'falling' : 'flat';
 }
 
+/**
+ * Analiza conflictos de tendencias entre timeframes y proporciona contexto para resolver.
+ * @param {object} technical - Objeto con indicadores por TF: {1h, 4h, 1D, 1W}
+ * @param {string} primaryTf - TF principal seleccionado por el usuario
+ * @returns {object} Contexto de conflictos y jerarquía recomendada
+ */
+function analyzeTimeframeConflicts(technical, primaryTf) {
+  if (!technical || Object.keys(technical).length === 0) return null;
+
+  const trends = {};
+  for (const [tf, data] of Object.entries(technical)) {
+    trends[tf] = data?.trend ?? null;
+  }
+
+  // Detectar conflictos: corto plazo vs largo plazo divergen
+  const shortTermTrend = trends['1h'] || trends['4h'];
+  const longTermTrend = trends['1D'] || trends['1W'];
+
+  let conflict = null;
+  if (shortTermTrend && longTermTrend) {
+    const shortBullish = shortTermTrend.includes('bullish');
+    const longBullish = longTermTrend.includes('bullish');
+    if (shortBullish !== longBullish) {
+      conflict = shortBullish ? 'short_term_bullish_long_term_bearish' : 'short_term_bearish_long_term_bullish';
+    }
+  }
+
+  // Jerarquía: qué TF confiar según situación
+  const hierarchy = {
+    default: ['1D', '4h', '1W', '1h'], // largo plazo → corto plazo
+    momentum: ['1h', '4h', '1D', '1W'],  // si hay movimiento rápido, corto plazo primero
+    confirmation: ['1D', '1W', '4h', '1h'], // confirmación: largo plazo debe validar
+  };
+
+  return {
+    primary_tf: primaryTf,
+    conflict,
+    reasoning: conflict
+      ? conflict === 'short_term_bullish_long_term_bearish'
+        ? 'Short-term momentum is bullish but longer timeframes show bearish structure. Use caution and wait for confirmation from higher timeframes.'
+        : 'Short-term momentum is bearish but longer timeframes show bullish structure. This could be a pullback in an uptrend. Monitor for reversal signals.'
+      : 'No major conflict between timeframes.',
+    hierarchy_recommendation: 'default',
+    hierarchy_tiers: hierarchy,
+    guidance: 'For conflicting signals: wait for alignment before taking action. Use longer timeframes for support/resistance levels and shorter timeframes for entry/exit timing.',
+  };
+}
+
 function computeHistorySummaries(histories) {
   // ── Fear & Greed summary (30d) ──────────────────────────────────────────
   const fgHistory = histories?.fear_greed ?? [];
@@ -290,6 +338,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const oi  = derivatives?.open_interest   ?? null;
   const lsr = derivatives?.long_short_ratio ?? null;
   const liq = derivatives?.liquidations    ?? null;
+  const tfConflicts = analyzeTimeframeConflicts(technical, primaryTf);
 
   return {
     coin,
@@ -324,6 +373,8 @@ async function buildAnalyzeContext(coin, primaryTf) {
     },
 
     technical,
+
+    timeframe_analysis: tfConflicts,
 
     derivatives: {
       funding_rate: fr ? {
