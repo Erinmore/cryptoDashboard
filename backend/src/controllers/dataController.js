@@ -90,23 +90,11 @@ export async function getData(req, res, next) {
     const vwapIndicator = technical['1D']?.vwap;
 
     if (cvdIndicator) {
-      const cvdPrev7d = prevHistories.cvd.length >= 7
-        ? prevHistories.cvd[prevHistories.cvd.length - 7]
-        : null;
-      const cvdChange7d = (cvdPrev7d?.value != null && cvdPrev7d.value !== 0)
-        ? parseFloat(((cvdIndicator.value - cvdPrev7d.value) / Math.abs(cvdPrev7d.value) * 100).toFixed(2))
-        : null;
-      addCVDEntry(today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence, cvdChange7d);
+      addCVDEntry(today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence);
     }
 
     if (vwapIndicator) {
-      const vwapPrev7d = prevHistories.vwap.length >= 7
-        ? prevHistories.vwap[prevHistories.vwap.length - 7]
-        : null;
-      const vwapChange7d = (vwapPrev7d?.value != null && vwapPrev7d.value !== 0)
-        ? parseFloat(((vwapIndicator.value - vwapPrev7d.value) / Math.abs(vwapPrev7d.value) * 100).toFixed(2))
-        : null;
-      addVWAPEntry(today, vwapIndicator.value, vwapIndicator.trend, vwapIndicator.divergence, vwapChange7d);
+      addVWAPEntry(today, vwapIndicator.value, vwapIndicator.trend, vwapIndicator.divergence);
     }
 
     // Una sola llamada final a getHistories() — incluye las entradas recién añadidas

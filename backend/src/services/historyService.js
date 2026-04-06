@@ -11,8 +11,8 @@
  *   addOpenInterestEntry(candle)                         — {t, o, h, l, c}
  *   addLongShortRatioEntry(entry)                        — {t, long_pct, short_pct}
  *   addLiquidationsEntry(date, longs_usd, shorts_usd)
- *   addCVDEntry(date, value, trend, divergence, change_pct_7d)
- *   addVWAPEntry(date, value, trend, divergence, change_pct_7d)
+ *   addCVDEntry(date, value, trend, divergence)
+ *   addVWAPEntry(date, value, trend, divergence)
  *   getHistories()                                       — retorna todos los históricos
  */
 
@@ -160,7 +160,7 @@ export function addLiquidationsEntry(date, longs_usd, shorts_usd) {
 
 // ─── CVD ──────────────────────────────────────────────────────────────────
 
-export function addCVDEntry(date, value, trend, divergence, change_pct_7d) {
+export function addCVDEntry(date, value, trend, divergence) {
   if (value == null) return;
 
   const entry = {
@@ -168,7 +168,6 @@ export function addCVDEntry(date, value, trend, divergence, change_pct_7d) {
     value,
     trend,
     divergence,
-    change_pct_7d,
   };
 
   // Evitar duplicados del mismo día
@@ -188,7 +187,7 @@ export function addCVDEntry(date, value, trend, divergence, change_pct_7d) {
 
 // ─── VWAP ─────────────────────────────────────────────────────────────────
 
-export function addVWAPEntry(date, value, trend, divergence, change_pct_7d) {
+export function addVWAPEntry(date, value, trend, divergence) {
   if (value == null) return;
 
   const entry = {
@@ -196,7 +195,6 @@ export function addVWAPEntry(date, value, trend, divergence, change_pct_7d) {
     value,
     trend,
     divergence,
-    change_pct_7d,
   };
 
   // Evitar duplicados del mismo día
