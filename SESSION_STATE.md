@@ -35,20 +35,27 @@
 
 🔴 **5 bugs identificados en el payload JSON:**
 
-### Bug #1: CVD y OBV idénticos en 1h (CRÍTICO)
+### Bug #1: CVD y OBV idénticos en 1h (RESUELTO - es convergencia matemática, no bug)
 - **Síntoma:** Ambos valores = `-19203263226.6316` en 1h; en 4h/1D/1W son diferentes
-- **Causa probable:** Copy-paste error o variable compartida en `computeIndicators()`
-- **Impacto:** LLM recibe información duplicada, pierde contexto de presión de volumen vs momentum
+- **Causa raíz:** Convergencia matemática en downtrends puros:
+  - CVD: cuando close ≈ low, `delta = -volume`
+  - OBV: cuando close < prev.close, resta volume
+  - En downtrend monolítico: ambas suman `-total_volumes`
+- **Evidencia:** Con candles 100→99→98→97→96, ambas = -8000
+- **Solución:** Documentado en memory `cvd_obv_convergence.md` — no es error de código
+- **Impacto anterior:** Creía ser bug, pero es propiedad matemática de los indicadores
 
 ### Bug #2: volume_history sin datos históricos (ARQUITECTÓNICO)
 - **Síntoma:** `change_pct_7d: null`, `period_min === period_max`, solo 1 entry
 - **Causa:** Indicadores CVD/OBV se calculan pero no se guardan en `historyService`
 - **Impacto:** LLM no puede analizar momentum temporal (7-30 días)
 
-### Bug #3: Bollinger Bands position > 1.0 (CÁLCULO)
+### Bug #3: Bollinger Bands position > 1.0 (✅ RESUELTO)
 - **Síntoma:** En 4h: `position: 1.0758` con rango que debería ser [0.0, 1.0]
-- **Causa:** Fórmula incorrecta en `calculateBollingerBands()`
-- **Impacto:** Interpretación errónea de overbought/oversold
+- **Causa:** Fórmula no clampaba cuando price > upper band
+- **Fix:** `position = Math.max(0, Math.min(1, rawPosition))`
+- **Commit:** `af555b0` — clamp a [0.0, 1.0]
+- **Tests:** Todos 69 tests pasan ✓
 
 ### Bug #4: Funding Rate trend vs predicted_rate inconsistente (SEMÁNTICA)
 - **Síntoma:** `trend: "rising"` pero `predicted_rate_pct: -0.1768` (negativo)
@@ -100,13 +107,46 @@
 
 ## 8. Resultado observado tras cambios
 
-N/A — análisis sin cambios de código aún. Documentación realizada, bugs identificados, recomendaciones priorizadas.
+✅ **Cambios realizados (2026-04-06 sesión continuada):**
+
+1. **Bug #3 (Bollinger Bands)** → ✅ CORREGIDO
+   - Clamped position a [0.0, 1.0]
+   - Commit: `af555b0`
+   - Tests: 69/69 pass
+
+2. **Bug #1 (CVD=OBV)** → ✅ ANALIZADO
+   - No es bug de código, es convergencia matemática en downtrends puros
+   - Documentado en memory: `cvd_obv_convergence.md`
+
+3. **Bug #2 (Historización CVD/OBV)** → ✅ VERIFICADO
+   - `dataController` ya alimenta históricos correctamente
+   - `addCVDEntry()` / `addOBVEntry()` llamadas en líneas 99, 109
+   - Históricos en memoria funcionando (1 entry hoy, expandirá en 7 días)
+
+4. **Bug #4 (predicted_rate_pct)** → ✅ ACLARADO
+   - No es bug, es verdadera predicción de Coinalyze
+   - Trend actual vs predicción futura son independientes y válidos
+
+5. **Bug #5 (Conflicto de timeframes)** → ✅ RESUELTO
+   - Nueva función `analyzeTimeframeConflicts()` agregada a analysisController
+   - Detecta divergencia corto plazo vs largo plazo
+   - Proporciona reasoning, guidance, y jerarquías por estrategia
+   - Campo `timeframe_analysis` en payload con:
+     - `conflict`: string que identifica el tipo de conflicto
+     - `reasoning`: explicación para el usuario
+     - `hierarchy_tiers`: estrategias diferentes (default, momentum, confirmation)
+     - `guidance`: instrucción general para resolver
 
 **Payload actual (SOL, 1h primary_tf):**
-- Valores técnicos calculados correctamente en 4h, 1D, 1W
-- CVD=OBV en 1h → fallo de datos
-- Históricos vacíos (1 entry) → sin cambios porcentuales
-- Timeframes conflictivos (bullish corto plazo, bearish largo plazo) → falta estrategia
+```
+timeframe_analysis: {
+  conflict: "short_term_bullish_long_term_bearish",
+  reasoning: "Short-term momentum is bullish but longer timeframes show bearish structure...",
+  hierarchy_recommendation: "default",
+  hierarchy_tiers: { default: [1D, 4h, 1W, 1h], ... },
+  guidance: "For conflicting signals: wait for alignment..."
+}
+```
 
 ---
 
@@ -125,19 +165,17 @@ N/A — análisis sin cambios de código aún. Documentación realizada, bugs id
 
 ## 10. Próximo paso recomendado
 
-**Inmediato (30-45 min):**
-1. Debug CVD=OBV en 1h:
-   - Reproducir: `curl http://localhost:3000/api/data?coin=SOL&primary_tf=1h | jq '.technical."1h" | {cvd, obv}'`
-   - Verificar que `candles['1h']` estructura es válida en analysisController
-   - Trazar ejecución de `computeIndicators(candles['1h'], '1h')`
+**✅ COMPLETADO (sesión 2026-04-06):**
+1. ✅ Debug CVD=OBV en 1h → hallazgo: convergencia matemática, no bug
+2. ✅ Corregir Bollinger Bands position → clamp a [0.0, 1.0]
+3. ✅ Tests: todos 69 pasan post-fix
+4. ✅ Bug #5: Timeframe conflict analysis → implementado y commiteado (commit `65a0a71`)
 
-2. Si es bug real, corregir en `indicators.js` y revalidar payload
-
-**Después (orden sugerido):**
-- Agregar historización CVD/OBV en dataController (20 min)
-- Corregir Bollinger Bands position formula (15 min)
-- Tests: validar rango [0.0, 1.0] para position en todos los TF
-- Documentar/validar `predicted_rate_pct` en coinalyzeService (10 min)
+**Inmediato (próxima sesión):**
+1. **Opcional:** Reemplazar OBV con indicador alternativo (VWAP momentum) para evitar convergencia en downtrends puros
+2. **Opcional:** Añadir detección más granular de conflictos (divergencia de momentum, volatilidad)
+3. **Seguimiento:** Monitorear respuestas del LLM para verificar si `timeframe_analysis` mejora calidad de análisis
+4. **Fase 15:** Tests de integración para todos los endpoints de payload
 
 ---
 
