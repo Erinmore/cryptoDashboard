@@ -113,7 +113,8 @@ export function calculateBollingerBands(closes, period = BB_PERIOD, stdDevMult =
   const lower = mean - stdDevMult * stdDev;
   const current = closes[closes.length - 1];
   const bandWidth = upper - lower;
-  const position = bandWidth > 0 ? (current - lower) / bandWidth : 0.5;
+  const rawPosition = bandWidth > 0 ? (current - lower) / bandWidth : 0.5;
+  const position = Math.max(0, Math.min(1, rawPosition)); // Clamp to [0.0, 1.0]
 
   return {
     upper: parseFloat(upper.toFixed(2)),
@@ -453,6 +454,12 @@ export function calculateCVD(candles) {
     series.push(cvd);
   }
 
+  // DEBUG: Log first and last few values
+  if (process.env.DEBUG_CVD_OBV === 'true') {
+    console.log('[CVD] series.slice(0,3):', series.slice(0, 3));
+    console.log('[CVD] series[-3:]:', series.slice(-3));
+  }
+
   const current = series[series.length - 1];
   const prev = series[Math.max(0, series.length - 6)]; // ventana 5 velas
   const trend = current > prev ? 'rising' : current < prev ? 'falling' : 'flat';
@@ -482,6 +489,12 @@ export function calculateOBV(candles) {
     if (candles[i].close > candles[i - 1].close) obv += candles[i].volume;
     else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
     series.push(obv);
+  }
+
+  // DEBUG: Log first and last few values
+  if (process.env.DEBUG_CVD_OBV === 'true') {
+    console.log('[OBV] series.slice(0,3):', series.slice(0, 3));
+    console.log('[OBV] series[-3:]:', series.slice(-3));
   }
 
   const current = series[series.length - 1];

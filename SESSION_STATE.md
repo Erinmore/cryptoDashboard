@@ -3,149 +3,162 @@
 ## 1. Proyecto
 
 **Nombre:** CRYPTEX Dashboard  
-**Descripción corta:** Dashboard profesional de análisis técnico de criptomonedas (BTC, ETH, SOL) con 14 indicadores técnicos, análisis IA, datos de derivados y visualización con PixiJS. Backend Node.js/Express, SQLite, frontend Vite.
+**Descripción corta del sistema:** Dashboard profesional de análisis técnico de criptomonedas (BTC, ETH, SOL) con 14 indicadores técnicos, sentimiento en vivo, datos de derivados y análisis IA. Backend Node.js/Express + SQLite, frontend PixiJS v7.4.x.
+
+---
 
 ## 2. Objetivo actual
 
-Extender el sistema de históricos para incluir **CVD (Cumulative Volume Delta)**, **OBV (On-Balance Volume)**, y **severity en Funding Rate** con series temporales (7-30 días) que aporten contexto temporal al análisis del LLM, mejorando la capacidad de detección de tendencias y divergencias de momentum a largo plazo.
+**Validar y corregir calidad del JSON payload** enviado al LLM para análisis de mercado. El payload debe ser consistente, sin valores redundantes/contradictorios, e informar adecuadamente históricos temporales (7-30 días).
+
+---
 
 ## 3. Estado confirmado
 
-✅ **Sistema de históricos operativo en `historyService.js`:**
-- Fear & Greed: 30 días (1 entrada/día)
-- Funding Rate: 8 candles (48h @ 6h interval)
-- Open Interest: 42 candles (7 días @ 4h interval)
-- Long/Short Ratio: 168 candles (7 días @ 1h interval)
-- Liquidations: 7 días (1 entrada/día)
-- **CVD: 30 días (1 entrada/día)** ✨ NUEVO
-- **OBV: 30 días (1 entrada/día)** ✨ NUEVO
+✅ **Backend operativo:**
+- 7 servicios externos (CoinGecko, alternative.me, Coinalyze, Anthropic) integrados
+- 14 indicadores técnicos calculados correctamente en 4 timeframes
+- SQLite con WAL mode funcionando
+- Endpoints `/api/data` y `/api/analyze/payload` devuelven JSON válido
 
-✅ **CVD y OBV calculados localmente y guardados en históricos:**
-- Funciones puras en `indicators.js`: `calculateCVD()`, `calculateOBV()` (sin modificación)
-- Devuelven: `value`, `trend` (vs 5 velas), `divergence` con precio
-- Se recalculan en cada request a partir de candles del timeframe activo (1D)
+✅ **Frontend operativo:**
+- PixiJS canvas con velas, grid, interactividad (drag/zoom/crosshair)
+- Selector coin/TF + persistencia en localStorage
+- Sidebar con indicadores, sentimiento, derivados
 
-✅ **Históricos de CVD/OBV poblados en `dataController.js`:**
-- Después de calcular indicadores 1D, se guarda entrada CVD/OBV con:
-  - `date` (YYYY-MM-DD)
-  - `value` (número)
-  - `trend` ('rising' | 'falling' | 'flat')
-  - `divergence` ('none' | 'bullish' | 'bearish')
-  - `change_pct_7d` (null si histórico < 7 entradas)
-- Dedup activo: máximo 1 entrada por día
+✅ **Tests:**
+- 69 tests unitarios en `indicators.test.js`, todos pasando
 
-✅ **Payload para LLM enriquecido:**
-- Nueva sección `volume_history` con resúmenes CVD y OBV (30d)
-- Cada resumen incluye: current_value, trend, divergence, change_pct_7d, change_pct_30d, period_min/max, trend_30d (regresión lineal)
-- `funding_rate.history` ahora incluye `severity_current` (normal/elevated/high/extreme)
-- Overhead: ~200 tokens adicionales
+---
 
-## 4. Cambios realizados en esta sesión (2026-04-06)
+## 4. Problema activo
 
-**Implementación completada:**
+🔴 **5 bugs identificados en el payload JSON:**
 
-1. **`historyService.js`** (22 líneas añadidas):
-   - LIMITS: cvd: 30, obv: 30
-   - histories: cvd: [], obv: []
-   - addCVDEntry(date, value, trend, divergence, change_pct_7d)
-   - addOBVEntry(date, value, trend, divergence, change_pct_7d)
-   - getHistories() actualizado para retornar cvd y obv
-   - logHistoriesSummary() actualizado
+### Bug #1: CVD y OBV idénticos en 1h (CRÍTICO)
+- **Síntoma:** Ambos valores = `-19203263226.6316` en 1h; en 4h/1D/1W son diferentes
+- **Causa probable:** Copy-paste error o variable compartida en `computeIndicators()`
+- **Impacto:** LLM recibe información duplicada, pierde contexto de presión de volumen vs momentum
 
-2. **`dataController.js`** (40 líneas añadidas):
-   - Import: addCVDEntry, addOBVEntry
-   - Lectura de prevHistories antes de guardar (para calcular change_pct_7d)
-   - Guarda CVD/OBV si existen indicadores en TF 1D
-   - Una sola llamada a getHistories() post-inserción
+### Bug #2: volume_history sin datos históricos (ARQUITECTÓNICO)
+- **Síntoma:** `change_pct_7d: null`, `period_min === period_max`, solo 1 entry
+- **Causa:** Indicadores CVD/OBV se calculan pero no se guardan en `historyService`
+- **Impacto:** LLM no puede analizar momentum temporal (7-30 días)
 
-3. **`analysisController.js`** (130 líneas añadidas):
-   - computeLinearTrend(values): función helper para regresión lineal simple
-   - severity_current en fundingRateSummary
-   - cvdSummary: resumen 30d con trend_30d, change_pct_7d/30d
-   - obvSummary: resumen 30d (estructura idéntica a CVD)
-   - volume_history: nueva sección en el payload LLM
+### Bug #3: Bollinger Bands position > 1.0 (CÁLCULO)
+- **Síntoma:** En 4h: `position: 1.0758` con rango que debería ser [0.0, 1.0]
+- **Causa:** Fórmula incorrecta en `calculateBollingerBands()`
+- **Impacto:** Interpretación errónea de overbought/oversold
 
-4. **Tests:** 69 tests existentes pasan sin cambios ✅
+### Bug #4: Funding Rate trend vs predicted_rate inconsistente (SEMÁNTICA)
+- **Síntoma:** `trend: "rising"` pero `predicted_rate_pct: -0.1768` (negativo)
+- **Causa:** Definición poco clara de `predicted_rate_pct`
+- **Impacto:** Confusión en interpretación
 
-5. **Commit:** `fb0e46b` — "Feat: Add CVD/OBV historical data (30 days) and funding rate severity to LLM payload"
+### Bug #5: Conflicto de timeframes (ESTRATEGIA)
+- **Síntoma:** 1h/4h bullish, pero 1D/1W bearish; resistencia a 0.11% en 1h
+- **Causa:** Información contradictoria sin jerarquía clara
+- **Impacto:** LLM recibe señales opuestas sin contexto de ponderación
 
-## 5. Arquitectura de datos
+---
 
-```json
-{
-  "volume_history": {
-    "cvd": {
-      "current_value": 125.4521,
-      "current_trend": "rising",
-      "current_divergence": "none",
-      "change_pct_7d": 12.3,
-      "change_pct_30d": 45.2,
-      "period_min": -230.1,
-      "period_max": 380.4,
-      "trend_30d": "rising"
-    },
-    "obv": { "/* idem */" }
-  },
-  "derivatives": {
-    "funding_rate": {
-      "history": {
-        "severity_current": "normal",
-        "...": "campos existentes"
-      }
-    }
-  }
-}
+## 5. Hipótesis abiertas
+
+* **H1:** CVD=OBV es bug en cálculo de 1h, no en 4h/1D/1W → verificar `candles['1h']` en analysisController
+* **H2:** El histórico no persiste porque `dataController` no llama `historyService.addCVDEntry()` → necesita integración
+* **H3:** Bollinger Bands formula toma valor absoluto de rango en lugar de relativo → revisar `position` calculation
+* **H4:** `predicted_rate_pct` es simplemente low_48h de FR, no predicción → renombrar campo para claridad
+* **H5:** LLM necesita campo `timeframe_hierarchy` explícito con pesos para resolver conflicto TF → agregar a payload
+
+---
+
+## 6. Archivos implicados
+
+**Core:**
+* `backend/src/utils/indicators.js` — Cálculos de CVD, OBV, Bollinger Bands
+* `backend/src/controllers/analysisController.js` — `buildAnalyzeContext()`, linea 274
+* `backend/src/controllers/dataController.js` — Falta historización de CVD/OBV
+* `backend/src/services/historyService.js` — Gestión de históricos (incompleto para CVD/OBV)
+* `backend/src/services/coinalyzeService.js` — Lógica de `predicted_rate_pct`
+
+**Referencias:**
+* `BLUEPRINT.md` — Arquitectura general
+* `CLAUDE.md` — Instrucciones del proyecto
+* `PAYLOAD_QUALITY.md` — Estándares de calidad del payload (ya documentados)
+
+---
+
+## 7. Últimos cambios realizados
+
+* **2026-04-06:** Análisis exhaustivo del payload JSON generado para SOL
+* **2026-04-06:** Identificación de 5 bugs críticos y secundarios
+* **2026-04-06:** Creación de `ANALYSIS_ISSUES.md` con detalles técnicos y pseudo-código
+* **2026-04-06:** Documentación en memory: `payload_bugs_april2026.md`
+* **2026-04-06:** Actualización de `SESSION_STATE.md` para continuidad
+
+---
+
+## 8. Resultado observado tras cambios
+
+N/A — análisis sin cambios de código aún. Documentación realizada, bugs identificados, recomendaciones priorizadas.
+
+**Payload actual (SOL, 1h primary_tf):**
+- Valores técnicos calculados correctamente en 4h, 1D, 1W
+- CVD=OBV en 1h → fallo de datos
+- Históricos vacíos (1 entry) → sin cambios porcentuales
+- Timeframes conflictivos (bullish corto plazo, bearish largo plazo) → falta estrategia
+
+---
+
+## 9. Riesgos / cosas a no romper
+
+🚨 **CRÍTICO:**
+- **Tests de indicadores:** No cambiar `indicators.test.js` sin actualizar tests — 69 tests deben pasar
+- **Firmas de funciones:** `calculateCVD()`, `calculateOBV()`, `calculateBollingerBands()` son importadas por analysisController
+- **API contract:** `/api/data` y `/api/analyze/payload` son consumidos por frontend + LLM → cambios requieren actualización frontend
+
+⚠️ **IMPORTANTE:**
+- **historyService en memoria:** Antes de agregar historización, evaluar si necesita persistencia (SQLite vs en-memory)
+- **Coinalyze API fields:** No cambiar parsing de `funding_rate.predicted_rate_pct` sin validar con API real
+
+---
+
+## 10. Próximo paso recomendado
+
+**Inmediato (30-45 min):**
+1. Debug CVD=OBV en 1h:
+   - Reproducir: `curl http://localhost:3000/api/data?coin=SOL&primary_tf=1h | jq '.technical."1h" | {cvd, obv}'`
+   - Verificar que `candles['1h']` estructura es válida en analysisController
+   - Trazar ejecución de `computeIndicators(candles['1h'], '1h')`
+
+2. Si es bug real, corregir en `indicators.js` y revalidar payload
+
+**Después (orden sugerido):**
+- Agregar historización CVD/OBV en dataController (20 min)
+- Corregir Bollinger Bands position formula (15 min)
+- Tests: validar rango [0.0, 1.0] para position en todos los TF
+- Documentar/validar `predicted_rate_pct` en coinalyzeService (10 min)
+
+---
+
+## 11. Prompt de continuidad recomendado
+
+```
+El proyecto CRYPTEX Dashboard tiene 5 bugs identificados en el payload JSON 
+(2026-04-06). El más crítico es CVD=OBV idénticos en 1h.
+
+Objetivos:
+1. Debug y corregir CVD=OBV bug en 1h timeframe
+2. Agregar historización de CVD/OBV en dataController para temporal momentum
+3. Corregir fórmula Bollinger Bands position (debe estar en rango [0.0, 1.0])
+4. Validar predicted_rate_pct logic en coinalyzeService
+
+Ver archivo ANALYSIS_ISSUES.md para detalles completos.
+Ver memory/payload_bugs_april2026.md para resumen técnico.
+
+Estado actual: análisis completado, documentación lista, sin cambios de código aún.
 ```
 
-## 6. Decisiones de diseño
+---
 
-| Decisión | Motivo |
-|----------|--------|
-| Granularidad diaria para CVD/OBV | Alineado con Fear & Greed (30d), evita exceso de datos |
-| Almacenamiento en historyService (no SQLite) | Datos efímeros por diseño (se recalculan a diario) |
-| change_pct_7d calculado en dataController | Acceso al histórico previo; separación de responsabilidades |
-| trend_30d via regresión lineal | Más robusto que comparación simple inicio vs fin; suaviza ruido |
-| severity en FR history | Contexto temporal para LLM (no solo valor numérico) |
-
-## 7. Riesgos / cosas a no romper
-
-🔴 **CRÍTICO:** El patrón de LIMITS y dedup debe mantenerse idéntico (fecha/timestamp como clave)  
-🔴 **CRÍTICO:** No guardar CVD/OBV en SQLite — contradice "indicadores técnicos son efímeros"  
-🟡 **IMPORTANTE:** Tests siguen pasando (69/69 ✅)  
-🟡 **IMPORTANTE:** change_pct_7d es `null` si histórico insuficiente (protección contra division por cero)  
-
-## 8. Próximo paso recomendado
-
-**Opcional, futuro:**
-- Documentar volume_history en CLAUDE.md
-- Panel frontend para visualizar CVD/OBV históricos
-- Backfilling históricos iniciales (si es necesario)
-
-**Inmediato:**
-- Validar que `/api/data?coin=BTC&tf=1D` incluye cvd/obv en history
-- Validar que `/api/analyze/payload` incluye volume_history y severity_current
-- Esperar a que histórico acumule 7+ entradas para verificar change_pct_7d
-
-## 9. Prompt de continuidad para próxima sesión
-
-```
-En la sesión actual (2026-04-06) implementamos la extensión de históricos:
-
-COMPLETADO:
-✅ Históricos CVD/OBV (30 días, diario) operativos
-✅ change_pct_7d calculado en dataController
-✅ trend_30d via regresión lineal en analysisController
-✅ severity_current en funding_rate history
-✅ Nueva sección volume_history en payload LLM
-✅ Todos los 69 tests siguen pasando
-
-ESTADO ACTUAL:
-- Backend: operativo, ready para testing
-- Payload LLM: enriquecido con contexto temporal de volumen
-- Overhead: ~200 tokens (negligible)
-
-PRÓXIMO PASO:
-- Validar endpoints en testing manual
-- [Opcional] Documentar en CLAUDE.md
-- [Opcional] Visualizar históricos en frontend
-```
+**Última actualización:** 2026-04-06 · **Estado:** Bugs identificados, recomendaciones priorizadas, listo para debugging
