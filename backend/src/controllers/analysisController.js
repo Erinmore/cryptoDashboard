@@ -245,6 +245,9 @@ function computeHistorySummaries(histories) {
   }
 
   // ── VWAP summary (30d) ──────────────────────────────────────────────────
+  // NOTE: VWAP cambios % pequeños (típicamente 1-3%) pero significativos.
+  // Un cambio de 2% en VWAP = $2 movimiento en BTC $100k, muy relevante.
+  // Mantener change_pct por compatibilidad, pero considerar future: absolute_change en USD.
   const vwapHistory = histories?.vwap ?? [];
   let vwapSummary = null;
   if (vwapHistory.length >= 1) {

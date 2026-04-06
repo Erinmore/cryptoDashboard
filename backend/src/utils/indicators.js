@@ -495,23 +495,25 @@ export function calculateVWAP(candles, period = 20) {
   }
 
   const n = vwapSeries.length;
+  const prevIndex = Math.max(0, n - 7);  // 6 velas atrás reales (n-1=actual, n-7=6 atrás)
   const currentVwap = vwapSeries[n - 1];
-  const prevVwap = vwapSeries[Math.max(0, n - 6)];
+  const prevVwap = vwapSeries[prevIndex];
   const threshold = prevVwap * 0.001;   // 0.1%
   const trend = currentVwap > prevVwap + threshold ? 'rising'
               : currentVwap < prevVwap - threshold ? 'falling'
               : 'flat';
 
-  // Divergence based on price-VWAP distance
+  // Divergence based on price-VWAP distance (with noise threshold)
   const closeCurrent = candles[n - 1].close;
-  const closePrev = candles[Math.max(0, n - 6)].close;
+  const closePrev = candles[prevIndex].close;
   const priceChange = closeCurrent - closePrev;
   const distNow = (closeCurrent - currentVwap) / currentVwap;
   const distPrev = (closePrev - prevVwap) / prevVwap;
+  const distThreshold = 0.001;  // 0.1% — evitar divergencias falsas por ruido
 
   let divergence = 'none';
-  if (priceChange > 0 && distNow < distPrev) divergence = 'bearish';
-  if (priceChange < 0 && distNow > distPrev) divergence = 'bullish';
+  if (priceChange > 0 && distNow < distPrev - distThreshold) divergence = 'bearish';
+  if (priceChange < 0 && distNow > distPrev + distThreshold) divergence = 'bullish';
 
   return {
     value: parseFloat(currentVwap.toFixed(4)),
