@@ -177,6 +177,12 @@ async function buildAnalyzeContext(coin, primaryTf) {
     '1W': resolve(ohlc1W),
   };
 
+  const fearGreed    = resolve(fearGreedResult);
+  const derivatives  = resolve(derivativesResult);
+  const globalMarket = resolve(globalMarketResult);
+  const coinMarket   = resolve(coinMarketResult);
+  const price        = resolve(priceResult);
+
   const technical = {};
   for (const tf of TIMEFRAMES) {
     if (candles[tf]?.length) {
@@ -190,12 +196,6 @@ async function buildAnalyzeContext(coin, primaryTf) {
       technical[tf] = { ...indicators, ...distances };
     }
   }
-
-  const fearGreed    = resolve(fearGreedResult);
-  const derivatives  = resolve(derivativesResult);
-  const globalMarket = resolve(globalMarketResult);
-  const coinMarket   = resolve(coinMarketResult);
-  const price        = resolve(priceResult);
 
   const histories = getHistories();
   const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary } =
