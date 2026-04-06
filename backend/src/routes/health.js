@@ -8,7 +8,6 @@ router.get('/', (req, res) => {
     timestamp: new Date().toISOString(),
     services: {
       anthropic: 'unknown',
-      cryptopanic: 'unknown',
       coingecko: 'unknown',
       database: 'connected',
     },

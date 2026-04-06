@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load .env from project root (parent of backend/)
+const envPath = join(__dirname, '../../../.env');
+config({ path: envPath });
 
 const env = {
   port: parseInt(process.env.PORT, 10) || 3000,
@@ -10,7 +19,6 @@ const env = {
 
   // APIs de datos de mercado
   coingeckoApiKey: process.env.COINGECKO_API_KEY || '',
-  cryptopanicToken: process.env.CRYPTOPANIC_TOKEN || '',
 
   // APIs de derivados (opcional — degraded mode si no está configurado)
   coinalyzeApiKey: process.env.COINALYZE_API_KEY || '',
@@ -22,7 +30,6 @@ const env = {
   // Cache TTL (segundos)
   cache: {
     ohlcTtl:          parseInt(process.env.CACHE_OHLC_TTL, 10)          || 60,
-    sentimentTtl:     parseInt(process.env.CACHE_SENTIMENT_TTL, 10)     || 300,
     fearGreedTtl:     parseInt(process.env.CACHE_FEAR_GREED_TTL, 10)    || 600,
     fundingRateTtl:   parseInt(process.env.CACHE_FUNDING_RATE_TTL, 10)  || 1800,
     openInterestTtl:  parseInt(process.env.CACHE_OPEN_INTEREST_TTL, 10) || 300,

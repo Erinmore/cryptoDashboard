@@ -41,3 +41,13 @@ export async function postAnalyze(coin, tf) {
   }
   return body;
 }
+
+export async function fetchAnalyzePayload(coin, tf) {
+  const url = `/api/analyze/payload?coin=${encodeURIComponent(coin)}&primary_tf=${encodeURIComponent(tf)}`;
+  const res = await fetch(url);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return body;
+}

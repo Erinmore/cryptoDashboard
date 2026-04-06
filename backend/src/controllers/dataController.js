@@ -1,5 +1,4 @@
 import { fetchOHLC, fetchCurrentPrice, fetchBTCDominance } from '../services/coingeckoService.js';
-import { fetchSentiment } from '../services/cryptopanicService.js';
 import { fetchFearGreed } from '../services/fearGreedService.js';
 import { fetchDerivativesData } from '../services/coinalyzeService.js';
 import { fetchOrderBookWalls } from '../services/binanceOrderBookService.js';
@@ -10,6 +9,9 @@ import { COINS, TIMEFRAMES } from '../config/constants.js';
 import { ValidationError } from '../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../middleware/logger.js';
+
+import { COINALYZE_SYMBOLS } from '../config/constants.js';
+
 
 export async function getData(req, res, next) {
   const start = Date.now();
@@ -37,7 +39,6 @@ export async function getData(req, res, next) {
       ohlc1D,
       ohlc1W,
       priceData,
-      sentiment,
       fearGreed,
       derivatives,
       btcDominance,
@@ -49,7 +50,6 @@ export async function getData(req, res, next) {
       fetchOHLC(coin, '1D'),
       fetchOHLC(coin, '1W'),
       fetchCurrentPrice(coin),
-      fetchSentiment(coin),
       fetchFearGreed(),
       fetchDerivativesData(coin),
       fetchBTCDominance(),
@@ -93,7 +93,6 @@ export async function getData(req, res, next) {
       primary_tf: primaryTf,
       candles: candles[primaryTf] ?? null,
       technical,
-      sentiment: resolve(sentiment),
       fear_greed: resolve(fearGreed),
       derivatives: resolve(derivatives),
       btc_dominance: resolve(btcDominance),

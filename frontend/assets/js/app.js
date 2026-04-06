@@ -6,11 +6,12 @@
  *   - Cada coin recuerda su tf y su última recomendación IA.
  */
 
+import { initTooltips }                  from './tooltip.js';
 import { initPixi }                      from './renderer/pixiRenderer.js';
 import { initLayers, layers, clearLayers } from './renderer/layers.js';
 import { createViewport, drawGrid, drawCandles } from './renderer/draw.js';
 import { initInteractions }              from './renderer/interactions.js';
-import { fetchData, postAnalyze }        from './api/client.js';
+import { fetchData, postAnalyze, fetchAnalyzePayload } from './api/client.js';
 import { getState, setState, subscribe } from './state/store.js';
 import { saveLastCoin, loadLastCoin, saveCoinState, loadCoinState } from './state/storage.js';
 import { Timer }                         from './timer.js';
@@ -118,6 +119,27 @@ async function loadData() {
   }
 }
 
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function downloadAnalyzePayload(coin, tf) {
+  try {
+    const response = await fetchAnalyzePayload(coin, tf);
+    downloadJson(response.payload, `cryptex-analyze-payload-${coin}-${tf}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  } catch (err) {
+    console.warn('[CRYPTEX] analyze payload download failed:', err.message);
+  }
+}
+
 // ── Análisis IA ────────────────────────────────────────────────────
 
 async function runAnalysis() {
@@ -126,6 +148,7 @@ async function runAnalysis() {
   if (btn) btn.disabled = true;
 
   showRecommendationLoading();
+  await downloadAnalyzePayload(coin, tf);
   try {
     const data = await postAnalyze(coin, tf);
     const rec  = data.recommendation ?? null;
@@ -166,6 +189,8 @@ function updateTimerDisplay(secondsLeft) {
 // ── Init ───────────────────────────────────────────────────────────
 
 function init() {
+  initTooltips();
+
   const container = document.getElementById('pixi-container');
   if (!container) return;
 
@@ -189,6 +214,7 @@ function init() {
     (vp) => { setState({ viewport: vp }); renderChart(); },
     renderChart,
     () => getState().candles,
+    () => getState().priceCurrent,  // para el % en la etiqueta dinámica del eje Y
   );
 
   // Suscribir render al estado

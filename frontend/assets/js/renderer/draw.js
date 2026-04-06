@@ -22,11 +22,13 @@ const PADDING_RIGHT  = 12;
 const PADDING_TOP    = 20;
 const PADDING_BOTTOM = 28;
 
-const COLOR_GRID      = 0x1e2230;
-const COLOR_AXIS_TEXT = 0x555c70;
-const COLOR_BULL      = 0x22c55e;
-const COLOR_BEAR      = 0xef4444;
-const COLOR_WICK      = 0x4b5563;
+const COLOR_GRID        = 0x1e2230;
+const COLOR_AXIS_TEXT   = 0x6b7280;   // mejorado: más visible que 0x555c70
+const COLOR_AXIS_BORDER = 0x2a2f3d;   // borde de ejes
+const COLOR_BULL        = 0x22c55e;
+const COLOR_BEAR        = 0xef4444;
+const COLOR_WICK        = 0x4b5563;
+const TICK_SIZE         = 4;          // longitud tick marks en px
 
 // ── Viewport ───────────────────────────────────────────────────────
 
@@ -38,7 +40,12 @@ const COLOR_WICK      = 0x4b5563;
  * @returns {object} viewport
  */
 export function createViewport(candles) {
-  const visibleBars = Math.min(candles.length, 80);
+  // Para TFs con pocos candles (≤60, ej. 1W con ~52), empezar al 55 % del total
+  // para dejar margen tanto de zoom in como de zoom out.
+  // Para TFs con más candles, el comportamiento histórico (80 barras) se mantiene.
+  const visibleBars = candles.length <= 60
+    ? Math.round(candles.length * 0.55)
+    : Math.min(candles.length, 80);
   const offsetX     = Math.max(0, candles.length - visibleBars);
 
   const slice = candles.slice(offsetX);
@@ -95,7 +102,8 @@ export function barPixelWidth(viewport) {
  */
 export function drawGrid(gridLayer, viewport, candles) {
   const { width, height } = getSize();
-  const gfx = new PIXI.Graphics();
+  const gfx   = new PIXI.Graphics();
+  const texts = [];  // se añaden al gridLayer después de gfx para quedar encima
 
   // Fondo del área de precio (eje Y)
   gfx.beginFill(0x141720, 1);
@@ -107,59 +115,84 @@ export function drawGrid(gridLayer, viewport, candles) {
   gfx.drawRect(0, height - PADDING_BOTTOM, width, PADDING_BOTTOM);
   gfx.endFill();
 
-  // Líneas horizontales de precio (5-7 niveles)
-  const priceSteps = niceSteps(viewport.priceMin, viewport.priceMax, 6);
+  // ── Líneas de borde de ejes ────────────────────────────────────────
+  gfx.lineStyle(1, COLOR_AXIS_BORDER, 1);
+  // Borde eje Y (línea vertical)
+  gfx.moveTo(PADDING_LEFT, PADDING_TOP);
+  gfx.lineTo(PADDING_LEFT, height - PADDING_BOTTOM);
+  // Borde eje X (línea horizontal)
+  gfx.moveTo(PADDING_LEFT, height - PADDING_BOTTOM);
+  gfx.lineTo(width, height - PADDING_BOTTOM);
+
+  // ── Líneas horizontales de precio (más niveles para mayor densidad) ──
+  const priceSteps = niceSteps(viewport.priceMin, viewport.priceMax, 10);
   for (const price of priceSteps) {
     const y = priceToScreenY(price, viewport);
     if (y < PADDING_TOP || y > height - PADDING_BOTTOM) continue;
 
-    // Línea
+    // Línea grid
     gfx.lineStyle(1, COLOR_GRID, 1);
     gfx.moveTo(PADDING_LEFT, y);
     gfx.lineTo(width - PADDING_RIGHT, y);
 
-    // Etiqueta precio
-    const label = formatPrice(price);
-    const text  = new PIXI.Text(label, {
+    // Tick mark del eje Y
+    gfx.lineStyle(1, COLOR_AXIS_BORDER, 1);
+    gfx.moveTo(PADDING_LEFT - TICK_SIZE, y);
+    gfx.lineTo(PADDING_LEFT, y);
+
+    // Etiqueta precio (alineada a la derecha, pegada al borde del gráfico)
+    const text = new PIXI.Text(formatPrice(price), {
       fontSize: 10,
       fill: COLOR_AXIS_TEXT,
       fontFamily: 'SF Mono, Fira Code, Consolas, monospace',
     });
-    text.x = 2;
+    text.anchor.x = 1;
+    text.x = PADDING_LEFT - 6;
     text.y = y - 6;
-    gridLayer.addChild(text);
+    texts.push(text);
   }
 
-  // Líneas verticales de tiempo (cada ~10 barras)
-  const step      = Math.max(1, Math.round(viewport.visibleBars / 6));
+  // ── Líneas verticales de tiempo (cada ~9 barras) ───────────────────
+  const step      = Math.max(1, Math.round(viewport.visibleBars / 9));
   const bw        = barPixelWidth(viewport);
   const visible   = candles.slice(viewport.offsetX);
-
-  // Detectar el intervalo entre velas para elegir formato de etiqueta
   const intervalMs = visible.length >= 2 ? visible[1].t - visible[0].t : 3600000;
 
+  let prevLabelTs = null;  // rastrea el ts de la última etiqueta para detectar cambios de día
   for (let i = 0; i < visible.length; i++) {
     if (i % step !== 0) continue;
     const x = PADDING_LEFT + i * bw + bw / 2;
 
+    // Línea grid vertical
     gfx.lineStyle(1, COLOR_GRID, 0.6);
     gfx.moveTo(x, PADDING_TOP);
     gfx.lineTo(x, height - PADDING_BOTTOM);
 
-    // Etiqueta de tiempo
-    const ts    = visible[i].t;
-    const label = formatTime(ts, intervalMs);
-    const text  = new PIXI.Text(label, {
-      fontSize: 9,
-      fill: COLOR_AXIS_TEXT,
+    // Tick mark del eje X
+    gfx.lineStyle(1, COLOR_AXIS_BORDER, 1);
+    gfx.moveTo(x, height - PADDING_BOTTOM);
+    gfx.lineTo(x, height - PADDING_BOTTOM + TICK_SIZE);
+
+    // Etiqueta de tiempo con smart labeling (fecha en cambio de día, hora en intra-día)
+    const label    = formatTimeAxis(visible[i].t, prevLabelTs, intervalMs, step);
+    prevLabelTs    = visible[i].t;
+    const isDayMark = intervalMs < 24 * 3600 * 1000 && label.includes('/');
+
+    const text = new PIXI.Text(label, {
+      fontSize:   9,
+      fill:       isDayMark ? 0x9ca3af : COLOR_AXIS_TEXT,  // fecha más clara para distinguirla
       fontFamily: 'SF Mono, Fira Code, Consolas, monospace',
+      fontWeight: isDayMark ? 'bold' : 'normal',
     });
-    text.x = x - text.width / 2;
+    text.anchor.x = 0.5;
+    text.x = x;
     text.y = height - PADDING_BOTTOM + 6;
-    gridLayer.addChild(text);
+    texts.push(text);
   }
 
+  // gfx primero (fondos + líneas de grid), luego los textos encima
   gridLayer.addChild(gfx);
+  for (const t of texts) gridLayer.addChild(t);
 }
 
 // ── Candles ────────────────────────────────────────────────────────
@@ -246,14 +279,37 @@ function formatPrice(price) {
 }
 
 /**
- * Formatea un timestamp (ms) según el intervalo entre velas.
- * >= 6h → DD/MM (candles de 8h y 1D)
- * < 6h  → HH:MM (candles de 15m, 1h, 4h)
+ * Smart labeling para el eje X.
+ *
+ * Reglas (en orden de prioridad):
+ *  1. Diario / semanal (intervalMs ≥ 24 h): siempre "DD/MM".
+ *  2. Sub-diario con espaciado efectivo ≥ 12 h (ej. 4h con step=9 → 36 h):
+ *     siempre "DD/MM" para evitar etiquetas de hora huérfanas sin contexto de día.
+ *  3. Sub-diario con espaciado efectivo < 12 h (ej. 1h):
+ *     "DD/MM" al cruzar medianoche, "HH:MM" intra-día.
+ *
+ * @param {number}      ts         - timestamp de la vela actual (ms)
+ * @param {number|null} prevTs     - timestamp de la última etiqueta dibujada (null = primera)
+ * @param {number}      intervalMs - duración de cada vela en ms
+ * @param {number}      stepBars   - cada cuántas barras se dibuja una etiqueta
  */
-function formatTime(ts, intervalMs = 3600000) {
+function formatTimeAxis(ts, prevTs, intervalMs = 3600000, stepBars = 1) {
   if (!ts) return '';
   const d = new Date(ts);
-  if (intervalMs >= 6 * 3600 * 1000) {
+
+  // Regla 1: diario / semanal → solo fecha
+  if (intervalMs >= 24 * 3600 * 1000) {
+    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+  }
+
+  // Regla 2: espaciado efectivo ≥ 12 h → siempre fecha (sin "HH:MM" sin contexto)
+  if (stepBars * intervalMs >= 12 * 3600 * 1000) {
+    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+  }
+
+  // Regla 3: espaciado corto → fecha en cambio de día, hora intra-día
+  const dayStr = d.toISOString().slice(0, 10);
+  if (!prevTs || new Date(prevTs).toISOString().slice(0, 10) !== dayStr) {
     return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
   }
   return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });

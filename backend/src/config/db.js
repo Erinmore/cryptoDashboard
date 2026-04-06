@@ -47,10 +47,6 @@ function runMigrations(db) {
       volume_buy_pct REAL,
       volume_sell_pct REAL,
 
-      sentiment_score REAL,
-      bullish_votes INTEGER,
-      bearish_votes INTEGER,
-
       recommendation TEXT,
       recommendation_action TEXT,
       recommendation_confidence REAL,
@@ -65,17 +61,6 @@ function runMigrations(db) {
 
     CREATE INDEX IF NOT EXISTS idx_recommendation
       ON analyses(recommendation_action);
-
-    CREATE TABLE IF NOT EXISTS sentiment_cache (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      coin TEXT UNIQUE NOT NULL,
-      score REAL,
-      bullish_votes INTEGER,
-      bearish_votes INTEGER,
-      news_count INTEGER,
-      raw_data TEXT,
-      last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
 
     CREATE TABLE IF NOT EXISTS candles_cache (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

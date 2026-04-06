@@ -36,11 +36,12 @@ export async function fetchFundingRate(coin) {
     const now  = Math.floor(Date.now() / 1000);
     const from = now - 48 * 3600;
 
-    const [currentRes, historyRes] = await Promise.allSettled([
+    const [currentRes, historyRes, predictedRes] = await Promise.allSettled([
       getClient().get('/funding-rate', { params: { symbols: symbol } }),
       getClient().get('/funding-rate-history', {
         params: { symbols: symbol, interval: '6hour', from, to: now },
       }),
+      getClient().get('/predicted-funding-rate', { params: { symbols: symbol } }),
     ]);
 
     const entry = currentRes.status === 'fulfilled' ? currentRes.value.data?.[0] : null;
@@ -62,6 +63,12 @@ export async function fetchFundingRate(coin) {
       }
     }
 
+    // Tasa predicha para el próximo periodo (estimación antes de liquidación)
+    const predictedEntry = predictedRes.status === 'fulfilled'
+      ? predictedRes.value.data?.[0]
+      : null;
+    const predictedRate = predictedEntry?.value ?? null;
+
     const result = {
       rate: parseFloat(rate.toFixed(6)),
       rate_pct: parseFloat((rate * 100).toFixed(4)),
@@ -71,6 +78,8 @@ export async function fetchFundingRate(coin) {
         : rate < -0.0005 ? 'shorts_overloaded'
         : 'balanced',
       next_funding_time: entry.next_funding_time ?? null,
+      predicted_rate:     predictedRate !== null ? parseFloat(predictedRate.toFixed(6)) : null,
+      predicted_rate_pct: predictedRate !== null ? parseFloat((predictedRate * 100).toFixed(4)) : null,
     };
 
     cacheSet(cacheKey, result, env.cache.fundingRateTtl);

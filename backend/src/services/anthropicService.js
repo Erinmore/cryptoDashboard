@@ -99,10 +99,6 @@ function buildPrompt(ctx) {
   if (ctx.fear_greed) {
     lines.push(`  Fear & Greed: ${ctx.fear_greed.value} (${ctx.fear_greed.classification})`);
   }
-  if (ctx.sentiment) {
-    const s = ctx.sentiment;
-    lines.push(`  CryptoPanic: score=${s.score?.toFixed(2)}, ${s.bullish_votes} votos bullish vs ${s.bearish_votes} bearish`);
-  }
   if (ctx.derivatives) {
     const d = ctx.derivatives;
     if (d.funding_rate != null) lines.push(`  Funding Rate: ${(d.funding_rate * 100).toFixed(4)}%`);

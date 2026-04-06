@@ -56,10 +56,12 @@ const client = {
  * Para 1W: market_chart daily (365d, CoinGecko devuelve diario para days>90) → buckets de 168h.
  */
 const TF_CONFIG = {
-  '1h': { source: 'market_chart', days: 7,   bucketHours: 1,   label: '1h' },
+  '1h': { source: 'market_chart', days: 7,   bucketHours: 1,   interval: 'hourly', label: '1h' },
   '4h': { source: 'ohlc',         days: 30,  label: '4h' },
   '1D': { source: 'ohlc',         days: 365, label: '1D' },
-  '1W': { source: 'market_chart', days: 365, bucketHours: 168, label: '1W' },
+  // CoinGecko free tier rechaza interval=hourly cuando days>90 (HTTP 400).
+  // Para 1W se piden datos diarios (365d) y se agregan en buckets de 168h (7 días).
+  '1W': { source: 'market_chart', days: 365, bucketHours: 168, interval: 'daily', label: '1W' },
 };
 
 /** Cache TTL por TF (segundos) — TFs altos cambian menos. */
@@ -98,7 +100,7 @@ export async function fetchOHLC(coin, timeframe) {
         volume: volumeMap.get(c.t) ?? 0,
       }));
     } else {
-      candles = await fetchMarketChartAggregated(coinId, config.days, config.bucketHours);
+      candles = await fetchMarketChartAggregated(coinId, config.days, config.bucketHours, config.interval);
     }
 
     cacheSet(cacheKey, candles, TF_CACHE_TTL[timeframe] ?? env.cache.ohlcTtl);
@@ -154,9 +156,9 @@ async function fetchVolumeMap(coinId, days) {
  * - Para buckets de 8h+: hay múltiples ticks por bucket → open/high/low se calculan
  *   correctamente desde los precios reales dentro de la ventana.
  */
-async function fetchMarketChartAggregated(coinId, days, bucketHours) {
+async function fetchMarketChartAggregated(coinId, days, bucketHours, interval = 'hourly') {
   const { data } = await client.get(`/coins/${coinId}/market_chart`, {
-    params: { vs_currency: 'usd', days, interval: 'hourly' },
+    params: { vs_currency: 'usd', days, interval },
   });
 
   const { prices, total_volumes } = data;

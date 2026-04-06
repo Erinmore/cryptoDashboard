@@ -8,7 +8,7 @@ Instrucciones para Claude Code en este proyecto.
 
 **CRYPTEX** es un dashboard profesional de análisis técnico de criptomonedas (BTC, ETH, SOL) con:
 - 14 indicadores técnicos calculados localmente
-- Sentimiento en vivo (Fear & Greed Index; CryptoPanic requiere plan de pago desde 2026)
+- Sentimiento en vivo (Fear & Greed Index)
 - Datos de derivados (Funding Rate, Open Interest, Long/Short Ratio via Coinalyze)
 - Análisis IA bajo demanda (Anthropic Claude, botón manual)
 - Visualización interactiva con PixiJS v7.4.x
@@ -95,7 +95,6 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   dbService.js               ← saveAnalysis(), getAnalysisHistory(), getLastAnalysis()
   indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores
   coingeckoService.js        ← fetchOHLC (1h/4h/1D/1W), fetchCurrentPrice, fetchBTCDominance
-  cryptopanicService.js      ← fetchSentiment — degraded si sin suscripción
   fearGreedService.js        ← fetchFearGreed (alternative.me, gratis) + alimenta históricos
   coinalyzeService.js        ← fetchFundingRate, fetchOpenInterest, fetchLongShortRatio, fetchLiquidations + históricos
   historyService.js          ← Gestión de históricos en memoria para análisis LLM (7-30 días)
@@ -135,6 +134,28 @@ frontend/
 ```
 
 **Flujo de datos frontend:** `fetchData() → setState() → subscribe callbacks → renderChart() + updateSidebar()`
+
+---
+
+## Gráfico PixiJS — notas de implementación
+
+### Z-order en `drawGrid()` (draw.js)
+Los textos de ejes deben añadirse al `gridLayer` **después** del objeto `PIXI.Graphics` (`gfx`), no antes. Si se hace `gridLayer.addChild(gfx)` al final, los fondos opacos de los ejes (drawRect) tapan los textos. Patrón correcto:
+```js
+gridLayer.addChild(gfx);           // fondos + líneas grid (debajo)
+for (const t of texts) gridLayer.addChild(t);  // etiquetas (encima)
+```
+
+### Velas visibles (`createViewport`, draw.js)
+`visibleBars = Math.min(candles.length, 80)` — hardcodeado en 80. Para hacerlo parametrizable, pasarlo como argumento o leerlo del store/estado.
+
+### Render bajo demanda
+No hay `requestAnimationFrame` ni ticker de Pixi activo. `renderChart()` (app.js) se llama solo en: nuevos datos del backend, drag/zoom del usuario (vía `setViewport` callback en `initInteractions`), y resize. No añadir lógica de animación continua.
+
+### Coordenadas del gráfico
+- `PADDING_LEFT=72` reservado para eje Y, `PADDING_BOTTOM=28` para eje X
+- `chartWidth()` y `chartHeight()` descuentan el padding — usarlos siempre en vez de `getSize()` directamente para cálculos de posición de velas
+- El viewport `{ offsetX, visibleBars, priceMin, priceMax }` es la fuente de verdad para todo el render; `interactions.js` lo modifica vía callback `setViewport`
 
 ---
 
@@ -209,7 +230,6 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 | Servicio | Uso | Auth | TTL cache | Notas |
 |----------|-----|------|-----------|-------|
 | CoinGecko v3 | OHLC (4 TFs), precio, BTC Dominance | Opcional (free tier) | 60s–1800s OHLC (per-TF), 30s precio, 10min dominance | — |
-| CryptoPanic v2 | Sentimiento noticias | `CRYPTOPANIC_TOKEN` | 5min | **Requiere plan de pago desde 2026.** Sin suscripción devuelve `results: []` → dashboard muestra "—" |
 | alternative.me | Fear & Greed Index | Ninguna | 10min | Completamente gratis, sin registro |
 | Coinalyze v1 | Funding Rate, OI, L/S Ratio, Liquidaciones | `COINALYZE_API_KEY` (gratis) | 30min FR, 5min OI/LSR, 5min Liq | Ver estructura de respuesta real abajo |
 | Anthropic | Análisis IA | `ANTHROPIC_API_KEY` | Sin cache (on-demand) | — |
@@ -224,8 +244,6 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 
 **Degraded mode:**
 - Si `COINALYZE_API_KEY` no está configurada → `env.hasDerivativesData` es `false` y todos los servicios de Coinalyze devuelven `null` sin lanzar error
-- CryptoPanic sin suscripción → `score: null`, `unavailable: true` → sidebar muestra "—"
-- Si CryptoPanic falla con datos previos → usa caché SQLite con flag `stale: true`
 
 ---
 
@@ -250,7 +268,6 @@ Las migraciones se ejecutan inline en `config/db.js` al arrancar. No hay fichero
 
 **Tablas:**
 - `analyses` — histórico de análisis IA (máx 1000 por coin, pruning automático)
-- `sentiment_cache` — fallback persistente de CryptoPanic por coin
 - `candles_cache` — reservada para futuro (no se usa actualmente)
 
 **No guardar** datos OHLC ni indicadores técnicos en DB — son efímeros y se recalculan en cada request.
@@ -342,11 +359,10 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 - **Timeframes optimizados**: reducidos a 1h → 4h → 1D → 1W; cache per-TF (60s–1800s); 1W implementado vía agregación de datos diarios en buckets de 7 días
 - **WaveTrend sidebar**: señal corregida — usa `wt.signal` del backend (`cross up/down`, `overbought/oversold`) en vez de solo `wt1 > 0`
 - **Coinalyze**: campos de respuesta corregidos tras verificar la API real (`value` en FR y OI; `l`/`s` en LSR)
-- **CryptoPanic**: ahora muestra "—" correctamente cuando la API no retorna resultados (plan de pago requerido)
 - **Open Interest**: sidebar muestra valor absoluto formateado (`$90.2M`) + cambio 24h real vía endpoint de históricos
 - **Funding Rate**: sidebar muestra tasa + tendencia (rising/falling/stable) vía endpoint de históricos 48h
 - **Liquidaciones**: nuevo endpoint `/liquidation-history` con suma 24h de longs vs shorts liquidados
-- **Tooltips sentimiento**: Fear & Greed, CryptoPanic, Funding Rate, Open Interest, L/S Ratio, Liquidaciones — mismo estilo que indicadores, con icono punto azul en hover (`::after` en `.sent-label[title]`)
+- **Tooltips sentimiento**: Fear & Greed, Funding Rate, Open Interest, L/S Ratio, Liquidaciones — mismo estilo que indicadores, con icono punto azul en hover (`::after` en `.sent-label[title]`)
 - **Tooltips indicadores**: reescritos con nivel didáctico para alguien nuevo en trading
 - **Sistema de históricos**: módulo `historyService.js` gestiona 7-30 días de contexto temporal para análisis LLM. Incluye: F&G 30d, FR 48h, OI 7d, L/S 7d, Liq 7d
 - **Refactorización CSS (2026-04)**: Se eliminaron ~60 valores hardcodeados del CSS. Implementado sistema modular de variables (colores, tipografía, espaciado, border-radius, transiciones). Estilos duplicados consolidados. Documentación en `CSS_CONVENTIONS.md`
@@ -425,7 +441,6 @@ El stub ya tiene `buildPrompt()` completo y el código de integración SDK en co
 
 **API keys configuradas en `.env`:**
 - `COINGECKO_API_KEY` — demo key
-- `CRYPTOPANIC_TOKEN` — token (sin plan de pago activo → devuelve vacío)
 - `COINALYZE_API_KEY` — key gratuita, operativa
 
 ---

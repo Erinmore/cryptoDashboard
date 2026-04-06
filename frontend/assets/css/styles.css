@@ -367,9 +367,9 @@ html, body {
 }
 .indicator-row:last-child { border-bottom: none; }
 
-/* ── Mixin para labels con icono de tooltip ────────────────────────── */
+/* ── Labels con icono de tooltip ──────────────────────────────────── */
 .ind-name,
-.sent-label[title] {
+.sent-label[data-tooltip] {
   color: var(--text-muted);
   font-size: var(--fs-base);
   cursor: default;
@@ -382,7 +382,7 @@ html, body {
 }
 
 .ind-name::after,
-.sent-label[title]::after {
+.sent-label[data-tooltip]::after {
   content: '';
   display: inline-block;
   width: var(--sp-sm);
@@ -395,15 +395,56 @@ html, body {
 }
 
 .ind-name:hover,
-.sent-label[title]:hover {
+.sent-label[data-tooltip]:hover {
   color: var(--text-secondary);
 }
 
 .ind-name:hover::after,
-.sent-label[title]:hover::after {
+.sent-label[data-tooltip]:hover::after {
   border-color: var(--accent);
   background: var(--accent);
   opacity: 1;
+}
+
+/* ── Tooltip bubble ───────────────────────────────────────────────── */
+.tooltip-bubble {
+  position: fixed;
+  z-index: 9999;
+  max-width: 300px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-2xl) var(--sp-2xl);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.tooltip-bubble.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tooltip-bubble p {
+  font-size: var(--fs-md);
+  font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 var(--sp-lg) 0;
+}
+
+.tooltip-bubble p:last-child {
+  margin-bottom: 0;
+}
+
+/* Primera línea de cada párrafo como título si está en negrita */
+.tooltip-bubble p strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  display: block;
+  margin-bottom: var(--sp-xs);
 }
 
 .ind-value {
@@ -472,6 +513,20 @@ html, body {
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px solid var(--border-subtle);
+}
+
+/* Wrapper for multi-line sent-value (e.g. Funding Rate with detail) */
+.sent-value-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-xs);
+}
+.sent-detail {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  font-weight: 400;
+  line-height: 1.4;
 }
 
 /* ── Recommendation panel ─────────────────────────────────────────── */
@@ -575,7 +630,7 @@ html, body {
 /* ── Sent-signal color variants ───────────────────────────────────── */
 .sent-signal.bullish { color: var(--bullish); }
 .sent-signal.bearish { color: var(--bearish); }
-.sent-signal.neutral { color: var(--text-muted); }
+.sent-signal.neutral { color: var(--text-secondary); }
 
 /* ── Timer "imminent" ─────────────────────────────────────────────── */
 .timer-display.soon { color: var(--bearish); font-weight: 400; }

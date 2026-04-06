@@ -5,7 +5,7 @@
  *   updateHeader(state)         — precio, variación 24h, BTC dominance
  *   updateRegimeBadge(state)    — badge TRENDING / RANGING / HIGH_VOLATILITY
  *   updateIndicators(state)     — panel de indicadores técnicos
- *   updateSentiment(state)      — Fear & Greed, CryptoPanic, derivados
+ *   updateSentiment(state)      — Fear & Greed, derivados
  *   updateRecommendation(rec)   — panel de análisis IA
  *   showRecommendationLoading() — spinner "Analizando..."
  *   hideRecommendationLoading() — vuelve al estado vacío
@@ -313,20 +313,49 @@ export function updateIndicators(state) {
   }
 }
 
+// ── Sentiment helpers ───────────────────────────────────────────────
+
+/** Countdown to next funding time (Unix seconds). Returns "en Xh Ym" or "en Ym". */
+function fmtNextFunding(ts) {
+  const diffSec = ts - Math.floor(Date.now() / 1000);
+  if (diffSec <= 0) return null;
+  const h = Math.floor(diffSec / 3600);
+  const m = Math.floor((diffSec % 3600) / 60);
+  return h > 0 ? `en ${h}h ${m}m` : `en ${m}m`;
+}
+
+/** Maps OI signal to arrow icon + CSS class. */
+function oiSignalToArrow(signal) {
+  switch (signal) {
+    case 'increasing_fast': return { icon: '↑↑', class: 'bullish' };
+    case 'increasing':      return { icon: '↑',  class: 'bullish' };
+    case 'decreasing':      return { icon: '↓',  class: 'bearish' };
+    case 'decreasing_fast': return { icon: '↓↓', class: 'bearish' };
+    default:                return { icon: '→',  class: 'neutral'  };
+  }
+}
+
+/** Maps L/S ratio signal to contrarian arrow icon + CSS class. */
+function lsrSignalToArrow(signal) {
+  switch (signal) {
+    case 'longs_dominant_contrarian_bear':  return { icon: '↓', class: 'bearish' };
+    case 'shorts_dominant_contrarian_bull': return { icon: '↑', class: 'bullish' };
+    default:                                return { icon: '→', class: 'neutral'  };
+  }
+}
+
 // ── Sentiment panel ────────────────────────────────────────────────
 
 export function updateSentiment(state) {
-  const { fearGreed, sentiment, derivatives } = state;
+  const { fearGreed, derivatives } = state;
 
   // Fear & Greed
   if (fearGreed) {
-    // Valor + flecha de tendencia diaria
     const trendArrow = fearGreed.trend === 'improving' ? ' ↑' : fearGreed.trend === 'worsening' ? ' ↓' : '';
     setText('fear-greed-value', `${fearGreed.value}${trendArrow}`);
 
     const fgEl = $('fear-greed-label');
     if (fgEl) {
-      // Indicador de flechas basado en valor y tendencia
       const signalClass = fgSignalClass(fearGreed.value);
       let arrow = '→';
       if (fearGreed.trend === 'improving') {
@@ -338,72 +367,6 @@ export function updateSentiment(state) {
       }
       fgEl.textContent = arrow;
       fgEl.className   = 'sent-signal ' + signalClass;
-    }
-  }
-
-  // CryptoPanic
-  if (sentiment) {
-    if (sentiment.unavailable || sentiment.score == null) {
-      setText('cryptopanic-score', '—');
-      const bullEl = $('votes-bullish');
-      const bearEl = $('votes-bearish');
-      if (bullEl) bullEl.style.width = '50%';
-      if (bearEl) bearEl.style.width = '50%';
-    } else {
-      const stale = sentiment.stale ? ' ⚠' : '';
-      setText('cryptopanic-score', fmt(sentiment.score, 2) + stale);
-
-      // Barra de votos
-      const bull  = sentiment.bullish_votes ?? 0;
-      const bear  = sentiment.bearish_votes ?? 0;
-      const total = bull + bear;
-      const pctB  = total > 0 ? ((bull / total) * 100).toFixed(1) : 50;
-      const pctBe = total > 0 ? (100 - pctB).toFixed(1) : 50;
-
-      const bullEl = $('votes-bullish');
-      const bearEl = $('votes-bearish');
-      if (bullEl) bullEl.style.width = `${pctB}%`;
-      if (bearEl) bearEl.style.width = `${pctBe}%`;
-    }
-  }
-
-  // Noticias CryptoPanic
-  const newsList = $('news-list');
-  if (newsList) {
-    const news = sentiment?.latest_news ?? [];
-    newsList.innerHTML = '';
-    if (news.length > 0) {
-      for (const item of news) {
-        const article = document.createElement('div');
-        article.className = `news-item ${item.sentiment ?? 'neutral'}`;
-
-        const link = document.createElement('a');
-        link.className   = 'news-title';
-        link.textContent = item.title ?? '';
-        link.href        = item.url   ?? '#';
-        link.target      = '_blank';
-        link.rel         = 'noopener noreferrer';
-
-        const meta   = document.createElement('div');
-        meta.className = 'news-meta';
-
-        const src  = document.createElement('span');
-        src.className   = 'news-source';
-        src.textContent = item.source ?? '';
-
-        const time = document.createElement('span');
-        time.className   = 'news-time';
-        time.textContent = timeAgo(item.published_at);
-
-        meta.appendChild(src);
-        meta.appendChild(time);
-        article.appendChild(link);
-        article.appendChild(meta);
-        newsList.appendChild(article);
-      }
-      newsList.style.display = '';
-    } else {
-      newsList.style.display = 'none';
     }
   }
 
@@ -425,6 +388,23 @@ export function updateSentiment(state) {
       frEl.textContent = `${sign}${fmt(fr.rate_pct, 4)}%${trendArr}`;
       frEl.className   = 'sent-value ' + (fr.rate_pct > 0.05 ? 'price-change up' : fr.rate_pct < -0.02 ? 'price-change down' : '');
     }
+    const detailEl = $('funding-rate-detail');
+    if (detailEl) {
+      const parts = [];
+      if (fr.annualized_pct != null) {
+        const s = fr.annualized_pct >= 0 ? '+' : '';
+        parts.push(`${s}${fmt(fr.annualized_pct, 1)}% anual`);
+      }
+      if (fr.predicted_rate_pct != null) {
+        const s = fr.predicted_rate_pct >= 0 ? '+' : '';
+        parts.push(`pred: ${s}${fmt(fr.predicted_rate_pct, 4)}%`);
+      }
+      if (fr.next_funding_time != null) {
+        const remaining = fmtNextFunding(fr.next_funding_time);
+        if (remaining) parts.push(remaining);
+      }
+      detailEl.textContent = parts.join(' · ');
+    }
   }
 
   // Open Interest
@@ -442,12 +422,34 @@ export function updateSentiment(state) {
     } else {
       setText('open-interest', '—');
     }
+    const oiSignalEl = $('open-interest-signal');
+    if (oiSignalEl) {
+      const arrow = oiSignalToArrow(oi.signal);
+      oiSignalEl.textContent = arrow.icon;
+      setClass(oiSignalEl, 'sent-signal', arrow.class);
+    }
   }
 
   // Long/Short
   const lsr = derivatives.long_short_ratio;
   if (lsr) {
-    setText('long-short', `${fmt(lsr.long_pct, 1)}% L / ${fmt(lsr.short_pct, 1)}% S`);
+    const lsEl = $('long-short');
+    if (lsEl) {
+      lsEl.textContent = `${fmt(lsr.long_pct, 1)}% L / ${fmt(lsr.short_pct, 1)}% S`;
+      if (lsr.signal === 'longs_dominant_contrarian_bear') {
+        lsEl.className = 'sent-value price-change down';
+      } else if (lsr.signal === 'shorts_dominant_contrarian_bull') {
+        lsEl.className = 'sent-value price-change up';
+      } else {
+        lsEl.className = 'sent-value';
+      }
+    }
+    const lsrSignalEl = $('long-short-signal');
+    if (lsrSignalEl) {
+      const arrow = lsrSignalToArrow(lsr.signal);
+      lsrSignalEl.textContent = arrow.icon;
+      setClass(lsrSignalEl, 'sent-signal', arrow.class);
+    }
   }
 
   // Liquidaciones 24h

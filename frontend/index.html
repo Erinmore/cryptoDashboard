@@ -71,38 +71,31 @@
         <h3 class="section-title" data-icon="🔮">Sentimiento</h3>
         <div class="section-body">
           <div class="sentiment-row">
-            <span class="sent-label" title="Fear &amp; Greed Index — Índice de Miedo y Codicia (0–100). Mide el estado emocional colectivo del mercado cripto combinando 6 fuentes: volatilidad del precio, momentum del mercado, redes sociales, dominancia de Bitcoin, volumen y encuestas. Es un indicador contrario: los extremos suelen marcar puntos de giro. 0–24 (Extreme Fear, rojo): el pánico domina, muchos inversores venden impulsados por el miedo. Históricamente estos niveles coinciden con suelos de mercado y oportunidades de compra. 25–49 (Fear): precaución, más vendedores que compradores. 50–74 (Greed): optimismo, el mercado está comprando con entusiasmo. 75–100 (Extreme Greed, verde): euforia. Todo el mundo quiere comprar, lo que históricamente suele coincidir con techos de mercado. Regla clásica de Warren Buffett aplicada a cripto: 'sé codicioso cuando otros tienen miedo, y ten miedo cuando otros son codiciosos'.">Fear &amp; Greed</span>
+            <span class="sent-label" data-tooltip="Fear &amp; Greed Index — Índice de Miedo y Codicia\nMide el estado emocional colectivo del mercado cripto en una escala de 0 a 100, combinando seis fuentes: volatilidad del precio, momentum, redes sociales, dominancia de Bitcoin, volumen y encuestas.\n\nEs un indicador contrario: los extremos suelen señalar puntos de giro.\n\n0 – 24 · Extreme Fear (rojo): el pánico domina. Históricamente, estos niveles coinciden con suelos de mercado y posibles oportunidades de compra.\n25 – 49 · Fear: precaución, más vendedores que compradores.\n50 – 74 · Greed: optimismo, el mercado compra con entusiasmo.\n75 – 100 · Extreme Greed (verde): euforia. Suele coincidir con techos de mercado.\n\nRegla clásica de Warren Buffett aplicada a cripto: «Sé codicioso cuando otros tienen miedo, y ten miedo cuando otros son codiciosos».">Fear &amp; Greed</span>
             <span id="fear-greed-value" class="sent-value">—</span>
             <span id="fear-greed-label" class="sent-signal">—</span>
           </div>
-          <div class="sentiment-row">
-            <span class="sent-label" title="CryptoPanic — Sentimiento de noticias en tiempo real. Analiza las noticias más relevantes de cripto y cuenta los votos bullish (alcistas) y bearish (bajistas) que la comunidad asigna a cada noticia. El score (0–1) indica la proporción de votos positivos: 0.5 = equilibrio exacto entre compradores y vendedores, mayor de 0.5 = más noticias positivas que negativas, menor de 0.5 = más negativas. La barra verde/roja visualiza esa proporción de forma intuitiva. Limitación: requiere suscripción de pago a CryptoPanic para recibir datos en tiempo real.">CryptoPanic</span>
-            <span id="cryptopanic-score" class="sent-value">—</span>
-            <div class="votes-bar" id="votes-bar">
-              <div class="votes-bullish" id="votes-bullish" style="width:50%"></div>
-              <div class="votes-bearish" id="votes-bearish" style="width:50%"></div>
-            </div>
-          </div>
-
-          <!-- Noticias CryptoPanic -->
-          <div id="news-list" class="news-list"></div>
-
           <!-- Derivados (Coinalyze) -->
           <div class="derivatives-block" id="derivatives-block">
             <div class="sentiment-row">
-              <span class="sent-label" title="Funding Rate — Tasa de financiación de contratos perpetuos. Los perpetuos son contratos de futuros sin fecha de vencimiento. Para que su precio se mantenga anclado al precio real (spot), los exchanges cobran una tasa periódica (cada 8 horas) entre posiciones largas y cortas. Positivo (verde): los que apuestan al alza (longs) pagan a los que apuestan a la baja (shorts). Significa que hay más demanda de longs que de shorts → mercado sesgado alcista, pero con riesgo de liquidaciones en cascada si el precio baja. Negativo (rojo): los shorts pagan a los longs → más posiciones bajistas abiertas, mercado sesgado a la baja. Cerca de 0%: equilibrio entre longs y shorts. Valores extremos (+0.1% o más, o -0.05% o menos) suelen preceder correcciones porque muchas posiciones están apalancadas en la misma dirección.">Funding Rate</span>
-              <span id="funding-rate" class="sent-value">—</span>
+              <span class="sent-label" data-tooltip="Funding Rate — Tasa de financiación\nLos contratos perpetuos son apuestas sobre el precio sin fecha de vencimiento. Para que su precio no se desvíe del precio real, los exchanges cobran una pequeña tasa cada 8 horas entre compradores y vendedores.\n\nPositivo: los que apuestan al alza (longs) pagan a los bajistas (shorts). Indica que hay más demanda de subida, pero también mayor riesgo de corrección si el precio cae de golpe.\n\nNegativo: los shorts pagan a los longs. Indica más posiciones bajistas abiertas.\n\nCerca de 0 %: equilibrio entre ambos lados.\n\nValores extremos (por encima de +0,1 % o por debajo de −0,05 %) suelen preceder correcciones, porque muchas posiciones están apalancadas en la misma dirección y son vulnerables a liquidaciones en cadena.\n\nTasa anualizada: proyecta la tasa actual a un año completo para comparar con otras inversiones.\n\nTasa predicha: estimación de la próxima tasa antes de que se liquide el periodo, calculada en tiempo real por el exchange.">Funding Rate</span>
+              <div class="sent-value-wrap">
+                <span id="funding-rate" class="sent-value">—</span>
+                <span id="funding-rate-detail" class="sent-detail"></span>
+              </div>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Open Interest — Interés abierto en contratos de futuros perpetuos. Es la cantidad total de dinero (en USD) que está actualmente comprometida en posiciones de futuros abiertas (tanto longs como shorts) en todos los exchanges. Un OI alto significa que muchos traders están apalancados → el mercado es más volátil porque cualquier movimiento brusco puede desencadenar liquidaciones en cadena. Un OI que sube junto al precio indica convicción en la tendencia (nuevo dinero entrando). Un OI que sube pero el precio no sube puede indicar acumulación de shorts esperando una caída. Un OI que cae bruscamente mientras el precio cae indica liquidaciones masivas de longs (capitulación). Dato: Coinalyze agrega datos de múltiples exchanges para dar una visión global del mercado de derivados.">Open Interest</span>
+              <span class="sent-label" data-tooltip="Open Interest — Interés abierto\nEs el total de dinero (en USD) comprometido en posiciones de futuros abiertas en este momento, sumando todos los exchanges.\n\nUn OI alto significa que muchos traders están apalancados. Esto hace el mercado más volátil, ya que cualquier movimiento brusco puede desencadenar liquidaciones en cadena.\n\nCómo interpretarlo:\n· OI sube junto al precio → nuevo dinero entra a favor de la tendencia. Señal de convicción.\n· OI sube pero el precio no sube → posible acumulación de posiciones bajistas.\n· OI cae bruscamente mientras el precio cae → liquidaciones masivas de compradores (capitulación).\n\nDatos proporcionados por Coinalyze, que agrega información de múltiples exchanges.">Open Interest</span>
               <span id="open-interest" class="sent-value">—</span>
+              <span id="open-interest-signal" class="sent-signal neutral">→</span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Long/Short Ratio — Proporción de posiciones largas vs cortas. Muestra qué porcentaje de los traders de futuros está apostando al alza (long) y cuántos a la baja (short) en este momento. Es un indicador contrario: cuando la mayoría apuesta en la misma dirección, el mercado tiende a moverse en sentido contrario para 'cazar' sus stops. Más del 60% de longs: mercado muy sesgado al alza → riesgo de squeeze bajista (caída brusca para liquidar longs). Menos del 40% de longs (más del 60% shorts): mercado sesgado a la baja → riesgo de short squeeze (subida brusca para liquidar shorts). Zona 45–55%: equilibrio razonable, sin sesgo extremo. Útil combinado con Funding Rate: FR positivo + L/S alto en longs = señal de alerta de corrección inminente.">L/S Ratio</span>
+              <span class="sent-label" data-tooltip="Long/Short Ratio — Proporción de posiciones alcistas vs bajistas\nMuestra qué porcentaje de los traders de futuros apuesta al alza (long) y cuántos a la baja (short) en este momento.\n\nEs un indicador contrario: cuando casi todos apuestan en la misma dirección, el mercado tiende a moverse en sentido opuesto para liquidar esas posiciones.\n\nReferencias:\n· Más del 60 % de longs: mercado muy sesgado al alza. Riesgo de caída brusca para liquidar compradores.\n· Menos del 40 % de longs: mercado sesgado a la baja. Riesgo de subida brusca para liquidar vendedores.\n· Entre 45 % y 55 %: equilibrio razonable, sin señal extrema.\n\nCombinado con el Funding Rate: si ambos están muy sesgados en la misma dirección, la probabilidad de corrección aumenta.\n\nLa flecha muestra la señal contraria al posicionamiento dominante, ya que el mercado suele moverse para liquidar al lado mayoritario.">L/S Ratio</span>
               <span id="long-short" class="sent-value">—</span>
+              <span id="long-short-signal" class="sent-signal neutral">→</span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Liquidaciones 24h — Posiciones forzadas a cerrar en las últimas 24 horas. Cuando el precio se mueve bruscamente en una dirección, los traders apalancados que apostaron en la dirección contraria no pueden mantener sus posiciones y el exchange las cierra automáticamente (liquidación). L (longs liquidados): posiciones alcistas destruidas porque el precio cayó. Un número alto indica que ha habido una caída fuerte y muchos compradores apalancados han sido barridos — puede señalar capitulación y posible suelo. S (shorts liquidados): posiciones bajistas destruidas porque el precio subió (short squeeze). Un short squeeze con mucho volumen puede alimentar subidas explosivas. Cuanto mayor el volumen total de liquidaciones, más violento fue el movimiento. Dato aportado por Coinalyze agregando múltiples exchanges.">Liq 24h</span>
+              <span class="sent-label" data-tooltip="Liquidaciones 24h — Posiciones forzadas a cerrar\nCuando el precio se mueve bruscamente, los traders apalancados en la dirección contraria no pueden mantener sus posiciones y el exchange las cierra de forma automática. A eso se le llama liquidación.\n\nL (longs liquidados): compradores destruidos porque el precio cayó. Un volumen alto puede señalar capitulación y un posible suelo de mercado.\n\nS (shorts liquidados): vendedores destruidos porque el precio subió. Cuando ocurre con fuerza, se llama «short squeeze» y puede alimentar subidas explosivas.\n\nCuanto mayor sea el volumen total de liquidaciones, más violento fue el movimiento de precio. Datos de Coinalyze, agregando múltiples exchanges.">Liq 24h</span>
               <span id="liquidations" class="sent-value">—</span>
             </div>
           </div>
@@ -114,42 +107,42 @@
         <h3 class="section-title" data-icon="📊">Indicadores <span id="indicators-tf" style="font-size: var(--fs-sm); font-weight: normal;">4h</span></h3>
         <div class="section-body">
           <div class="indicator-row" id="ind-rsi">
-            <span class="ind-name">RSI</span>
+            <span class="ind-name" data-tooltip="RSI — Relative Strength Index (Índice de Fuerza Relativa)\nMide si el precio ha subido o bajado demasiado rápido en los últimos 14 periodos. Es una escala de 0 a 100.\n\nCómo leerlo:\n· Por encima de 70 → sobrecomprado: el precio subió muy rápido y podría corregir.\n· Por debajo de 30 → sobrevendido: el precio cayó muy rápido y podría rebotar.\n· Entre 30 y 70 → zona neutral, sin señal clara.\n\nNo es una señal de compra o venta por sí solo. Funciona mucho mejor cuando se combina con otros indicadores.">RSI</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>
           <div class="indicator-row" id="ind-macd">
-            <span class="ind-name">MACD</span>
+            <span class="ind-name" data-tooltip="MACD — Moving Average Convergence Divergence\nCompara dos medias móviles del precio (rápida y lenta) para detectar cambios de tendencia y momentum.\n\nComponentes:\n· Línea MACD: diferencia entre la media rápida (12 periodos) y la lenta (26 periodos).\n· Línea Signal: media suavizada de la MACD (9 periodos).\n· Histograma: diferencia entre ambas líneas. Cuanto más grande, más fuerte el impulso.\n\nSeñales habituales:\n· Histograma positivo y creciendo → impulso alcista.\n· Histograma negativo y cayendo → impulso bajista.\n· MACD cruza por encima de Signal → posible inicio de tendencia alcista.\n· MACD cruza por debajo de Signal → posible inicio de tendencia bajista.">MACD</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>
           <div class="indicator-row" id="ind-stochrsi">
-            <span class="ind-name">StochRSI</span>
+            <span class="ind-name" data-tooltip="StochRSI — Stochastic RSI\nVersión más sensible del RSI. Aplica el cálculo del Oscilador Estocástico sobre el RSI, lo que lo hace reaccionar más rápido a los movimientos del precio.\n\nEscala de 0 a 100:\n· %K por encima de 80 → zona de sobrecompra: el rally podría agotarse.\n· %K por debajo de 20 → zona de sobreventa: la caída podría agotarse.\n· %K cruza %D hacia arriba → señal alcista.\n· %K cruza %D hacia abajo → señal bajista.\n\nEs más ruidoso que el RSI clásico. Se recomienda confirmar las señales con otros indicadores antes de actuar.">StochRSI</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>
           <div class="indicator-row" id="ind-bb">
-            <span class="ind-name">BB</span>
+            <span class="ind-name" data-tooltip="BB — Bandas de Bollinger\nTres líneas que envuelven el precio: una media móvil central (20 periodos) y dos bandas a dos desviaciones estándar por encima y por debajo.\n\nLas bandas se expanden cuando el mercado es volátil y se contraen cuando está tranquilo.\n\nEl valor %B indica dónde está el precio dentro de las bandas:\n· %B > 1: precio por encima de la banda superior → posible sobrecompra.\n· %B < 0: precio por debajo de la banda inferior → posible sobreventa.\n· %B entre 0 y 1: precio dentro del rango normal.\n\nCuando las bandas se estrechan mucho (squeeze), el mercado está acumulando energía antes de un movimiento fuerte, aunque no indica la dirección.">BB</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>
           <div class="indicator-row" id="ind-adx">
-            <span class="ind-name">ADX</span>
+            <span class="ind-name" data-tooltip="ADX — Average Directional Index\nMide la fuerza de la tendencia, sin importar si es alcista o bajista. No indica dirección, solo intensidad.\n\nCómo interpretarlo:\n· ADX < 20 → tendencia débil o mercado lateral. Los indicadores de tendencia son menos fiables.\n· ADX 20 – 40 → tendencia moderada. Buen entorno para operar siguiendo la tendencia.\n· ADX > 40 → tendencia fuerte con impulso claro.\n\nLas líneas +DI y −DI indican la dirección:\n· +DI por encima de −DI → tendencia alcista.\n· −DI por encima de +DI → tendencia bajista.">ADX</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>
           <div class="indicator-row" id="ind-supertrend">
-            <span class="ind-name">ST</span>
+            <span class="ind-name" data-tooltip="SuperTrend — Tendencia Dinámica\nIndicador de seguimiento de tendencia que combina la volatilidad del precio (ATR) con la dirección del mercado. Genera un nivel dinámico que actúa como soporte o resistencia.\n\nCómo leerlo:\n· Tendencia UP (verde): el precio está por encima del nivel. El nivel actúa como soporte dinámico. La tendencia es alcista.\n· Tendencia DOWN (rojo): el precio está por debajo del nivel. El nivel actúa como resistencia dinámica. La tendencia es bajista.\n\nUn cambio de tendencia (flip) suele indicar un punto de giro relevante y es una de las señales más claras que genera este indicador.">ST</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>
           <div class="indicator-row" id="ind-wavetrend">
-            <span class="ind-name">WT</span>
+            <span class="ind-name" data-tooltip="WaveTrend — Oscilador de Momentum\nDetecta zonas de agotamiento del mercado (sobrecompra y sobreventa) y genera señales cuando dos líneas se cruzan.\n\nDos líneas: WT1 (más reactiva al precio) y WT2 (más suavizada).\n\nSeñales principales:\n· WT1 cruza WT2 hacia arriba en zona baja (< −60) → señal de entrada alcista.\n· WT1 cruza WT2 hacia abajo en zona alta (> +60) → señal de entrada bajista.\n· Zona por encima de +60: sobrecompra, el precio podría corregir.\n· Zona por debajo de −60: sobreventa, el precio podría rebotar.\n\nEs especialmente útil para detectar agotamientos de tendencia antes de un giro.">WT</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>
           <div class="indicator-row" id="ind-voldelta">
-            <span class="ind-name">VolDelta</span>
+            <span class="ind-name" data-tooltip="Volume Delta — Presión Compradora vs Vendedora\nAnaliza el volumen de cada vela separando la parte que proviene de compradores (velas verdes, compras agresivas) y la que proviene de vendedores (velas rojas, ventas agresivas).\n\nCómo interpretarlo:\n· % buy alto (más del 60 %): los compradores dominan el volumen. Señal de presión alcista.\n· % buy bajo (menos del 40 %): los vendedores dominan. Señal de presión bajista.\n· Equilibrio cerca del 50 %: mercado indeciso.\n\nEs especialmente útil para confirmar si un movimiento de precio tiene volumen real detrás, o si es un movimiento débil que podría revertirse.">VolDelta</span>
             <span class="ind-value">—</span>
             <span class="ind-signal">→</span>
           </div>

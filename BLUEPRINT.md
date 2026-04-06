@@ -42,7 +42,6 @@
 - ✅ Market Regime Badge (TRENDING / RANGING / HIGH VOLATILITY)
 
 **Sentimiento y contexto de mercado (con históricos para análisis IA):**
-- ✅ CryptoPanic en vivo (votos bullish/bearish + noticias)
 - ✅ Fear & Greed Index en vivo + histórico 30d (alternative.me — gratis, sin registro)
 - ✅ Funding Rate agregado multi-exchange + histórico 48h + tendencia (Coinalyze — gratis con registro)
 - ✅ Open Interest 24h + histórico 7d + cambio 24h real (Coinalyze)
@@ -78,7 +77,6 @@ APIs externas:
   • Axios (HTTP client)
   • node-cron (scheduling)
   • CoinGecko API v3 (OHLC + BTC Dominance — free tier)
-  • CryptoPanic API (sentimiento — token gratuito)
   • alternative.me API (Fear & Greed Index — completamente gratis, sin registro)
   • Coinalyze API (Funding Rate, Open Interest, L/S Ratio, Liquidaciones + históricos — gratis con registro)
 Utilities:
@@ -132,7 +130,6 @@ Monitoring:       PM2 Plus (opcional)
 │  ├─ CoinGecko (OHLC 5 TF para 1 coin seleccionada) → rápido│
 │  ├─ Indicadores (RSI, MACD, BB) → local compute             │
 │  ├─ Volumen Delta → local compute                           │
-│  ├─ CryptoPanic (Sentimiento) → 5min cache                  │
 │  ├─ Fear & Greed + históricos (30d) → 10min cache           │
 │  ├─ Coinalyze (FR, OI, L/S, Liquidaciones) + históricos     │
 │  └─ Históricos en memoria → para análisis LLM               │
@@ -149,7 +146,6 @@ Monitoring:       PM2 Plus (opcional)
 ┌─────────────────────────────────────────────────────────────┐
 │           EXTERNAL APIs & DATA SOURCES                      │
 │  ├─ CoinGecko (prices, OHLC)                                │
-│  ├─ CryptoPanic (news, sentiment)                           │
 │  ├─ Anthropic API v1 (Claude Sonnet - SOLO bajo demanda)   │
 │  └─ (Futuro: Binance WebSocket)                             │
 └─────────────────────────────────────────────────────────────┘
@@ -238,9 +234,8 @@ cryptoDashboard/                           # Raíz del proyecto
 │   │   │
 │   │   ├── services/
 │   │   │   ├── cacheService.js           # ✅ In-memory TTL cache
-│   │   │   ├── dbService.js              # ✅ CRUD sentiment_cache + analyses
+│   │   │   ├── dbService.js              # ✅ CRUD analyses
 │   │   │   ├── coingeckoService.js       # ✅ OHLC 3TF + precio + BTC dominance + volumen
-│   │   │   ├── cryptopanicService.js     # ✅ Sentimiento v2 + fallback SQLite
 │   │   │   ├── fearGreedService.js       # ✅ Fear & Greed Index (alternative.me) + históricos
 │   │   │   ├── coinalyzeService.js       # ✅ Funding Rate + OI + L/S Ratio + Liq + históricos
 │   │   │   ├── historyService.js         # ✅ Gestión de históricos en memoria (7-30 días)
@@ -459,7 +454,6 @@ GET /health
 │       "timestamp": "2026-04-01T14:30:00Z",
 │       "services": {
 │         "anthropic": "reachable",
-│         "cryptopanic": "reachable",
 │         "coingecko": "reachable",
 │         "database": "connected"
 │       }
@@ -886,7 +880,6 @@ SOPORTE/RESISTENCIA: S1=$93.500 (fuerza 3), R1=$96.800 (fuerza 3)
 
 SENTIMIENTO:
   Fear & Greed: 72 (Greed)
-  CryptoPanic: score=0.82 (bullish), 1240 votos bullish vs 268 bearish
   Funding Rate: +0.045% (sesgo alcista moderado, sin sobrecalentamiento)
   Open Interest: +8.5% en 24h (dinero nuevo entrando)
   Long/Short Ratio: 58% longs (sesgo alcista moderado)
@@ -963,28 +956,6 @@ PRECIO ACTUAL: $95.420 (+3.45% 24h)
       "status": "accumulation_confirmed",
       "next_resistance": 96800
     }
-  },
-
-  "sentiment": {
-    "cryptopanic": {
-      "score": 0.82,
-      "votes": {
-        "bullish": 1240,
-        "bearish": 268
-      },
-      "trend": "improving",
-      "impact_level": "high"
-    },
-    "latest_news": [
-      {
-        "title": "Bitcoin alcanza nuevo máximo histórico",
-        "url": "https://cryptopanic.com/...",
-        "importance": "high",
-        "sentiment": "bullish",
-        "votes": 156,
-        "created_at": "2026-04-01T14:00:00Z"
-      }
-    ]
   },
 
   "support_resistance": {
@@ -1356,7 +1327,6 @@ Implementados más servicios de los planificados originalmente:
 - [x] `cacheService` — in-memory TTL cache por key
 - [x] `dbService` — CRUD sentiment_cache + analyses con pruning automático
 - [x] `coingeckoService` — OHLC 3 TF + precio + BTC Dominance + volumen enriquecido
-- [x] `cryptopanicService` — API v2, fallback SQLite con flag `stale`
 - [x] `fearGreedService` — alternative.me, sin API key, gratuito — añadido en revisión
 - [x] `coinalyzeService` — Funding Rate + Open Interest + L/S Ratio — añadido en revisión
 - [x] `indicatorService` — orquesta los 14 indicadores por timeframe
@@ -1421,7 +1391,7 @@ Implementados más servicios de los planificados originalmente:
 
 - [x] `api/client.js`: fetchData(coin, tf) + postAnalyze(coin, tf) con manejo de errores
 - [x] `state/store.js`: getState / setState / subscribe (patrón observable sin framework)
-- [x] `ui/sidebar.js`: updateHeader, updateRegimeBadge, updateIndicators (8 indicadores con señales), updateSentiment (Fear&Greed + CryptoPanic + derivados), updateRecommendation (BUY/SELL/HOLD + TP/SL + alertas)
+- [x] `ui/sidebar.js`: updateHeader, updateRegimeBadge, updateIndicators (8 indicadores con señales), updateSentiment (Fear&Greed + derivados), updateRecommendation (BUY/SELL/HOLD + TP/SL + alertas)
 - [x] Conectar PixiJS ↔ data flow: candles reales en el gráfico tras loadData()
 - [x] `dataController.js` extendido: incluye `candles` del TF principal en la respuesta
 - [x] Botones "Actualizar" y "Analizar" conectados; selector coin y TF buttons funcionales
@@ -1432,11 +1402,10 @@ Implementados más servicios de los planificados originalmente:
 
 ### ✅ FASE 10: UI Polish & Sidebar — COMPLETADA
 
-- [x] News feed CryptoPanic: `#news-list` con `.news-item.bullish/bearish/neutral`, link, fuente y tiempo relativo
 - [x] Flash animación precio: `@keyframes flash-up/flash-down`, disparado con `void el.offsetWidth`
 - [x] Timer visual "soon": `.timer-display.soon { color: var(--bearish) }` cuando quedan ≤10s
 - [x] Tooltips indicadores: explicaciones detalladas en todos los `.ind-name` (reescritos con nivel didáctico para nuevos en trading)
-- [x] Tooltips sentimiento: mismo estilo y nivel de detalle en Fear & Greed, CryptoPanic, Funding Rate, Open Interest, L/S Ratio
+- [x] Tooltips sentimiento: mismo estilo y nivel de detalle en Fear & Greed, Funding Rate, Open Interest, L/S Ratio
 - [x] Icono de ayuda: pseudo-elemento `::after` con punto 5px que se rellena con `var(--accent)` en hover — aplicado a `.ind-name` y `.sent-label[title]`
 - [x] Bug fixes: regime badge (string plano), SuperTrend (usar `st.support/st.resistance`), clases `.sent-signal`
 
@@ -1458,7 +1427,6 @@ Implementados más servicios de los planificados originalmente:
 ### ✅ FASE 12: SQLite Persistence — COMPLETADA (backend)
 
 - [x] Tabla `analyses`: histórico de análisis IA (máx 1000 por coin, pruning automático)
-- [x] Tabla `sentiment_cache`: fallback persistente de CryptoPanic por coin
 - [x] `dbService.js`: saveAnalysis(), getAnalysisHistory(), getLastAnalysis()
 - [x] `GET /api/history/:coin` devuelve histórico paginado
 - [ ] Frontend panel de histórico: pendiente (Bloque 5)
@@ -1543,7 +1511,7 @@ Implementados más servicios de los planificados originalmente:
 | **Refresh Automático** | Timer 60seg | OHLC + Indicadores (GRATIS) |
 | **Refresh Manual** | Botón "🔄 Actualizar" | On-demand, restarting timer (GRATIS) |
 | **Análisis IA** | POST /api/analyze on-demand | Manual (botón usuario, ~$0.003 por click) |
-| **Sentimiento** | Fear & Greed (gratis) + CryptoPanic (requiere plan de pago desde 2026) | Barómetro global; CryptoPanic muestra "—" sin suscripción |
+| **Sentimiento** | Fear & Greed (gratis) | Barómetro global |
 | **Derivados** | Coinalyze (gratis) | Funding Rate, OI, L/S Ratio — el 75% del volumen cripto |
 | **IA** | Anthropic Claude | Mejor análisis, JSON structured, prompt enriquecido |
 | **Persistencia** | SQLite + histórico | Solo análisis IA (datos técnicos no guardados) |
@@ -1555,7 +1523,7 @@ Implementados más servicios de los planificados originalmente:
 ## 📝 NOTAS IMPORTANTES
 
 ### Costo & Control
-- **Timer 60seg:** 100% gratis (cálculos locales + CoinGecko + CryptoPanic + alternative.me + Coinalyze)
+- **Timer 60seg:** 100% gratis (cálculos locales + CoinGecko + alternative.me + Coinalyze)
 - **Botón "⚡ Analizar":** ~$0.003 por análisis (usuario decide cuándo)
 - **Objetivo:** Costo mensual < $5 si usuario es moderado (< 100 análisis/mes)
 - **alternative.me:** completamente gratis, sin registro, sin API key
@@ -1578,15 +1546,12 @@ Implementados más servicios de los planificados originalmente:
 - API keys **NUNCA** en frontend
 - Usar .env (gitignored) solo en backend
 - Anthropic key: SOLO backend, NUNCA frontend
-- CryptoPanic token: SOLO backend
 - Coinalyze API key: SOLO backend
 - alternative.me: no requiere key (API pública)
 - SSL/TLS obligatorio si infraestructura pública
 
 ### Degraded Mode (APIs opcionales)
 - Si `COINALYZE_API_KEY` no está configurada → Funding Rate / OI / L/S Ratio se omiten del dashboard y del prompt IA, sin romper nada
-- CryptoPanic requiere plan de pago desde 2026 (~$199/mes). Sin suscripción activa la API devuelve `results: []` y el dashboard muestra "—" en score y barra de votos (comportamiento correcto, no un error)
-- Si CryptoPanic falla con datos previos → usar último valor cacheado en SQLite con flag `"stale": true`
 
 ### Coinalyze — estructura de respuesta real (verificada 2026-04-03)
 **Endpoints actuales (valores reales):**
@@ -1610,7 +1575,6 @@ Implementados más servicios de los planificados originalmente:
 - Processing time: ~1.5 seg (3 requests OHLC en paralelo + caches)
 - Cache TTL por fuente:
   - OHLC: 60 segundos
-  - CryptoPanic: 5 minutos
   - Fear & Greed: 10 minutos (+ históricos 30 días en memoria)
   - Funding Rate: 30 minutos (exchanges actualizan cada 8h) (+ histórico 48h en memoria)
   - Open Interest: 5 minutos (+ histórico 7 días en memoria)
@@ -1631,7 +1595,6 @@ Implementados más servicios de los planificados originalmente:
 
 ### Rate Limits (Importante)
 - CoinGecko: 50 calls/min gratis (✅ suficiente)
-- CryptoPanic: ~6-10 requests/día gratis (✅ cacheable 5min)
 - Anthropic: Pay-as-you-go (✅ usuario controla gastos)
 
 ### Indicadores con Tooltips
