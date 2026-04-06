@@ -16,10 +16,11 @@ const DEPTH_LIMIT = 20; // Top 20 niveles de bid/ask
 const REQUEST_TIMEOUT = 5000; // 5s
 
 /**
- * Obtiene los mayores muros de compra y venta del order book de Binance.
+ * Obtiene los mayores muros de compra y venta del order book de Binance,
+ * además de spread, top 5 niveles y otros datos de microestructura.
  *
  * @param {string} symbol - Símbolo en Binance (ej: 'BTCUSDT')
- * @returns {Promise<Object|null>} { buyWall: {price, volume}, sellWall: {price, volume} } o null si falla
+ * @returns {Promise<Object|null>} { buyWall, sellWall, spread, spread_pct, bids_top5, asks_top5, timestamp } o null si falla
  */
 export async function fetchOrderBookWalls(symbol) {
   if (!symbol) {
@@ -46,9 +47,30 @@ export async function fetchOrderBookWalls(symbol) {
     // Encontrar el muro más grande en los asks (venta)
     const sellWall = findLargestWall(asks);
 
+    // Calcular spread y porcentaje de spread
+    const bestBid = parseFloat(bids[0][0]);
+    const bestAsk = parseFloat(asks[0][0]);
+    const spread = bestAsk - bestBid;
+    const spread_pct = (spread / bestBid) * 100;
+
+    // Top 5 bids y asks con estructura {price, volume}
+    const bids_top5 = bids.slice(0, 5).map(([p, v]) => ({
+      price: parseFloat(p),
+      volume: parseFloat(v),
+    }));
+
+    const asks_top5 = asks.slice(0, 5).map(([p, v]) => ({
+      price: parseFloat(p),
+      volume: parseFloat(v),
+    }));
+
     return {
       buyWall,
       sellWall,
+      spread,
+      spread_pct,
+      bids_top5,
+      asks_top5,
       timestamp: new Date().toISOString(),
     };
   } catch (error) {
@@ -58,6 +80,38 @@ export async function fetchOrderBookWalls(symbol) {
     );
     // Retorna null en modo degraded — no rompe /api/data
     return null;
+  }
+}
+
+/**
+ * Obtiene datos de ticker 24h de Binance (volumen, cambio de precio, highs/lows).
+ *
+ * @param {string} symbol - Símbolo en Binance (ej: 'BTCUSDT')
+ * @returns {Promise<Object|null>} { volume_24h_base, volume_24h_quote, price_change_pct, high_24h, low_24h } o null si falla
+ */
+export async function fetchBinanceTicker(symbol) {
+  if (!symbol) {
+    logger.warn('fetchBinanceTicker: símbolo vacío');
+    return null;
+  }
+
+  try {
+    const response = await axios.get(`${BINANCE_API_BASE}/ticker/24hr`, {
+      params: { symbol },
+      timeout: REQUEST_TIMEOUT,
+    });
+
+    const d = response.data;
+    return {
+      volume_24h_base: parseFloat(d.volume),      // en la crypto base (ej: BTC)
+      volume_24h_quote: parseFloat(d.quoteVolume), // en USD
+      price_change_pct: parseFloat(d.priceChangePercent),
+      high_24h: parseFloat(d.highPrice),
+      low_24h: parseFloat(d.lowPrice),
+    };
+  } catch (error) {
+    logger.warn(`fetchBinanceTicker error (${symbol}): ${error.message}`);
+    return null; // No crítico, no lanza error
   }
 }
 

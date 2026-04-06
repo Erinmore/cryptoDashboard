@@ -231,21 +231,81 @@ export async function fetchCurrentPrice(coin) {
   }
 }
 
-// ─── BTC Dominance ────────────────────────────────────────────────────────────
+// ─── Global Market Data ───────────────────────────────────────────────────────
 
-export async function fetchBTCDominance() {
-  const cacheKey = 'btc_dominance';
+export async function fetchGlobalMarketData() {
+  const cacheKey = 'global_market';
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
 
   try {
     const { data } = await client.get('/global');
-    const dominance = data.data.market_cap_percentage.btc ?? null;
+    const d = data.data;
 
-    cacheSet(cacheKey, dominance, env.cache.btcDominanceTtl);
-    return dominance;
+    const totalMarketCapUsd = d.total_market_cap?.usd ?? null;
+    const btcDominance = d.market_cap_percentage?.btc ?? null;
+
+    // BTC market cap = total * (btcDominance / 100)
+    // Altcoin market cap = total - BTC market cap
+    const btcMarketCapUsd = totalMarketCapUsd && btcDominance
+      ? totalMarketCapUsd * (btcDominance / 100)
+      : null;
+    const altcoinMarketCapUsd = totalMarketCapUsd && btcMarketCapUsd
+      ? totalMarketCapUsd - btcMarketCapUsd
+      : null;
+
+    const result = {
+      total_market_cap_usd: totalMarketCapUsd,
+      btc_dominance: btcDominance,
+      btc_market_cap_usd: btcMarketCapUsd,
+      altcoin_market_cap_usd: altcoinMarketCapUsd,
+      market_cap_change_24h_pct: d.market_cap_change_percentage_24h_usd ?? null,
+    };
+
+    cacheSet(cacheKey, result, env.cache.btcDominanceTtl);
+    return result;
   } catch (err) {
-    logger.warn({ err: err.message }, 'CoinGecko BTC dominance failed');
+    logger.warn({ err: err.message }, 'CoinGecko global market data failed');
+    return null; // No crítico, no lanza error
+  }
+}
+
+// ─── Coin Market Data ──────────────────────────────────────────────────────────
+
+export async function fetchCoinMarketData(coin) {
+  const coinId = COINGECKO_IDS[coin.toUpperCase()];
+  if (!coinId) return null;
+
+  const cacheKey = `coin_market:${coin}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const { data } = await client.get(`/coins/${coinId}`, {
+      params: {
+        localization: false,
+        tickers: false,
+        market_data: true,
+        community_data: false,
+        developer_data: false,
+        sparkline: false,
+      },
+    });
+
+    const md = data.market_data;
+    const result = {
+      market_cap_usd: md.market_cap?.usd ?? null,
+      volume_24h_usd: md.total_volume?.usd ?? null,
+      ath_usd: md.ath?.usd ?? null,
+      ath_change_pct: md.ath_change_percentage?.usd ?? null,
+      atl_usd: md.atl?.usd ?? null,
+      atl_change_pct: md.atl_change_percentage?.usd ?? null,
+    };
+
+    cacheSet(cacheKey, result, 300); // TTL 5 min
+    return result;
+  } catch (err) {
+    logger.warn({ coin, err: err.message }, 'CoinGecko coin market data failed');
     return null; // No crítico, no lanza error
   }
 }

@@ -4,7 +4,7 @@ import { addFearGreedEntry } from './historyService.js';
 import env from '../config/env.js';
 import logger from '../middleware/logger.js';
 
-const API_URL = 'https://api.alternative.me/fng/?limit=8';
+const API_URL = 'https://api.alternative.me/fng/?limit=30';
 
 export async function fetchFearGreed() {
   const cacheKey = 'fear_greed';
@@ -39,9 +39,20 @@ export async function fetchFearGreed() {
 
     cacheSet(cacheKey, result, env.cache.fearGreedTtl);
 
-    // Alimentar histórico
+    // Alimentar histórico con todos los datos (en orden: más antiguo → más reciente)
     try {
-      addFearGreedEntry(result.value, result.classification, result.trend);
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        const val = parseInt(entry.value, 10);
+        const prevVal = i < entries.length - 1 ? parseInt(entries[i + 1].value, 10) : null;
+        const trend = prevVal != null
+          ? val > prevVal ? 'improving' : val < prevVal ? 'worsening' : 'stable'
+          : null;
+
+        // Crear entry con timestamp real (no con fecha de hoy)
+        const entryDate = new Date(parseInt(entry.timestamp, 10) * 1000).toISOString().split('T')[0];
+        addFearGreedEntry(val, entry.value_classification, trend, entryDate);
+      }
     } catch (e) {
       logger.warn({ err: e.message }, 'Failed to add Fear & Greed to history');
     }

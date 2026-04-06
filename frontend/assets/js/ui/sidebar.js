@@ -405,7 +405,26 @@ export function updateSentiment(state) {
       }
       detailEl.textContent = parts.join(' · ');
     }
+
+    // Funding Rate signal
+    const frSignalEl = $('funding-rate-signal');
+    if (frSignalEl && fr.signal) {
+      const signalMap = {
+        'longs_overloaded': { text: '↑ LONGS', cls: 'bearish' },
+        'shorts_overloaded': { text: '↓ SHORTS', cls: 'bullish' },
+        'balanced': { text: '→', cls: 'neutral' },
+      };
+      const s = signalMap[fr.signal] ?? { text: '—', cls: 'neutral' };
+      frSignalEl.textContent = s.text;
+      frSignalEl.className = `sent-signal ${s.cls}`;
+    }
   }
+
+  // Predicted Funding Rate
+  const predPct = derivatives?.funding_rate?.predicted_rate_pct;
+  setText('predicted-funding-rate',
+    predPct != null ? `${predPct >= 0 ? '+' : ''}${predPct.toFixed(4)}%` : '—'
+  );
 
   // Open Interest
   const oi = derivatives.open_interest;
@@ -638,5 +657,139 @@ export function updateBinanceWalls(state) {
   if (walls.sellWall && sellEl) {
     sellEl.textContent = `${fmtPrice(walls.sellWall.price)} (${fmt(walls.sellWall.volume, 2)} BTC)`;
     setClass(sellEl, 'bearish');
+  }
+}
+
+// ── Global Market Data ─────────────────────────────────────────────
+
+function fmtLargeUsd(n) {
+  if (n == null) return '—';
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9)  return `$${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6)  return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${n.toLocaleString()}`;
+}
+
+export function updateGlobalMarket(state) {
+  const gm = state.global_market;
+  if (!gm) return;
+
+  // Market cap total
+  const cap = gm.total_market_cap_usd;
+  setText('global-market-cap', cap ? fmtLargeUsd(cap) : '—');
+
+  const chg = gm.market_cap_change_24h_pct;
+  if (chg != null) {
+    const el = $('global-market-cap-change');
+    if (el) {
+      el.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+      setClass(el, chg >= 0 ? 'bullish' : 'bearish');
+    }
+  }
+
+  // BTC Dominance
+  const dom = gm.btc_dominance;
+  setText('global-btc-dominance', dom != null ? `${dom.toFixed(1)}%` : '—');
+
+  // Altcoin Index
+  const alt = gm.altcoin_market_cap_usd;
+  setText('global-altcoin-cap', alt ? fmtLargeUsd(alt) : '—');
+}
+
+// ── Coin Market Data ───────────────────────────────────────────────
+
+export function updateCoinMarketData(state) {
+  // Actualizar el coin name en el header del bloque
+  setText('asset-block-coin', state.coin ?? '—');
+
+  const cmd = state.coin_market_data;
+  if (!cmd) return;
+
+  setText('asset-market-cap', cmd.market_cap_usd ? fmtLargeUsd(cmd.market_cap_usd) : '—');
+  setText('asset-volume-24h', cmd.volume_24h_usd ? fmtLargeUsd(cmd.volume_24h_usd) : '—');
+
+  // ATH
+  setText('asset-ath', cmd.ath_usd ? fmtPrice(cmd.ath_usd) : '—');
+  if (cmd.ath_change_pct != null) {
+    const el = $('asset-ath-change');
+    if (el) {
+      el.textContent = `${cmd.ath_change_pct.toFixed(1)}%`;
+      setClass(el, cmd.ath_change_pct >= 0 ? 'bullish' : 'bearish');
+    }
+  }
+
+  // ATL
+  setText('asset-atl', cmd.atl_usd ? fmtPrice(cmd.atl_usd) : '—');
+  if (cmd.atl_change_pct != null) {
+    const el = $('asset-atl-change');
+    if (el) {
+      el.textContent = `+${cmd.atl_change_pct.toFixed(0)}%`;
+      setClass(el, 'bullish');
+    }
+  }
+}
+
+// ── Order Book (Microestructura) ───────────────────────────────────
+
+export function updateOrderBook(state) {
+  const walls = state.binanceWalls;
+  const ticker = state.binanceTicker;
+
+  // Precio actual + cambio
+  setText('micro-price-current', state.priceCurrent ? fmtPrice(state.priceCurrent) : '—');
+  const chg = state.priceChange;
+  if (chg != null) {
+    const el = $('micro-price-change');
+    if (el) {
+      el.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+      setClass(el, chg >= 0 ? 'bullish' : 'bearish');
+    }
+  }
+
+  // Spread
+  if (walls?.spread != null) {
+    setText('micro-spread', fmtPrice(walls.spread));
+    const pctEl = $('micro-spread-pct');
+    if (pctEl && walls.spread_pct != null) {
+      pctEl.textContent = `${walls.spread_pct.toFixed(4)}%`;
+      setClass(pctEl, 'sent-signal', 'neutral');
+    }
+  }
+
+  // Volumen Binance 24h (en USD desde ticker)
+  if (ticker?.volume_24h_quote != null) {
+    setText('micro-volume-24h', fmtLargeUsd(ticker.volume_24h_quote));
+  }
+
+  // Order book top 5 asks + bids
+  if (walls?.asks_top5 && walls?.bids_top5) {
+    const midPrice = walls.spread != null
+      ? (walls.bids_top5[0].price + walls.asks_top5[0].price) / 2
+      : null;
+
+    setText('ob-mid-price', midPrice ? fmtPrice(midPrice) : '—');
+
+    // Render asks (ordenadas best ask al final = closest to mid)
+    const asksContainer = $('ob-asks-container');
+    if (asksContainer) {
+      const asksToShow = [...walls.asks_top5].reverse();
+      asksContainer.innerHTML = asksToShow.map(a => `
+        <div class="ob-row ob-ask">
+          <span class="ob-price">${fmtPrice(a.price)}</span>
+          <span class="ob-vol">${fmt(a.volume, 4)}</span>
+        </div>
+      `).join('');
+    }
+
+    // Render bids
+    const bidsContainer = $('ob-bids-container');
+    if (bidsContainer) {
+      bidsContainer.innerHTML = walls.bids_top5.map(b => `
+        <div class="ob-row ob-bid">
+          <span class="ob-price">${fmtPrice(b.price)}</span>
+          <span class="ob-vol">${fmt(b.volume, 4)}</span>
+        </div>
+      `).join('');
+    }
   }
 }
