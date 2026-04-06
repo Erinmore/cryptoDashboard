@@ -81,7 +81,7 @@
 
   /* ── Dimensiones (layout) ────────────────────────────────────────── */
   --header-h:      52px;
-  --sidebar-w:     280px;
+  --sidebar-w:     320px;
 
   /* ── Overlay ─────────────────────────────────────────────────────── */
   --overlay-bg:    rgba(13, 15, 20, 0.75);
@@ -306,6 +306,23 @@ html, body {
   padding: 12px;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
+  z-index: 10;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.dragging {
+  background: var(--accent);
+  opacity: 0.6;
 }
 
 .sidebar-section {
@@ -317,6 +334,25 @@ html, body {
 }
 .sidebar-section:last-child { margin-bottom: 0; }
 
+/* Block body — agrupa las secciones dentro de un marco oscuro */
+.block-body {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: var(--sp-2xl);
+}
+
+.block-body .sidebar-section {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--sp-lg);
+  margin-bottom: 0;
+}
+.block-body .sidebar-section:last-child { border-bottom: none; }
+
 .section-body {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -325,20 +361,18 @@ html, body {
 }
 
 .section-title {
-  font-size: var(--fs-base);
-  font-weight: 400;
-  color: var(--text-muted);
-  letter-spacing: 1px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.8px;
   text-transform: uppercase;
-  margin-bottom: 8px;
+  margin-bottom: var(--sp-md);
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .section-title::before {
-  content: attr(data-icon);
-  font-size: var(--fs-lg);
-  margin-right: 2px;
+  display: none;
 }
 
 .tf-label {
@@ -369,7 +403,7 @@ html, body {
 
 /* ── Labels con icono de tooltip ──────────────────────────────────── */
 .ind-name,
-.sent-label[data-tooltip] {
+.sent-label {
   color: var(--text-muted);
   font-size: var(--fs-base);
   cursor: default;
@@ -381,7 +415,7 @@ html, body {
   transition: color var(--transition-fast);
 }
 
-.ind-name::after,
+.ind-name[data-tooltip]::after,
 .sent-label[data-tooltip]::after {
   content: '';
   display: inline-block;
@@ -395,11 +429,11 @@ html, body {
 }
 
 .ind-name:hover,
-.sent-label[data-tooltip]:hover {
+.sent-label:hover {
   color: var(--text-secondary);
 }
 
-.ind-name:hover::after,
+.ind-name[data-tooltip]:hover::after,
 .sent-label[data-tooltip]:hover::after {
   border-color: var(--accent);
   background: var(--accent);
@@ -694,9 +728,10 @@ html, body {
 }
 
 .sr-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--sp-md);
   font-size: var(--fs-md);
   padding: var(--sp-md) 0;
   border-bottom: 1px solid var(--border-subtle);
@@ -704,6 +739,24 @@ html, body {
 
 .sr-row:last-child {
   border-bottom: none;
+}
+
+.sr-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.sr-price {
+  color: var(--text-primary);
+  text-align: center;
+  font-weight: 500;
+}
+
+.sr-detail {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  text-align: right;
 }
 
 .sr-support {
@@ -728,6 +781,102 @@ html, body {
 
 .sr-resistance.neutral {
   color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BLOQUES TEMÁTICOS DEL SIDEBAR
+═══════════════════════════════════════════════════════════════════ */
+
+.sidebar-block {
+  margin-bottom: var(--sp-2xl);
+}
+
+.block-header {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: var(--sp-sm) var(--sp-lg);
+  margin-bottom: var(--sp-sm);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.block-global .block-header {
+  background: rgba(59, 130, 246, 0.12);
+  border-left: 3px solid var(--accent);
+  color: #93c5fd;
+}
+
+.block-asset .block-header {
+  background: rgba(249, 115, 22, 0.12);
+  border-left: 3px solid #f97316;
+  color: #fdba74;
+}
+
+.block-micro .block-header {
+  background: rgba(34, 197, 94, 0.12);
+  border-left: 3px solid var(--bullish);
+  color: #86efac;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ORDER BOOK
+═══════════════════════════════════════════════════════════════════ */
+
+.ob-table {
+  font-size: var(--fs-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+.ob-asks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xs);
+}
+
+.ob-bids {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xs);
+}
+
+.ob-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: var(--sp-xs) var(--sp-sm);
+  gap: var(--sp-sm);
+}
+
+.ob-price {
+  text-align: left;
+  font-weight: 500;
+}
+
+.ob-ask .ob-price {
+  color: var(--bearish);
+}
+
+.ob-bid .ob-price {
+  color: var(--bullish);
+}
+
+.ob-vol {
+  color: var(--text-muted);
+  text-align: right;
+  font-size: var(--fs-xs);
+}
+
+.ob-mid-price {
+  text-align: center;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: var(--sp-xs) 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  margin: var(--sp-xs) 0;
 }
 
 /* ── Utility ──────────────────────────────────────────────────────── */

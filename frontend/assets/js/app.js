@@ -24,6 +24,9 @@ import {
   updateSupportResistance,
   updateLastAnalysis,
   updateBinanceWalls,
+  updateGlobalMarket,
+  updateCoinMarketData,
+  updateOrderBook,
   showRecommendationLoading,
   hideRecommendationLoading,
 } from './ui/sidebar.js';
@@ -43,12 +46,15 @@ function renderChart() {
 
 function updateUI(state) {
   updateHeader(state);
+  updateGlobalMarket(state);
+  updateCoinMarketData(state);
   updateRegimeBadge(state);
   updateIndicators(state);
   updateSentiment(state);
   updateSupportResistance(state);
   updateLastAnalysis(state);
   updateBinanceWalls(state);
+  updateOrderBook(state);
   renderChart();
 }
 
@@ -99,18 +105,21 @@ async function loadData() {
       : prevVP;
 
     setState({
-      candles:       newCandles,
+      candles:        newCandles,
       viewport,
-      technical:     data.technical     ?? null,
-      sentiment:     data.sentiment     ?? null,
-      fearGreed:     data.fear_greed    ?? null,
-      derivatives:   data.derivatives   ?? null,
-      btcDominance:  data.btc_dominance ?? null,
-      lastAnalysis:  data.last_analysis ?? null,
-      binanceWalls:  data.binance_walls ?? null,
-      history:       data.history       ?? null,
-      priceCurrent:  data.price_current ?? null,
-      priceChange:   data.price_change_24h_pct ?? null,
+      technical:      data.technical       ?? null,
+      sentiment:      data.sentiment       ?? null,
+      fearGreed:      data.fear_greed      ?? null,
+      derivatives:    data.derivatives     ?? null,
+      btcDominance:   data.btc_dominance   ?? null,
+      global_market:  data.global_market   ?? null,
+      coin_market_data: data.coin_market_data ?? null,
+      lastAnalysis:   data.last_analysis   ?? null,
+      binanceWalls:   data.binance_walls   ?? null,
+      binanceTicker:  data.binance_ticker  ?? null,
+      history:        data.history         ?? null,
+      priceCurrent:   data.price_current   ?? null,
+      priceChange:    data.price_change_24h_pct ?? null,
     });
   } catch (err) {
     console.error('[CRYPTEX] fetchData error:', err.message);
@@ -276,20 +285,23 @@ function init() {
 
     // Limpiar datos de la coin anterior para que no se muestren stale
     setState({
-      coin:           newCoin,
-      tf:             newTf,
-      viewport:       null,
-      candles:        null,
-      technical:      null,
-      sentiment:      null,
-      fearGreed:      null,
-      derivatives:    null,
-      lastAnalysis:   null,
-      binanceWalls:   null,
-      history:        null,
-      priceCurrent:   null,
-      priceChange:    null,
-      recommendation: savedRec,
+      coin:            newCoin,
+      tf:              newTf,
+      viewport:        null,
+      candles:         null,
+      technical:       null,
+      sentiment:       null,
+      fearGreed:       null,
+      derivatives:     null,
+      global_market:   null,
+      coin_market_data: null,
+      lastAnalysis:    null,
+      binanceWalls:    null,
+      binanceTicker:   null,
+      history:         null,
+      priceCurrent:    null,
+      priceChange:     null,
+      recommendation:  savedRec,
     });
 
     saveLastCoin(newCoin);
@@ -311,6 +323,45 @@ function init() {
 
   saveLastCoin(savedCoin);
   timer.start();
+
+  // Inicializar resize handle del sidebar
+  initSidebarResize();
+}
+
+// ── Resize handle del sidebar ──────────────────────────────────────
+
+function initSidebarResize() {
+  const handle = document.getElementById('sidebar-resize-handle');
+  const sidebar = document.querySelector('.sidebar');
+  if (!handle || !sidebar) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = sidebar.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const delta = startX - e.clientX;
+    const newW = Math.max(240, Math.min(480, startW + delta));
+    document.documentElement.style.setProperty('--sidebar-w', `${newW}px`);
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
