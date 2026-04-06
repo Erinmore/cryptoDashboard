@@ -85,31 +85,33 @@ describe('calculateMACD', () => {
     expect(calculateMACD([1, 2, 3])).toBeNull();
   });
 
-  test('returns object with value, signal, histogram, status', () => {
+  test('returns object with value, signal, histogram, histogram_color', () => {
     const closes = Array.from({ length: 50 }, (_, i) => 100 + Math.sin(i) * 10);
     const result = calculateMACD(closes);
     expect(result).toHaveProperty('value');
     expect(result).toHaveProperty('signal');
     expect(result).toHaveProperty('histogram');
-    expect(result).toHaveProperty('status');
+    expect(result).toHaveProperty('histogram_color');
   });
 
-  test('status is bullish_momentum when histogram > 0', () => {
+  test('histogram_color is green variant when histogram > 0', () => {
     // Fase plana larga + subida pronunciada: fuerza al fast EMA por encima del slow
     const flat = Array.from({ length: 60 }, () => 100);
     const rise = Array.from({ length: 40 }, (_, i) => 100 + i * 5);
     const closes = [...flat, ...rise];
     const result = calculateMACD(closes);
-    expect(result.status).toBe('bullish_momentum');
+    expect(result.histogram).toBeGreaterThan(0);
+    expect(['green_dark', 'green_light']).toContain(result.histogram_color);
   });
 
-  test('status is bearish_momentum when histogram < 0', () => {
+  test('histogram_color is red variant when histogram < 0', () => {
     // Fase plana larga + caída pronunciada: fuerza al fast EMA por debajo del slow
     const flat = Array.from({ length: 60 }, () => 200);
     const fall = Array.from({ length: 40 }, (_, i) => 200 - i * 5);
     const closes = [...flat, ...fall];
     const result = calculateMACD(closes);
-    expect(result.status).toBe('bearish_momentum');
+    expect(result.histogram).toBeLessThan(0);
+    expect(['red_dark', 'red_light']).toContain(result.histogram_color);
   });
 });
 
@@ -134,18 +136,18 @@ describe('calculateBollingerBands', () => {
     expect(bb.position).toBeLessThanOrEqual(1);
   });
 
-  test('status is overbought when price near upper band', () => {
+  test('position is high when price near upper band', () => {
     // Precio final muy cercano al upper band: serie creciente
     const closes = Array.from({ length: 20 }, (_, i) => 100 + i * 3);
     const bb = calculateBollingerBands(closes);
-    expect(bb.status).toBe('overbought');
+    expect(bb.position).toBeGreaterThan(0.8);
   });
 
-  test('status is oversold when price near lower band', () => {
+  test('position is low when price near lower band', () => {
     // Precio final muy cercano al lower band: serie decreciente
     const closes = Array.from({ length: 20 }, (_, i) => 200 - i * 3);
     const bb = calculateBollingerBands(closes);
-    expect(bb.status).toBe('oversold');
+    expect(bb.position).toBeLessThan(0.2);
   });
 });
 

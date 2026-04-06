@@ -1,35 +1,171 @@
-import { fetchOHLC, fetchCurrentPrice, fetchBTCDominance } from '../services/coingeckoService.js';
+import { fetchOHLC, fetchCurrentPrice, fetchGlobalMarketData, fetchCoinMarketData } from '../services/coingeckoService.js';
 import { fetchFearGreed } from '../services/fearGreedService.js';
 import { fetchDerivativesData } from '../services/coinalyzeService.js';
 import { computeIndicators } from '../services/indicatorService.js';
-import { getLastAnalysis, saveAnalysis } from '../services/dbService.js';
+import { saveAnalysis } from '../services/dbService.js';
+import { getHistories } from '../services/historyService.js';
 import { analyzeMarket } from '../services/anthropicService.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 import { ValidationError } from '../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../middleware/logger.js';
 
+/**
+ * Calcula distancias en porcentaje a support/resistance más cercano.
+ * @param {number} price - Precio actual
+ * @param {Array} supports - Array de { price, touches, strength }
+ * @param {Array} resistances - Array de { price, touches, strength }
+ * @returns {object}
+ */
+function computeLevelDistances(price, supports, resistances) {
+  let distToSupport = null;
+  let distToResistance = null;
+
+  if (supports?.length > 0) {
+    const nearestSupport = supports[0]; // Ya ordenado (mayor primero)
+    distToSupport = parseFloat(((price - nearestSupport.price) / price * 100).toFixed(2));
+  }
+
+  if (resistances?.length > 0) {
+    const nearestResistance = resistances[0]; // Ya ordenado (menor primero)
+    distToResistance = parseFloat(((nearestResistance.price - price) / price * 100).toFixed(2));
+  }
+
+  return {
+    distance_to_nearest_support_pct: distToSupport,
+    distance_to_nearest_resistance_pct: distToResistance,
+  };
+}
+
+function computeHistorySummaries(histories) {
+  // ── Fear & Greed summary (30d) ──────────────────────────────────────────
+  const fgHistory = histories?.fear_greed ?? [];
+  let fearGreedSummary = null;
+  if (fgHistory.length >= 1) {
+    const values = fgHistory.map(e => e.value);
+    fearGreedSummary = {
+      current:    fgHistory.at(-1) ? { value: fgHistory.at(-1).value, classification: fgHistory.at(-1).classification } : null,
+      yesterday:  fgHistory.at(-2) ? { value: fgHistory.at(-2).value, classification: fgHistory.at(-2).classification } : null,
+      '7d_ago':   fgHistory.at(-7) ? { value: fgHistory.at(-7).value, classification: fgHistory.at(-7).classification } : null,
+      '30d_ago':  fgHistory.at(0)  ? { value: fgHistory.at(0).value,  classification: fgHistory.at(0).classification  } : null,
+      period_min: Math.min(...values),
+      period_max: Math.max(...values),
+      period_avg: Math.round(values.reduce((s, v) => s + v, 0) / values.length),
+      trend_30d:  (fgHistory.at(-1)?.value ?? 0) > (fgHistory.at(0)?.value ?? 0) ? 'improving' : 'deteriorating',
+    };
+  }
+
+  // ── Funding Rate summary (48h) ──────────────────────────────────────────
+  const frHistory = histories?.funding_rate ?? [];
+  let fundingRateSummary = null;
+  if (frHistory.length >= 1) {
+    const closes = frHistory.map(e => e.c);
+    const positiveCount = closes.filter(v => v > 0).length;
+    fundingRateSummary = {
+      open_48h:             frHistory.at(0)?.o ?? null,
+      close_current:        frHistory.at(-1)?.c ?? null,
+      high_48h:             Math.max(...frHistory.map(e => e.h)),
+      low_48h:              Math.min(...frHistory.map(e => e.l)),
+      trend_48h:            frHistory.at(-1)?.trend ?? null,
+      pct_candles_positive: Math.round((positiveCount / closes.length) * 100),
+    };
+  }
+
+  // ── Open Interest summary (7d) ──────────────────────────────────────────
+  const oiHistory = histories?.open_interest ?? [];
+  let openInterestSummary = null;
+  if (oiHistory.length >= 1) {
+    const open7d  = oiHistory.at(0)?.o ?? null;
+    const close7d = oiHistory.at(-1)?.c ?? null;
+    const change7dPct = open7d ? ((close7d - open7d) / open7d) * 100 : null;
+    const last6 = oiHistory.slice(-6); // ~24h en candles de 4h
+    const last6Open  = last6.at(0)?.o ?? null;
+    const last6Close = last6.at(-1)?.c ?? null;
+    const change24hPct = last6Open ? ((last6Close - last6Open) / last6Open) * 100 : null;
+    openInterestSummary = {
+      open_7d_usd:    open7d,
+      current_usd:    close7d,
+      high_7d_usd:    Math.max(...oiHistory.map(e => e.h)),
+      low_7d_usd:     Math.min(...oiHistory.map(e => e.l)),
+      change_7d_pct:  change7dPct  !== null ? parseFloat(change7dPct.toFixed(2))  : null,
+      change_24h_pct: change24hPct !== null ? parseFloat(change24hPct.toFixed(2)) : null,
+      trend_7d:       change7dPct === null ? null : change7dPct > 5 ? 'increasing' : change7dPct < -5 ? 'decreasing' : 'stable',
+    };
+  }
+
+  // ── Long/Short Ratio summary (7d) ───────────────────────────────────────
+  const lsHistory = histories?.long_short_ratio ?? [];
+  let longShortSummary = null;
+  if (lsHistory.length >= 1) {
+    const longPcts    = lsHistory.map(e => e.long_pct);
+    const open7dLong  = lsHistory.at(0)?.long_pct ?? null;
+    const close7dLong = lsHistory.at(-1)?.long_pct ?? null;
+    const change7d    = open7dLong !== null ? close7dLong - open7dLong : null;
+    longShortSummary = {
+      current_long_pct:   close7dLong,
+      current_short_pct:  lsHistory.at(-1)?.short_pct ?? null,
+      open_7d_long_pct:   open7dLong,
+      change_7d_long_pct: change7d !== null ? parseFloat(change7d.toFixed(2)) : null,
+      avg_7d_long_pct:    parseFloat((longPcts.reduce((s, v) => s + v, 0) / longPcts.length).toFixed(2)),
+      max_7d_long_pct:    Math.max(...longPcts),
+      min_7d_long_pct:    Math.min(...longPcts),
+      trend_7d:           change7d === null ? null : change7d > 2 ? 'longs_increasing' : change7d < -2 ? 'longs_decreasing' : 'stable',
+    };
+  }
+
+  // ── Liquidations summary (7d) ───────────────────────────────────────────
+  const liqHistory = histories?.liquidations ?? [];
+  let liquidationsSummary = null;
+  if (liqHistory.length >= 1) {
+    const totalLongs  = liqHistory.reduce((s, e) => s + e.longs_usd, 0);
+    const totalShorts = liqHistory.reduce((s, e) => s + e.shorts_usd, 0);
+    const last24h     = liqHistory.at(-1);
+    const n = liqHistory.length;
+    const recent3Avg = liqHistory.slice(-3).reduce((s, e) => s + e.longs_usd + e.shorts_usd, 0) / Math.min(n, 3);
+    const older3Avg  = liqHistory.slice(0, 3).reduce((s, e)  => s + e.longs_usd + e.shorts_usd, 0) / Math.min(n, 3);
+    const trendRatio = older3Avg > 0 ? recent3Avg / older3Avg : null;
+    liquidationsSummary = {
+      last_24h_longs_usd:         last24h?.longs_usd  ?? null,
+      last_24h_shorts_usd:        last24h?.shorts_usd ?? null,
+      last_24h_total_usd:         last24h ? last24h.longs_usd + last24h.shorts_usd : null,
+      '7d_total_longs_usd':       parseFloat(totalLongs.toFixed(2)),
+      '7d_total_shorts_usd':      parseFloat(totalShorts.toFixed(2)),
+      '7d_avg_daily_longs_usd':   parseFloat((totalLongs / n).toFixed(2)),
+      '7d_avg_daily_shorts_usd':  parseFloat((totalShorts / n).toFixed(2)),
+      longs_vs_shorts_7d_ratio:   totalShorts > 0 ? parseFloat((totalLongs / totalShorts).toFixed(2)) : null,
+      trend_7d: trendRatio === null ? null : trendRatio > 1.3 ? 'escalating' : trendRatio < 0.7 ? 'decreasing' : 'stable',
+    };
+  }
+
+  return { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary };
+}
+
 async function buildAnalyzeContext(coin, primaryTf) {
   logger.info({ coin, primaryTf }, 'Building analysis payload');
+
+  const binanceSymbols = { BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT' };
+  const binanceSymbol = binanceSymbols[coin];
 
   const [
     ohlc1h,
     ohlc4h,
     ohlc1D,
+    ohlc1W,
     priceResult,
     fearGreedResult,
     derivativesResult,
-    btcDominanceResult,
-    lastAnalysisResult,
+    globalMarketResult,
+    coinMarketResult,
   ] = await Promise.allSettled([
     fetchOHLC(coin, '1h'),
     fetchOHLC(coin, '4h'),
     fetchOHLC(coin, '1D'),
+    fetchOHLC(coin, '1W'),
     fetchCurrentPrice(coin),
     fetchFearGreed(),
     fetchDerivativesData(coin),
-    fetchBTCDominance(),
-    Promise.resolve(getLastAnalysis(coin)),
+    fetchGlobalMarketData(),
+    fetchCoinMarketData(coin),
   ]);
 
   const resolve = (result) => (result.status === 'fulfilled' ? result.value : null);
@@ -38,25 +174,105 @@ async function buildAnalyzeContext(coin, primaryTf) {
     '1h': resolve(ohlc1h),
     '4h': resolve(ohlc4h),
     '1D': resolve(ohlc1D),
+    '1W': resolve(ohlc1W),
   };
 
   const technical = {};
   for (const tf of TIMEFRAMES) {
     if (candles[tf]?.length) {
-      technical[tf] = computeIndicators(candles[tf], tf);
+      const indicators = computeIndicators(candles[tf], tf);
+      const sr = indicators?.support_resistance;
+      const distances = computeLevelDistances(
+        price?.price ?? null,
+        sr?.supports ?? [],
+        sr?.resistances ?? []
+      );
+      technical[tf] = { ...indicators, ...distances };
     }
   }
+
+  const fearGreed    = resolve(fearGreedResult);
+  const derivatives  = resolve(derivativesResult);
+  const globalMarket = resolve(globalMarketResult);
+  const coinMarket   = resolve(coinMarketResult);
+  const price        = resolve(priceResult);
+
+  const histories = getHistories();
+  const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary } =
+    computeHistorySummaries(histories);
+
+  const fr  = derivatives?.funding_rate    ?? null;
+  const oi  = derivatives?.open_interest   ?? null;
+  const lsr = derivatives?.long_short_ratio ?? null;
+  const liq = derivatives?.liquidations    ?? null;
 
   return {
     coin,
     primary_tf: primaryTf,
-    price_current: resolve(priceResult)?.price ?? null,
-    price_change_24h_pct: resolve(priceResult)?.change_24h_pct ?? null,
+    price_current:        price?.price            ?? null,
+    price_change_24h_pct: price?.change_24h_pct   ?? null,
+
+    global_market: globalMarket ? {
+      total_market_cap_usd:      globalMarket.total_market_cap_usd,
+      market_cap_change_24h_pct: globalMarket.market_cap_change_24h_pct,
+      btc_dominance_pct:         globalMarket.btc_dominance,
+      altcoin_market_cap_usd:    globalMarket.altcoin_market_cap_usd,
+    } : null,
+
+    coin_market: coinMarket ? {
+      market_cap_usd: coinMarket.market_cap_usd,
+      volume_24h_usd: coinMarket.volume_24h_usd,
+      ath_usd:        coinMarket.ath_usd,
+      ath_change_pct: coinMarket.ath_change_pct,
+      atl_usd:        coinMarket.atl_usd,
+      atl_change_pct: coinMarket.atl_change_pct,
+    } : null,
+
+    sentiment: {
+      fear_greed: fearGreed ? {
+        value:           fearGreed.value,
+        classification:  fearGreed.classification,
+        trend:           fearGreed.trend,
+        trend_7d_change: fearGreed.trend_7d_change,
+      } : null,
+      fear_greed_history: fearGreedSummary,
+    },
+
     technical,
-    fear_greed: resolve(fearGreedResult),
-    derivatives: resolve(derivativesResult),
-    btc_dominance: resolve(btcDominanceResult),
-    last_analysis: resolve(lastAnalysisResult),
+
+    derivatives: {
+      funding_rate: fr ? {
+        rate_pct:           fr.rate_pct,
+        annualized_pct:     fr.annualized_pct,
+        severity:           fr.rate_pct > 0.5 ? 'extreme' : fr.rate_pct > 0.2 ? 'high' : fr.rate_pct > 0.05 ? 'elevated' : 'normal',
+        trend:              fr.trend,
+        signal:             fr.signal,
+        predicted_rate_pct: fr.predicted_rate_pct,
+        history:            fundingRateSummary,
+      } : null,
+
+      open_interest: oi ? {
+        value_usd:      oi.value_usd,
+        change_24h_pct: oi.change_24h_pct,
+        signal:         oi.signal,
+        history:        openInterestSummary,
+      } : null,
+
+      long_short_ratio: lsr ? {
+        long_pct:  lsr.long_pct,
+        short_pct: lsr.short_pct,
+        signal:    lsr.signal,
+        history:   longShortSummary,
+      } : null,
+
+      liquidations_24h: liq ? {
+        longs_usd:  liq.longs_usd,
+        shorts_usd: liq.shorts_usd,
+        total_usd:  liq.total_usd,
+        signal:     liq.signal,
+        history:    liquidationsSummary,
+      } : null,
+    },
   };
 }
 
@@ -78,13 +294,11 @@ export async function analyze(req, res, next) {
 
     logger.info({ coin, primaryTf }, 'POST /api/analyze — calling Anthropic');
 
-    // Lanza AppError 503/501 si Anthropic no está configurado o implementado
     const { recommendation, ai_metadata } = await analyzeMarket(context);
 
     const processingMs = Date.now() - start;
     const id = uuidv4();
 
-    // Extraer métricas del TF principal para persistencia en SQLite
     const techPrimary = context.technical[primaryTf];
 
     saveAnalysis({

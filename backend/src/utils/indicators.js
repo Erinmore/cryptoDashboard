@@ -96,7 +96,6 @@ export function calculateMACD(closes, fast = MACD_FAST, slow = MACD_SLOW, signal
     signal: parseFloat(lastSignal.toFixed(8)),
     histogram: parseFloat(histogram.toFixed(8)),
     histogram_color,
-    status: histogram > 0 ? 'bullish_momentum' : 'bearish_momentum',
   };
 }
 
@@ -122,7 +121,6 @@ export function calculateBollingerBands(closes, period = BB_PERIOD, stdDevMult =
     lower: parseFloat(lower.toFixed(2)),
     width_pct: parseFloat(((bandWidth / mean) * 100).toFixed(2)),
     position: parseFloat(position.toFixed(4)),
-    status: position > 0.8 ? 'overbought' : position < 0.2 ? 'oversold' : 'expanding',
   };
 }
 
@@ -579,8 +577,8 @@ export function calculateSupportResistance(candles, lookback = SR_LOOKBACK, minT
 
   // Recogemos highs y lows como candidatos
   for (const candle of slice) {
-    levels.push({ price: candle.high, type: 'resistance' });
-    levels.push({ price: candle.low, type: 'support' });
+    levels.push({ price: candle.high, isResistance: true });
+    levels.push({ price: candle.low, isResistance: false });
   }
 
   // Agrupamos niveles cercanos (dentro de tolerance)
@@ -593,7 +591,7 @@ export function calculateSupportResistance(candles, lookback = SR_LOOKBACK, minT
       existing.touches++;
       existing.price = (existing.price + candidate.price) / 2; // promedio
     } else {
-      grouped.push({ price: candidate.price, type: candidate.type, touches: 1, strength: 1 });
+      grouped.push({ price: candidate.price, isResistance: candidate.isResistance, touches: 1, strength: 1 });
     }
   }
 
@@ -605,13 +603,15 @@ export function calculateSupportResistance(candles, lookback = SR_LOOKBACK, minT
   const currentPrice = slice[slice.length - 1].close;
 
   const supports = filtered
-    .filter(g => g.price < currentPrice)
+    .filter(g => !g.isResistance && g.price < currentPrice)
     .sort((a, b) => b.price - a.price)
+    .map(g => ({ price: g.price, touches: g.touches, strength: g.strength }))
     .slice(0, 3);
 
   const resistances = filtered
-    .filter(g => g.price >= currentPrice)
+    .filter(g => g.isResistance && g.price >= currentPrice)
     .sort((a, b) => a.price - b.price)
+    .map(g => ({ price: g.price, touches: g.touches, strength: g.strength }))
     .slice(0, 3);
 
   return { supports, resistances };
