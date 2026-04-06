@@ -93,17 +93,17 @@
           <h3 class="section-title">Mercado Global</h3>
           <div class="section-body">
             <div class="sentiment-row">
-              <span class="sent-label" title="Capitalización total de todo el mercado de criptomonedas en USD.">Market Cap Total</span>
+              <span class="sent-label" data-tooltip="Market Cap Total — Capitalización total del mercado cripto\nEs la suma del valor de todas las criptomonedas en circulación, calculado como precio × supply circulante de cada activo.\n\nEs el indicador más usado para medir el tamaño global del mercado cripto y su evolución.\n\nCómo interpretarlo:\n· Sube junto con BTC y altcoins → ciclo alcista generalizado.\n· Sube solo BTC → dinero entrando a cripto pero sin «apetito de riesgo» hacia altcoins.\n· Cae bruscamente → salida masiva de capital del ecosistema.\n\nDatos proporcionados por CoinGecko, agregando los miles de activos del mercado.">Market Cap Total</span>
               <span class="sent-value" id="global-market-cap">—</span>
               <span class="sent-signal" id="global-market-cap-change">—</span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Porcentaje del market cap total que controla Bitcoin.">Dominancia BTC</span>
+              <span class="sent-label" data-tooltip="Dominancia BTC — Peso relativo de Bitcoin\nPorcentaje del market cap total del mercado cripto que pertenece a Bitcoin. Mide cuánto peso tiene BTC respecto al resto de activos.\n\nCómo interpretarlo:\n· Dominancia alta (> 55 %) → el dinero está refugiado en Bitcoin. Las altcoins underperforman. Entorno conservador.\n· Dominancia bajando → el dinero rota hacia altcoins («altseason»). Mayor apetito de riesgo.\n· Dominancia alta + precio BTC cayendo → salida general de cripto, no solo rotación.\n\nEs una de las métricas macro más usadas para decidir si estar expuesto a BTC o diversificar en altcoins.">Dominancia BTC</span>
               <span class="sent-value" id="global-btc-dominance">—</span>
               <span class="sent-signal"></span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Market cap total del mercado cripto excluyendo Bitcoin. Mide el peso de las altcoins.">Altcoin Index</span>
+              <span class="sent-label" data-tooltip="Altcoin Index — Market cap total sin Bitcoin\nEs la capitalización de mercado de todas las criptomonedas excepto Bitcoin. Mide la salud del ecosistema altcoin en términos de tamaño y capital.\n\nCómo interpretarlo:\n· Sube mientras la dominancia BTC baja → rotación hacia altcoins activa (altseason).\n· Sube junto con BTC → rally generalizado con entrada de nuevo capital.\n· Cae mientras BTC se mantiene → los inversores salen de altcoins para refugiarse en BTC.\n\nMucho más volátil que el market cap total, ya que las altcoins amplifican los movimientos del ciclo.">Altcoin Index</span>
               <span class="sent-value" id="global-altcoin-cap">—</span>
               <span class="sent-signal"></span>
             </div>
@@ -125,7 +125,7 @@
             </div>
             <!-- Predicted Funding -->
             <div class="sentiment-row">
-              <span class="sent-label" title="Tasa de financiación estimada para el próximo periodo de 8h según la diferencia actual entre precio spot y perpetuo.">Predicted Funding</span>
+              <span class="sent-label" data-tooltip="Predicted Funding — Tasa de financiación estimada\nEstimación de la próxima tasa de financiación antes de que se liquide el periodo de 8 horas. Se calcula en tiempo real según la diferencia entre el precio del contrato perpetuo y el precio spot del activo.\n\nSi el perpetuo cotiza por encima del spot → la tasa predicha es positiva (los longs pagarán a los shorts).\nSi el perpetuo cotiza por debajo del spot → la tasa predicha es negativa (los shorts pagarán a los longs).\n\nCuanto mayor sea la diferencia entre ambos precios, más extrema será la tasa predicha.\n\nÚtil para anticipar si el coste de mantener una posición apalancada va a aumentar en las próximas horas.">Predicted Funding</span>
               <span class="sent-value" id="predicted-funding-rate">—</span>
               <span class="sent-signal"></span>
             </div>
@@ -167,51 +167,24 @@
           <h3 class="section-title">Mercado del Activo</h3>
           <div class="section-body">
             <div class="sentiment-row">
-              <span class="sent-label" title="Capitalización de mercado del activo: precio × supply circulante.">Market Cap</span>
+              <span class="sent-label" data-tooltip="Market Cap — Capitalización del activo\nValor total de mercado de este activo específico, calculado como: precio actual × supply circulante.\n\nRefleja el «tamaño económico» del proyecto dentro del ecosistema cripto.\n\nCómo interpretarlo:\n· Sube junto con el precio → apreciación real del activo.\n· Sube mientras el precio baja → aumento del supply en circulación (emisión nueva o desbloqueo de tokens).\n· Cae bruscamente → pérdida de valor de mercado, puede deberse a caída de precio o reducción del supply.\n\nCompararlo con otros activos permite saber si el activo es «caro» o «barato» en términos relativos dentro de cripto.">Market Cap</span>
               <span class="sent-value" id="asset-market-cap">—</span>
               <span class="sent-signal"></span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Volumen total negociado en las últimas 24 horas en todos los exchanges.">Volumen 24h</span>
+              <span class="sent-label" data-tooltip="Volumen 24h — Actividad del activo en el mercado\nTotal de capital intercambiado en este activo durante las últimas 24 horas en todos los exchanges del mundo.\n\nCómo interpretarlo:\n· Volumen alto con precio subiendo → rally con convicción, dinero real detrás del movimiento.\n· Volumen alto con precio cayendo → pánico o distribución, también movimiento con convicción.\n· Volumen bajo con movimiento de precio → señal débil, posible manipulación o falta de interés real.\n\nLa relación Volumen / Market Cap (turnover ratio) indica con qué frecuencia el activo «cambia de manos». Un ratio alto indica alta liquidez y actividad especulativa.">Volumen 24h</span>
               <span class="sent-value" id="asset-volume-24h">—</span>
               <span class="sent-signal"></span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="All-Time High: precio máximo histórico del activo.">ATH</span>
+              <span class="sent-label" data-tooltip="ATH — All-Time High (máximo histórico)\nEl precio más alto al que ha cotizado este activo desde su creación.\n\nEl porcentaje mostrado indica cuánto está el precio actual por debajo del ATH. Cuanto más cercano a 0 %, más cerca está el activo de su máximo histórico.\n\nCómo interpretarlo:\n· Muy cerca del ATH → el activo puede estar entrando en territorio de «precio descubierto» (price discovery), donde no hay referencias históricas de resistencia y el movimiento puede ser explosivo.\n· Lejos del ATH (> 50 % abajo) → el activo todavía está en modo de recuperación del último ciclo.\n\nRomper el ATH con volumen suele ser una de las señales alcistas más potentes en cripto.">ATH</span>
               <span class="sent-value" id="asset-ath">—</span>
               <span class="sent-signal" id="asset-ath-change">—</span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="All-Time Low: precio mínimo histórico del activo.">ATL</span>
+              <span class="sent-label" data-tooltip="ATL — All-Time Low (mínimo histórico)\nEl precio más bajo al que ha cotizado este activo desde su creación.\n\nEl porcentaje mostrado indica cuánto ha subido el precio desde ese mínimo histórico.\n\nCómo interpretarlo:\n· Una gran distancia respecto al ATL indica que el activo ha sobrevivido ciclos de pánico severos y se ha recuperado.\n· En mercados bajistas extremos, los precios pueden acercarse peligrosamente al ATL, lo que señala riesgo de capitulación total.\n\nEs una referencia histórica. En ciclos alcistas maduros el ATL queda muy lejos y tiene poca relevancia operativa.">ATL</span>
               <span class="sent-value" id="asset-atl">—</span>
               <span class="sent-signal" id="asset-atl-change">—</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Soportes y Resistencias -->
-        <div class="sidebar-section" id="sr-panel">
-          <h3 class="section-title">Soportes y Resistencias</h3>
-          <div class="section-body">
-            <div class="sr-table">
-              <div class="sr-row sr-resistance" id="sr-resistance-3">
-                <span class="sr-label">R3</span><span class="sr-price">—</span><span class="sr-detail">—</span>
-              </div>
-              <div class="sr-row sr-resistance" id="sr-resistance-2">
-                <span class="sr-label">R2</span><span class="sr-price">—</span><span class="sr-detail">—</span>
-              </div>
-              <div class="sr-row sr-resistance" id="sr-resistance-1">
-                <span class="sr-label">R1</span><span class="sr-price">—</span><span class="sr-detail">—</span>
-              </div>
-              <div class="sr-row sr-support" id="sr-support-1">
-                <span class="sr-label">S1</span><span class="sr-price">—</span><span class="sr-detail">—</span>
-              </div>
-              <div class="sr-row sr-support" id="sr-support-2">
-                <span class="sr-label">S2</span><span class="sr-price">—</span><span class="sr-detail">—</span>
-              </div>
-              <div class="sr-row sr-support" id="sr-support-3">
-                <span class="sr-label">S3</span><span class="sr-price">—</span><span class="sr-detail">—</span>
-              </div>
             </div>
           </div>
         </div>
@@ -262,6 +235,33 @@
             </div>
           </div>
         </div>
+
+        <!-- Soportes y Resistencias -->
+        <div class="sidebar-section" id="sr-panel">
+          <h3 class="section-title">Soportes y Resistencias</h3>
+          <div class="section-body">
+            <div class="sr-table">
+              <div class="sr-row sr-resistance" id="sr-resistance-3">
+                <span class="sr-label">R3</span><span class="sr-price">—</span><span class="sr-detail">—</span>
+              </div>
+              <div class="sr-row sr-resistance" id="sr-resistance-2">
+                <span class="sr-label">R2</span><span class="sr-price">—</span><span class="sr-detail">—</span>
+              </div>
+              <div class="sr-row sr-resistance" id="sr-resistance-1">
+                <span class="sr-label">R1</span><span class="sr-price">—</span><span class="sr-detail">—</span>
+              </div>
+              <div class="sr-row sr-support" id="sr-support-1">
+                <span class="sr-label">S1</span><span class="sr-price">—</span><span class="sr-detail">—</span>
+              </div>
+              <div class="sr-row sr-support" id="sr-support-2">
+                <span class="sr-label">S2</span><span class="sr-price">—</span><span class="sr-detail">—</span>
+              </div>
+              <div class="sr-row sr-support" id="sr-support-3">
+                <span class="sr-label">S3</span><span class="sr-price">—</span><span class="sr-detail">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
         </div><!-- /block-body -->
       </div><!-- /block-asset -->
 
@@ -283,13 +283,30 @@
               <span class="sent-signal" id="micro-price-change">—</span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Diferencia entre el mejor precio de venta y el mejor precio de compra. Spread bajo = alta liquidez.">Spread</span>
+              <span class="sent-label" data-tooltip="Spread — Diferencial bid-ask\nDiferencia entre el mejor precio de venta disponible (ask) y el mejor precio de compra disponible (bid) en el order book de Binance en este momento.\n\nEs la medida más directa de la liquidez de un mercado.\n\nCómo interpretarlo:\n· Spread muy bajo (< 0,01 %) → mercado muy líquido. El coste de entrar y salir es mínimo.\n· Spread alto → liquidez baja o volatilidad alta. Las órdenes de mercado se ejecutan a peor precio.\n\nCuando hay noticias importantes o movimientos bruscos de precio, el spread se amplía temporalmente porque los market makers retiran su liquidez para protegerse del riesgo.">Spread</span>
               <span class="sent-value" id="micro-spread">—</span>
               <span class="sent-signal" id="micro-spread-pct">—</span>
             </div>
             <div class="sentiment-row">
-              <span class="sent-label" title="Volumen real de la crypto negociado en Binance en las últimas 24 horas.">Volumen Binance 24h</span>
+              <span class="sent-label" data-tooltip="Volumen Binance 24h — Actividad en el par de Binance\nTotal de unidades del activo negociadas en las últimas 24 horas específicamente en Binance, que es el exchange de mayor volumen del mundo.\n\nA diferencia del Volumen 24h global (que agrega todos los exchanges), este dato refleja solo la actividad en Binance.\n\nCómo usarlo:\n· Comparar con el volumen promedio de los últimos días para detectar picos de actividad inusual.\n· Un pico de volumen en Binance sin movimiento proporcional en otros exchanges puede indicar actividad institucional o arbitraje concentrado.\n\nDatos obtenidos directamente de la API de Binance en tiempo real.">Volumen Binance 24h</span>
               <span class="sent-value" id="micro-volume-24h">—</span>
+              <span class="sent-signal"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Muros Binance -->
+        <div class="sidebar-section" id="binance-panel">
+          <h3 class="section-title">Muros Binance</h3>
+          <div class="section-body">
+            <div class="sentiment-row">
+              <span class="sent-label" data-tooltip="Muro de Compra — Soporte psicológico en el order book\nLa orden de compra (bid) más grande detectada entre los 20 mejores niveles del order book de Binance. Representa una concentración inusual de capital dispuesto a comprar a ese precio.\n\nCómo interpretarlo:\n· Un muro grande actúa como soporte temporal: el precio tiende a frenarse al acercarse porque necesita «absorber» toda esa liquidez para seguir cayendo.\n· Sin embargo, los muros grandes pueden ser órdenes señuelo (spoofing) que desaparecen antes de ser ejecutadas.\n\nEstrategia clásica: cuando el precio se acerca a un muro de compra importante, algunos traders abren posiciones largas con stop por debajo del nivel, anticipando que el muro detenga la caída.">Muro Compra</span>
+              <span class="sent-value bullish" id="binance-buy-wall">—</span>
+              <span class="sent-signal"></span>
+            </div>
+            <div class="sentiment-row">
+              <span class="sent-label" data-tooltip="Muro de Venta — Resistencia psicológica en el order book\nLa orden de venta (ask) más grande detectada entre los 20 mejores niveles del order book de Binance. Representa una concentración inusual de capital dispuesto a vender a ese precio.\n\nCómo interpretarlo:\n· Un muro grande actúa como resistencia temporal: el precio necesita «consumir» toda esa oferta para seguir subiendo.\n· Al igual que los muros de compra, pueden ser órdenes señuelo (spoofing) que se retiran antes de ser tocadas.\n\nEstrategia clásica: cuando el precio se acerca a un muro de venta importante, algunos traders cierran posiciones largas o abren cortos, anticipando que el muro frene el alza.">Muro Venta</span>
+              <span class="sent-value bearish" id="binance-sell-wall">—</span>
               <span class="sent-signal"></span>
             </div>
           </div>
@@ -309,23 +326,6 @@
               <div class="ob-bids" id="ob-bids-container">
                 <!-- 5 filas dinámicas -->
               </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Muros Binance -->
-        <div class="sidebar-section" id="binance-panel">
-          <h3 class="section-title">Muros Binance</h3>
-          <div class="section-body">
-            <div class="sentiment-row">
-              <span class="sent-label" title="Mayor muro de compra detectado en el top 20 del order book. Actúa como soporte psicológico.">Muro Compra</span>
-              <span class="sent-value bullish" id="binance-buy-wall">—</span>
-              <span class="sent-signal"></span>
-            </div>
-            <div class="sentiment-row">
-              <span class="sent-label" title="Mayor muro de venta detectado en el top 20 del order book. Actúa como resistencia psicológica.">Muro Venta</span>
-              <span class="sent-value bearish" id="binance-sell-wall">—</span>
-              <span class="sent-signal"></span>
             </div>
           </div>
         </div>
