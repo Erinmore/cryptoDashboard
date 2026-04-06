@@ -37,21 +37,52 @@ function computeLevelDistances(price, supports, resistances) {
   };
 }
 
+/**
+ * Calcula la tendencia de una serie de valores via regresión lineal simple.
+ * Devuelve 'rising' | 'falling' | 'flat' según el signo de la pendiente.
+ * @param {number[]} values
+ * @returns {'rising'|'falling'|'flat'}
+ */
+function computeLinearTrend(values) {
+  if (!values || values.length < 2) return 'flat';
+  const n = values.length;
+  const sumX = (n * (n - 1)) / 2;
+  const sumX2 = (n * (n - 1) * (2 * n - 1)) / 6;
+  const sumY = values.reduce((s, v) => s + v, 0);
+  const sumXY = values.reduce((s, v, i) => s + i * v, 0);
+  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+  const threshold = Math.abs(sumY / n) * 0.01; // 1% del promedio
+  return slope > threshold ? 'rising' : slope < -threshold ? 'falling' : 'flat';
+}
+
 function computeHistorySummaries(histories) {
   // ── Fear & Greed summary (30d) ──────────────────────────────────────────
   const fgHistory = histories?.fear_greed ?? [];
   let fearGreedSummary = null;
   if (fgHistory.length >= 1) {
     const values = fgHistory.map(e => e.value);
+
+    // Calcular fechas relativas buscando por date exacta
+    const today = new Date().toISOString().split('T')[0];
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+
+    const current = fgHistory.find(e => e.date === today);
+    const yesterdayEntry = fgHistory.find(e => e.date === yesterday);
+    const sevenDaysEntry = fgHistory.find(e => e.date === sevenDaysAgo);
+    // Para 30d_ago: buscar fecha exacta, sino usar el primero (más antiguo)
+    const thirtyDaysEntry = fgHistory.find(e => e.date === thirtyDaysAgo) || fgHistory.at(0);
+
     fearGreedSummary = {
-      current:    fgHistory.at(-1) ? { value: fgHistory.at(-1).value, classification: fgHistory.at(-1).classification } : null,
-      yesterday:  fgHistory.at(-2) ? { value: fgHistory.at(-2).value, classification: fgHistory.at(-2).classification } : null,
-      '7d_ago':   fgHistory.at(-7) ? { value: fgHistory.at(-7).value, classification: fgHistory.at(-7).classification } : null,
-      '30d_ago':  fgHistory.at(0)  ? { value: fgHistory.at(0).value,  classification: fgHistory.at(0).classification  } : null,
+      current:    current ? { value: current.value, classification: current.classification } : (fgHistory.at(-1) ? { value: fgHistory.at(-1).value, classification: fgHistory.at(-1).classification } : null),
+      yesterday:  yesterdayEntry ? { value: yesterdayEntry.value, classification: yesterdayEntry.classification } : (fgHistory.at(-2) ? { value: fgHistory.at(-2).value, classification: fgHistory.at(-2).classification } : null),
+      '7d_ago':   sevenDaysEntry ? { value: sevenDaysEntry.value, classification: sevenDaysEntry.classification } : null,
+      '30d_ago':  thirtyDaysEntry ? { value: thirtyDaysEntry.value, classification: thirtyDaysEntry.classification } : null,
       period_min: Math.min(...values),
       period_max: Math.max(...values),
       period_avg: Math.round(values.reduce((s, v) => s + v, 0) / values.length),
-      trend_30d:  (fgHistory.at(-1)?.value ?? 0) > (fgHistory.at(0)?.value ?? 0) ? 'improving' : 'deteriorating',
+      trend_30d:  (fgHistory.at(-1)?.value ?? 0) > (thirtyDaysEntry?.value ?? 0) ? 'improving' : 'deteriorating',
     };
   }
 
@@ -61,6 +92,7 @@ function computeHistorySummaries(histories) {
   if (frHistory.length >= 1) {
     const closes = frHistory.map(e => e.c);
     const positiveCount = closes.filter(v => v > 0).length;
+    const latestClose = frHistory.at(-1)?.c ?? 0;
     fundingRateSummary = {
       open_48h:             frHistory.at(0)?.o ?? null,
       close_current:        frHistory.at(-1)?.c ?? null,
@@ -68,6 +100,7 @@ function computeHistorySummaries(histories) {
       low_48h:              Math.min(...frHistory.map(e => e.l)),
       trend_48h:            frHistory.at(-1)?.trend ?? null,
       pct_candles_positive: Math.round((positiveCount / closes.length) * 100),
+      severity_current:     latestClose > 0.5 ? 'extreme' : latestClose > 0.2 ? 'high' : latestClose > 0.05 ? 'elevated' : 'normal',
     };
   }
 
@@ -137,7 +170,59 @@ function computeHistorySummaries(histories) {
     };
   }
 
-  return { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary };
+  // ── CVD summary (30d) ───────────────────────────────────────────────────
+  const cvdHistory = histories?.cvd ?? [];
+  let cvdSummary = null;
+  if (cvdHistory.length >= 1) {
+    const values = cvdHistory.map(e => e.value);
+    const current = cvdHistory.at(-1);
+    const first = cvdHistory.at(0);
+    const prev7d = cvdHistory.length >= 7 ? cvdHistory[cvdHistory.length - 7] : null;
+    const change7dPct = (prev7d?.value != null && prev7d.value !== 0)
+      ? parseFloat(((current.value - prev7d.value) / Math.abs(prev7d.value) * 100).toFixed(2))
+      : null;
+    const change30dPct = (first?.value != null && first.value !== 0)
+      ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
+      : null;
+    cvdSummary = {
+      current_value:      current.value,
+      current_trend:      current.trend,
+      current_divergence: current.divergence,
+      change_pct_7d:      change7dPct,
+      change_pct_30d:     change30dPct,
+      period_min:         Math.min(...values),
+      period_max:         Math.max(...values),
+      trend_30d:          computeLinearTrend(values),
+    };
+  }
+
+  // ── OBV summary (30d) ───────────────────────────────────────────────────
+  const obvHistory = histories?.obv ?? [];
+  let obvSummary = null;
+  if (obvHistory.length >= 1) {
+    const values = obvHistory.map(e => e.value);
+    const current = obvHistory.at(-1);
+    const first = obvHistory.at(0);
+    const prev7d = obvHistory.length >= 7 ? obvHistory[obvHistory.length - 7] : null;
+    const change7dPct = (prev7d?.value != null && prev7d.value !== 0)
+      ? parseFloat(((current.value - prev7d.value) / Math.abs(prev7d.value) * 100).toFixed(2))
+      : null;
+    const change30dPct = (first?.value != null && first.value !== 0)
+      ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
+      : null;
+    obvSummary = {
+      current_value:      current.value,
+      current_trend:      current.trend,
+      current_divergence: current.divergence,
+      change_pct_7d:      change7dPct,
+      change_pct_30d:     change30dPct,
+      period_min:         Math.min(...values),
+      period_max:         Math.max(...values),
+      trend_30d:          computeLinearTrend(values),
+    };
+  }
+
+  return { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, obvSummary };
 }
 
 async function buildAnalyzeContext(coin, primaryTf) {
@@ -198,7 +283,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   }
 
   const histories = getHistories();
-  const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary } =
+  const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, obvSummary } =
     computeHistorySummaries(histories);
 
   const fr  = derivatives?.funding_rate    ?? null;
@@ -272,6 +357,11 @@ async function buildAnalyzeContext(coin, primaryTf) {
         signal:     liq.signal,
         history:    liquidationsSummary,
       } : null,
+    },
+
+    volume_history: {
+      cvd: cvdSummary,
+      obv: obvSummary,
     },
   };
 }

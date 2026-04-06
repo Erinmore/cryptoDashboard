@@ -1,8 +1,8 @@
-import { fetchOHLC, fetchCurrentPrice, fetchBTCDominance } from '../services/coingeckoService.js';
+import { fetchOHLC, fetchCurrentPrice, fetchGlobalMarketData, fetchCoinMarketData } from '../services/coingeckoService.js';
 import { fetchFearGreed } from '../services/fearGreedService.js';
 import { fetchDerivativesData } from '../services/coinalyzeService.js';
-import { fetchOrderBookWalls } from '../services/binanceOrderBookService.js';
-import { getHistories } from '../services/historyService.js';
+import { fetchOrderBookWalls, fetchBinanceTicker } from '../services/binanceOrderBookService.js';
+import { getHistories, addCVDEntry, addOBVEntry } from '../services/historyService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { getLastAnalysis } from '../services/dbService.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
@@ -41,9 +41,11 @@ export async function getData(req, res, next) {
       priceData,
       fearGreed,
       derivatives,
-      btcDominance,
+      globalMarket,
       lastAnalysis,
       binanceWalls,
+      coinMarketData,
+      binanceTicker,
     ] = await Promise.allSettled([
       fetchOHLC(coin, '1h'),
       fetchOHLC(coin, '4h'),
@@ -52,9 +54,11 @@ export async function getData(req, res, next) {
       fetchCurrentPrice(coin),
       fetchFearGreed(),
       fetchDerivativesData(coin),
-      fetchBTCDominance(),
+      fetchGlobalMarketData(),
       Promise.resolve(getLastAnalysis(coin)),
       fetchOrderBookWalls(binanceSymbols[coin]),
+      fetchCoinMarketData(coin),
+      fetchBinanceTicker(binanceSymbols[coin]),
     ]);
 
     // Extraer valores, los fallos devuelven null
@@ -77,6 +81,35 @@ export async function getData(req, res, next) {
       }
     }
 
+    // Leer histórico previo ANTES de agregar nuevas entradas (para calcular change_pct_7d)
+    const prevHistories = getHistories();
+
+    // Poblar históricos CVD/OBV desde indicadores 1D
+    const today = new Date().toISOString().split('T')[0];
+    const cvdIndicator = technical['1D']?.cvd;
+    const obvIndicator = technical['1D']?.obv;
+
+    if (cvdIndicator) {
+      const cvdPrev7d = prevHistories.cvd.length >= 7
+        ? prevHistories.cvd[prevHistories.cvd.length - 7]
+        : null;
+      const cvdChange7d = (cvdPrev7d?.value != null && cvdPrev7d.value !== 0)
+        ? parseFloat(((cvdIndicator.value - cvdPrev7d.value) / Math.abs(cvdPrev7d.value) * 100).toFixed(2))
+        : null;
+      addCVDEntry(today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence, cvdChange7d);
+    }
+
+    if (obvIndicator) {
+      const obvPrev7d = prevHistories.obv.length >= 7
+        ? prevHistories.obv[prevHistories.obv.length - 7]
+        : null;
+      const obvChange7d = (obvPrev7d?.value != null && obvPrev7d.value !== 0)
+        ? parseFloat(((obvIndicator.value - obvPrev7d.value) / Math.abs(obvPrev7d.value) * 100).toFixed(2))
+        : null;
+      addOBVEntry(today, obvIndicator.value, obvIndicator.trend, obvIndicator.divergence, obvChange7d);
+    }
+
+    // Una sola llamada final a getHistories() — incluye las entradas recién añadidas
     const processingMs = Date.now() - start;
     const histories = getHistories();
 
@@ -95,13 +128,16 @@ export async function getData(req, res, next) {
       technical,
       fear_greed: resolve(fearGreed),
       derivatives: resolve(derivatives),
-      btc_dominance: resolve(btcDominance),
+      global_market: resolve(globalMarket),
+      btc_dominance: resolve(globalMarket)?.btc_dominance ?? null,
+      coin_market_data: resolve(coinMarketData),
       last_analysis: lastAnalysis ? {
         timestamp: lastAnalysis.timestamp,
         action: lastAnalysis.recommendation_action,
         confidence: lastAnalysis.recommendation_confidence,
       } : null,
       binance_walls: resolve(binanceWalls),
+      binance_ticker: resolve(binanceTicker),
       history: histories,
     });
   } catch (err) {

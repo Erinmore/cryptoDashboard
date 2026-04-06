@@ -6,11 +6,13 @@
  * limpian automáticamente cuando superan los límites.
  *
  * Exportadas:
- *   addFearGreedEntry(value, classification, trend)
+ *   addFearGreedEntry(value, classification, trend, date?)
  *   addFundingRateEntry(candle)                          — {t, o, h, l, c, trend}
  *   addOpenInterestEntry(candle)                         — {t, o, h, l, c}
  *   addLongShortRatioEntry(entry)                        — {t, long_pct, short_pct}
  *   addLiquidationsEntry(date, longs_usd, shorts_usd)
+ *   addCVDEntry(date, value, trend, divergence, change_pct_7d)
+ *   addOBVEntry(date, value, trend, divergence, change_pct_7d)
  *   getHistories()                                       — retorna todos los históricos
  */
 
@@ -23,6 +25,8 @@ const LIMITS = {
   openInterest:   42,    // 7d @ 4h interval = 42 candles
   longShortRatio: 168,   // 7d @ 1h interval = 168 candles
   liquidations:   7,     // 7 días (1 entry/día)
+  cvd:            30,    // 30 días (1 entry/día)
+  obv:            30,    // 30 días (1 entry/día)
 };
 
 const histories = {
@@ -31,15 +35,17 @@ const histories = {
   openInterest:   [],
   longShortRatio: [],
   liquidations:   [],
+  cvd:            [],
+  obv:            [],
 };
 
 // ─── Fear & Greed ─────────────────────────────────────────────────────────
 
-export function addFearGreedEntry(value, classification, trend) {
+export function addFearGreedEntry(value, classification, trend, date = null) {
   if (value == null || classification == null) return;
 
   const entry = {
-    date: new Date().toISOString().split('T')[0], // YYYY-MM-DD
+    date: date || new Date().toISOString().split('T')[0], // YYYY-MM-DD
     value,
     classification,
     trend,
@@ -152,6 +158,62 @@ export function addLiquidationsEntry(date, longs_usd, shorts_usd) {
   }
 }
 
+// ─── CVD ──────────────────────────────────────────────────────────────────
+
+export function addCVDEntry(date, value, trend, divergence, change_pct_7d) {
+  if (value == null) return;
+
+  const entry = {
+    date: date || new Date().toISOString().split('T')[0], // YYYY-MM-DD
+    value,
+    trend,
+    divergence,
+    change_pct_7d,
+  };
+
+  // Evitar duplicados del mismo día
+  if (histories.cvd.length > 0) {
+    const last = histories.cvd[histories.cvd.length - 1];
+    if (last.date === entry.date) {
+      histories.cvd[histories.cvd.length - 1] = entry;
+      return;
+    }
+  }
+
+  histories.cvd.push(entry);
+  if (histories.cvd.length > LIMITS.cvd) {
+    histories.cvd.shift();
+  }
+}
+
+// ─── OBV ──────────────────────────────────────────────────────────────────
+
+export function addOBVEntry(date, value, trend, divergence, change_pct_7d) {
+  if (value == null) return;
+
+  const entry = {
+    date: date || new Date().toISOString().split('T')[0], // YYYY-MM-DD
+    value,
+    trend,
+    divergence,
+    change_pct_7d,
+  };
+
+  // Evitar duplicados del mismo día
+  if (histories.obv.length > 0) {
+    const last = histories.obv[histories.obv.length - 1];
+    if (last.date === entry.date) {
+      histories.obv[histories.obv.length - 1] = entry;
+      return;
+    }
+  }
+
+  histories.obv.push(entry);
+  if (histories.obv.length > LIMITS.obv) {
+    histories.obv.shift();
+  }
+}
+
 // ─── Getter ───────────────────────────────────────────────────────────────
 
 /**
@@ -165,6 +227,8 @@ export function getHistories() {
     open_interest: [...histories.openInterest],
     long_short_ratio: [...histories.longShortRatio],
     liquidations: [...histories.liquidations],
+    cvd: [...histories.cvd],
+    obv: [...histories.obv],
   };
 }
 
@@ -177,5 +241,7 @@ export function logHistoriesSummary() {
     openInterestEntries: histories.openInterest.length,
     longShortRatioEntries: histories.longShortRatio.length,
     liquidationsEntries: histories.liquidations.length,
+    cvdEntries: histories.cvd.length,
+    obvEntries: histories.obv.length,
   }, 'Historical data summary');
 }
