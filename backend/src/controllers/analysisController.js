@@ -244,21 +244,21 @@ function computeHistorySummaries(histories) {
     };
   }
 
-  // ── OBV summary (30d) ───────────────────────────────────────────────────
-  const obvHistory = histories?.obv ?? [];
-  let obvSummary = null;
-  if (obvHistory.length >= 1) {
-    const values = obvHistory.map(e => e.value);
-    const current = obvHistory.at(-1);
-    const first = obvHistory.at(0);
-    const prev7d = obvHistory.length >= 7 ? obvHistory[obvHistory.length - 7] : null;
+  // ── VWAP summary (30d) ──────────────────────────────────────────────────
+  const vwapHistory = histories?.vwap ?? [];
+  let vwapSummary = null;
+  if (vwapHistory.length >= 1) {
+    const values = vwapHistory.map(e => e.value);
+    const current = vwapHistory.at(-1);
+    const first = vwapHistory.at(0);
+    const prev7d = vwapHistory.length >= 7 ? vwapHistory[vwapHistory.length - 7] : null;
     const change7dPct = (prev7d?.value != null && prev7d.value !== 0)
       ? parseFloat(((current.value - prev7d.value) / Math.abs(prev7d.value) * 100).toFixed(2))
       : null;
     const change30dPct = (first?.value != null && first.value !== 0)
       ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
       : null;
-    obvSummary = {
+    vwapSummary = {
       current_value:      current.value,
       current_trend:      current.trend,
       current_divergence: current.divergence,
@@ -270,7 +270,7 @@ function computeHistorySummaries(histories) {
     };
   }
 
-  return { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, obvSummary };
+  return { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, vwapSummary };
 }
 
 async function buildAnalyzeContext(coin, primaryTf) {
@@ -331,7 +331,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   }
 
   const histories = getHistories();
-  const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, obvSummary } =
+  const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, vwapSummary } =
     computeHistorySummaries(histories);
 
   const fr  = derivatives?.funding_rate    ?? null;
@@ -412,7 +412,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
 
     volume_history: {
       cvd: cvdSummary,
-      obv: obvSummary,
+      vwap: vwapSummary,
     },
   };
 }

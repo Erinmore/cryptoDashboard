@@ -125,7 +125,11 @@ Cruza:
 
 * CVD
 * Volume Delta
-* OBV
+* VWAP (volume_history.vwap): rolling 20-period Volume-Weighted Average Price.
+  value = VWAP price in USD. Indicates whether price is trading above or below
+  recent volume-weighted fair value. Rising VWAP = buyers paid higher prices on average.
+  Divergence: bearish = price rises but VWAP gap narrows (rally losing volume support).
+             bullish = price falls but VWAP gap widens (sellers capitulating above avg cost).
 
 ### Detectar:
 

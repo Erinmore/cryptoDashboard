@@ -477,37 +477,44 @@ export function calculateCVD(candles) {
   };
 }
 
-// ─── OBV — On-Balance Volume ─────────────────────────────────────────────────
+// ─── VWAP — Volume-Weighted Average Price (rolling 20-period) ──────────────────
 
-export function calculateOBV(candles) {
+export function calculateVWAP(candles, period = 20) {
   if (!candles || candles.length < 2) return null;
 
-  let obv = 0;
-  const series = [0];
-
-  for (let i = 1; i < candles.length; i++) {
-    if (candles[i].close > candles[i - 1].close) obv += candles[i].volume;
-    else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
-    series.push(obv);
+  const vwapSeries = [];
+  for (let i = 0; i < candles.length; i++) {
+    const slice = candles.slice(Math.max(0, i - period + 1), i + 1);
+    let tpv = 0, vol = 0;
+    for (const c of slice) {
+      const tp = (c.high + c.low + c.close) / 3;
+      tpv += tp * c.volume;
+      vol += c.volume;
+    }
+    vwapSeries.push(vol > 0 ? tpv / vol : candles[i].close);
   }
 
-  // DEBUG: Log first and last few values
-  if (process.env.DEBUG_CVD_OBV === 'true') {
-    console.log('[OBV] series.slice(0,3):', series.slice(0, 3));
-    console.log('[OBV] series[-3:]:', series.slice(-3));
-  }
+  const n = vwapSeries.length;
+  const currentVwap = vwapSeries[n - 1];
+  const prevVwap = vwapSeries[Math.max(0, n - 6)];
+  const threshold = prevVwap * 0.001;   // 0.1%
+  const trend = currentVwap > prevVwap + threshold ? 'rising'
+              : currentVwap < prevVwap - threshold ? 'falling'
+              : 'flat';
 
-  const current = series[series.length - 1];
-  const prev = series[Math.max(0, series.length - 6)];
-  const trend = current > prev ? 'rising' : current < prev ? 'falling' : 'flat';
+  // Divergence based on price-VWAP distance
+  const closeCurrent = candles[n - 1].close;
+  const closePrev = candles[Math.max(0, n - 6)].close;
+  const priceChange = closeCurrent - closePrev;
+  const distNow = (closeCurrent - currentVwap) / currentVwap;
+  const distPrev = (closePrev - prevVwap) / prevVwap;
 
-  const priceChange = candles[candles.length - 1].close - candles[Math.max(0, candles.length - 6)].close;
   let divergence = 'none';
-  if (priceChange > 0 && trend === 'falling') divergence = 'bearish';
-  if (priceChange < 0 && trend === 'rising') divergence = 'bullish';
+  if (priceChange > 0 && distNow < distPrev) divergence = 'bearish';
+  if (priceChange < 0 && distNow > distPrev) divergence = 'bullish';
 
   return {
-    value: parseFloat(current.toFixed(4)),
+    value: parseFloat(currentVwap.toFixed(4)),
     trend,
     divergence,
   };

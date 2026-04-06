@@ -12,7 +12,7 @@
  *   addLongShortRatioEntry(entry)                        — {t, long_pct, short_pct}
  *   addLiquidationsEntry(date, longs_usd, shorts_usd)
  *   addCVDEntry(date, value, trend, divergence, change_pct_7d)
- *   addOBVEntry(date, value, trend, divergence, change_pct_7d)
+ *   addVWAPEntry(date, value, trend, divergence, change_pct_7d)
  *   getHistories()                                       — retorna todos los históricos
  */
 
@@ -26,7 +26,7 @@ const LIMITS = {
   longShortRatio: 168,   // 7d @ 1h interval = 168 candles
   liquidations:   7,     // 7 días (1 entry/día)
   cvd:            30,    // 30 días (1 entry/día)
-  obv:            30,    // 30 días (1 entry/día)
+  vwap:           30,    // 30 días (1 entry/día)
 };
 
 const histories = {
@@ -36,7 +36,7 @@ const histories = {
   longShortRatio: [],
   liquidations:   [],
   cvd:            [],
-  obv:            [],
+  vwap:           [],
 };
 
 // ─── Fear & Greed ─────────────────────────────────────────────────────────
@@ -186,9 +186,9 @@ export function addCVDEntry(date, value, trend, divergence, change_pct_7d) {
   }
 }
 
-// ─── OBV ──────────────────────────────────────────────────────────────────
+// ─── VWAP ─────────────────────────────────────────────────────────────────
 
-export function addOBVEntry(date, value, trend, divergence, change_pct_7d) {
+export function addVWAPEntry(date, value, trend, divergence, change_pct_7d) {
   if (value == null) return;
 
   const entry = {
@@ -200,17 +200,17 @@ export function addOBVEntry(date, value, trend, divergence, change_pct_7d) {
   };
 
   // Evitar duplicados del mismo día
-  if (histories.obv.length > 0) {
-    const last = histories.obv[histories.obv.length - 1];
+  if (histories.vwap.length > 0) {
+    const last = histories.vwap[histories.vwap.length - 1];
     if (last.date === entry.date) {
-      histories.obv[histories.obv.length - 1] = entry;
+      histories.vwap[histories.vwap.length - 1] = entry;
       return;
     }
   }
 
-  histories.obv.push(entry);
-  if (histories.obv.length > LIMITS.obv) {
-    histories.obv.shift();
+  histories.vwap.push(entry);
+  if (histories.vwap.length > LIMITS.vwap) {
+    histories.vwap.shift();
   }
 }
 
@@ -228,7 +228,7 @@ export function getHistories() {
     long_short_ratio: [...histories.longShortRatio],
     liquidations: [...histories.liquidations],
     cvd: [...histories.cvd],
-    obv: [...histories.obv],
+    vwap: [...histories.vwap],
   };
 }
 
@@ -242,6 +242,6 @@ export function logHistoriesSummary() {
     longShortRatioEntries: histories.longShortRatio.length,
     liquidationsEntries: histories.liquidations.length,
     cvdEntries: histories.cvd.length,
-    obvEntries: histories.obv.length,
+    vwapEntries: histories.vwap.length,
   }, 'Historical data summary');
 }

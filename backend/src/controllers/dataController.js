@@ -2,7 +2,7 @@ import { fetchOHLC, fetchCurrentPrice, fetchGlobalMarketData, fetchCoinMarketDat
 import { fetchFearGreed } from '../services/fearGreedService.js';
 import { fetchDerivativesData } from '../services/coinalyzeService.js';
 import { fetchOrderBookWalls, fetchBinanceTicker } from '../services/binanceOrderBookService.js';
-import { getHistories, addCVDEntry, addOBVEntry } from '../services/historyService.js';
+import { getHistories, addCVDEntry, addVWAPEntry } from '../services/historyService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { getLastAnalysis } from '../services/dbService.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
@@ -84,10 +84,10 @@ export async function getData(req, res, next) {
     // Leer histórico previo ANTES de agregar nuevas entradas (para calcular change_pct_7d)
     const prevHistories = getHistories();
 
-    // Poblar históricos CVD/OBV desde indicadores 1D
+    // Poblar históricos CVD/VWAP desde indicadores 1D
     const today = new Date().toISOString().split('T')[0];
     const cvdIndicator = technical['1D']?.cvd;
-    const obvIndicator = technical['1D']?.obv;
+    const vwapIndicator = technical['1D']?.vwap;
 
     if (cvdIndicator) {
       const cvdPrev7d = prevHistories.cvd.length >= 7
@@ -99,14 +99,14 @@ export async function getData(req, res, next) {
       addCVDEntry(today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence, cvdChange7d);
     }
 
-    if (obvIndicator) {
-      const obvPrev7d = prevHistories.obv.length >= 7
-        ? prevHistories.obv[prevHistories.obv.length - 7]
+    if (vwapIndicator) {
+      const vwapPrev7d = prevHistories.vwap.length >= 7
+        ? prevHistories.vwap[prevHistories.vwap.length - 7]
         : null;
-      const obvChange7d = (obvPrev7d?.value != null && obvPrev7d.value !== 0)
-        ? parseFloat(((obvIndicator.value - obvPrev7d.value) / Math.abs(obvPrev7d.value) * 100).toFixed(2))
+      const vwapChange7d = (vwapPrev7d?.value != null && vwapPrev7d.value !== 0)
+        ? parseFloat(((vwapIndicator.value - vwapPrev7d.value) / Math.abs(vwapPrev7d.value) * 100).toFixed(2))
         : null;
-      addOBVEntry(today, obvIndicator.value, obvIndicator.trend, obvIndicator.divergence, obvChange7d);
+      addVWAPEntry(today, vwapIndicator.value, vwapIndicator.trend, vwapIndicator.divergence, vwapChange7d);
     }
 
     // Una sola llamada final a getHistories() — incluye las entradas recién añadidas

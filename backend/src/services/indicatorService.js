@@ -8,7 +8,7 @@ import {
   calculateSuperTrend,
   calculateVolumeDelta,
   calculateCVD,
-  calculateOBV,
+  calculateVWAP,
   calculateFibonacci,
   calculateSupportResistance,
   detectRSIDivergence,
@@ -65,8 +65,8 @@ export function computeIndicators(candles, timeframe) {
   // ── CVD ──────────────────────────────────────────────────────
   const cvd = calculateCVD(candles);
 
-  // ── OBV ──────────────────────────────────────────────────────
-  const obv = calculateOBV(candles);
+  // ── VWAP ─────────────────────────────────────────────────────
+  const vwap = calculateVWAP(candles);
 
   // ── Fibonacci ────────────────────────────────────────────────
   const high = Math.max(...highs);
@@ -95,7 +95,7 @@ export function computeIndicators(candles, timeframe) {
     super_trend: superTrend,
     volume_delta: volumeDelta,
     cvd,
-    obv,
+    vwap,
     fibonacci,
     support_resistance: sr,
   };

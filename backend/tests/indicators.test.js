@@ -12,7 +12,7 @@ import {
   calculateADX,
   calculateSuperTrend,
   calculateCVD,
-  calculateOBV,
+  calculateVWAP,
   detectRSIDivergence,
   detectMarketRegime,
 } from '../src/utils/indicators.js';
@@ -482,36 +482,43 @@ describe('calculateCVD', () => {
   });
 });
 
-// ─── OBV ──────────────────────────────────────────────────────────────────────
+// ─── VWAP ─────────────────────────────────────────────────────────────────────
 
-describe('calculateOBV', () => {
-  const makeCandle = (c, v = 1000) => ({ high: c + 1, low: c - 1, close: c, open: c, volume: v });
+describe('calculateVWAP', () => {
+  const makeCandle = (h, l, c, v = 1000) => ({ high: h, low: l, close: c, open: (h + l) / 2, volume: v });
 
   test('returns null for insufficient data', () => {
-    expect(calculateOBV([makeCandle(100)])).toBeNull();
-    expect(calculateOBV(null)).toBeNull();
+    expect(calculateVWAP([makeCandle(101, 99, 100)])).toBeNull();
+    expect(calculateVWAP(null)).toBeNull();
   });
 
   test('returns value, trend, divergence', () => {
-    const candles = Array.from({ length: 10 }, (_, i) => makeCandle(100 + i));
-    const result = calculateOBV(candles);
+    const candles = Array.from({ length: 10 }, (_, i) => makeCandle(102 + i, 98 + i, 100 + i));
+    const result = calculateVWAP(candles);
     expect(result).toHaveProperty('value');
     expect(result).toHaveProperty('trend');
     expect(result).toHaveProperty('divergence');
   });
 
-  test('OBV increases when price rises', () => {
-    const candles = Array.from({ length: 6 }, (_, i) => makeCandle(100 + i, 500));
-    const result = calculateOBV(candles);
-    expect(result.value).toBeGreaterThan(0);
+  test('VWAP rising in uptrend', () => {
+    const candles = Array.from({ length: 10 }, (_, i) => makeCandle(102 + i, 98 + i, 100 + i, 500));
+    const result = calculateVWAP(candles);
+    expect(result.value).toBeGreaterThan(100);
     expect(result.trend).toBe('rising');
   });
 
-  test('OBV decreases when price falls', () => {
-    const candles = Array.from({ length: 6 }, (_, i) => makeCandle(100 - i, 500));
-    const result = calculateOBV(candles);
-    expect(result.value).toBeLessThan(0);
-    expect(result.trend).toBe('falling');
+  test('bearish divergence detection', () => {
+    // Scenario: price jumps with low volume, then holds with high volume
+    // - Positions 0-13: low price (~99), high volume
+    // - Positions 14-19: price jumps to 110, low volume (VWAP lags far behind)
+    // - Positions 20-24: price holds at 112, high volume (VWAP catches up, gap narrows)
+    // Result: price rose but VWAP caught up → bearish (rally losing volume support)
+    const lowCandles = Array.from({ length: 14 }, (_, i) => makeCandle(101, 97, 99, 1000));
+    const jumpCandles = Array.from({ length: 6 }, (_, i) => makeCandle(112, 108, 110, 100));
+    const holdCandles = Array.from({ length: 5 }, (_, i) => makeCandle(113, 111, 112, 1000));
+    const candles = [...lowCandles, ...jumpCandles, ...holdCandles];
+    const result = calculateVWAP(candles);
+    expect(result.divergence).toBe('bearish');
   });
 });
 

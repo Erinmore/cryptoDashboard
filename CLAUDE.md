@@ -323,7 +323,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | `calculateSuperTrend(candles, ...)` | SuperTrend adaptativo — usar `st.support` (UP) o `st.resistance` (DOWN) para el nivel |
 | `calculateVolumeDelta(candles)` | Presión compradora/vendedora |
 | `calculateCVD(candles)` | Cumulative Volume Delta |
-| `calculateOBV(candles)` | On-Balance Volume |
+| `calculateVWAP(candles, period?)` | VWAP (rolling 20-period) — Volume-Weighted Average Price |
 | `calculateFibonacci(high, low, levels?)` | Niveles Fibonacci |
 | `calculateSupportResistance(candles, ...)` | Soporte & Resistencia — devuelve `{supports, resistances}` sin campo `type` (ya declarado por la lista) |
 | `detectRSIDivergence(closes, ...)` | Divergencias RSI |
