@@ -230,7 +230,7 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 | Servicio | Uso | Auth | TTL cache | Notas |
 |----------|-----|------|-----------|-------|
 | CoinGecko v3 | OHLC (4 TFs), precio, BTC Dominance | Opcional (free tier) | 60s–1800s OHLC (per-TF), 30s precio, 10min dominance | — |
-| alternative.me | Fear & Greed Index | Ninguna | 10min | Completamente gratis, sin registro |
+| alternative.me | Fear & Greed Index (30 días) | Ninguna | 10min | Obtiene últimos 30 días (`limit=30`); completamente gratis, sin registro |
 | Coinalyze v1 | Funding Rate, OI, L/S Ratio, Liquidaciones | `COINALYZE_API_KEY` (gratis) | 30min FR, 5min OI/LSR, 5min Liq | Ver estructura de respuesta real abajo |
 | Anthropic | Análisis IA | `ANTHROPIC_API_KEY` | Sin cache (on-demand) | — |
 
@@ -372,6 +372,11 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - Eliminados campos `status` de MACD (redundante) y Bollinger Bands (nombre semánticamente incorrecto)
   - Añadido campo `severity` a funding_rate (normal/elevated/high/extreme)
   - Añadidos campos `distance_to_nearest_support_pct` y `distance_to_nearest_resistance_pct` a cada timeframe para acción inmediata del LLM
+- **Fear & Greed históricos completos (2026-04-06)**:
+  - Aumentado limit de API a 30 días (`limit=30` en alternative.me)
+  - Ahora `fearGreedService` alimenta el histórico con todos los 30 días, usando timestamps reales de cada dato
+  - `fear_greed_history` en `/api/analyze/payload` devuelve: `current`, `yesterday`, `7d_ago`, `30d_ago` con búsqueda exacta de fechas (fallback a dato más antiguo si no existe fecha exacta)
+  - Datos históricos completamente alineados con sitio web de alternative.me
 
 ---
 
@@ -405,7 +410,7 @@ Módulo `historyService.js` gestiona históricos en memoria con límites automá
 ```
 
 **Límites de almacenamiento:**
-- Fear & Greed: 30 días (una entrada/día)
+- Fear & Greed: 30 días (una entrada/día) — obtenidos de alternative.me con `limit=30`
 - Funding Rate: 8 candles (48h @ interval=6hour)
 - Open Interest: 42 candles (7d @ interval=4hour)
 - Long/Short Ratio: 168 candles (7d @ interval=1hour)
@@ -417,20 +422,22 @@ Módulo `historyService.js` gestiona históricos en memoria con límites automá
 - Costo API: 0 (se usan datos ya fetched en `/api/data`)
 
 **Funciones disponibles (`historyService.js`):**
-- `addFearGreedEntry(value, classification, trend)` — Alimentado por `fearGreedService`
+- `addFearGreedEntry(value, classification, trend, date?)` — Alimentado por `fearGreedService` (date opcional, usa hoy si no se proporciona)
 - `addFundingRateEntry(candle)` — Alimentado por `coinalyzeService`
 - `addOpenInterestEntry(candle)` — Alimentado por `coinalyzeService`
 - `addLongShortRatioEntry(entry)` — Alimentado por `coinalyzeService`
 - `addLiquidationsEntry(date, longs_usd, shorts_usd)` — Alimentado por `coinalyzeService`
-- `getHistories()` — Retorna todos los históricos (usado en `dataController`)
+- `getHistories()` — Retorna todos los históricos (usado en `dataController` y `analysisController`)
 
 **Integración con Anthropic API:**
-El LLM recibe automáticamente los históricos en la respuesta de `/api/data` para análisis temporal más preciso. Los históricos proporcionan:
-- Reversiones de extremos (F&G)
-- Ciclos de pago de funding rate
-- Acumulación/distribución de OI
-- Cambios de posicionamiento L/S
-- Presión de liquidaciones
+El LLM recibe automáticamente los históricos en la respuesta de `/api/data` y `/api/analyze/payload` para análisis temporal más preciso. Además de los históricos brutos, el endpoint `/api/analyze/payload` proporciona resúmenes consolidados:
+- `fear_greed_history`: current, yesterday, 7d_ago, 30d_ago + periodo_min/max/avg + trend_30d
+- `funding_rate.history`: open_48h, close_current, high/low_48h, trend_48h, % candles positivos
+- `open_interest.history`: cambios 7d/24h, trend (increasing/decreasing/stable)
+- `long_short_ratio.history`: posición actual, cambio 7d, promedio, trend
+- `liquidations.history`: totales 7d, últimas 24h, ratio longs/shorts, trend
+
+Estos resúmenes proporcionan contexto consolidado para decisiones más informadas sin saturar tokens LLM.
 
 ---
 
