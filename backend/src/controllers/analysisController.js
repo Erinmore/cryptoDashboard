@@ -225,9 +225,10 @@ function computeHistorySummaries(histories) {
     const values = cvdHistory.map(e => e.value);
     const current = cvdHistory.at(-1);
     const first = cvdHistory.at(0);
-    const prev7d = cvdHistory.length >= 7 ? cvdHistory[cvdHistory.length - 7] : null;
-    const change7dPct = (prev7d?.value != null && prev7d.value !== 0)
-      ? parseFloat(((current.value - prev7d.value) / Math.abs(prev7d.value) * 100).toFixed(2))
+    // Use 7d ago if available, else use first available data point
+    const refPoint = cvdHistory.length >= 7 ? cvdHistory[cvdHistory.length - 7] : first;
+    const change7dPct = (refPoint?.value != null && current.value != null && refPoint.value !== 0)
+      ? parseFloat(((current.value - refPoint.value) / Math.abs(refPoint.value) * 100).toFixed(2))
       : null;
     const change30dPct = (first?.value != null && first.value !== 0)
       ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
@@ -254,9 +255,10 @@ function computeHistorySummaries(histories) {
     const values = vwapHistory.map(e => e.value);
     const current = vwapHistory.at(-1);
     const first = vwapHistory.at(0);
-    const prev7d = vwapHistory.length >= 7 ? vwapHistory[vwapHistory.length - 7] : null;
-    const change7dPct = (prev7d?.value != null && prev7d.value !== 0)
-      ? parseFloat(((current.value - prev7d.value) / Math.abs(prev7d.value) * 100).toFixed(2))
+    // Use 7d ago if available, else use first available data point
+    const refPoint = vwapHistory.length >= 7 ? vwapHistory[vwapHistory.length - 7] : first;
+    const change7dPct = (refPoint?.value != null && current.value != null && refPoint.value !== 0)
+      ? parseFloat(((current.value - refPoint.value) / Math.abs(refPoint.value) * 100).toFixed(2))
       : null;
     const change30dPct = (first?.value != null && first.value !== 0)
       ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
