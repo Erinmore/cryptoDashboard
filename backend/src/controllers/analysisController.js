@@ -295,11 +295,11 @@ async function buildAnalyzeContext(coin, primaryTf) {
     coin,
     primary_tf: primaryTf,
     price_current:        price?.price            ?? null,
-    price_change_24h_pct: price?.change_24h_pct   ?? null,
+    price_change_24h_pct: price?.change_24h_pct != null ? parseFloat(price.change_24h_pct.toFixed(2)) : null,
 
     global_market: globalMarket ? {
       total_market_cap_usd:      globalMarket.total_market_cap_usd,
-      market_cap_change_24h_pct: globalMarket.market_cap_change_24h_pct,
+      market_cap_change_24h_pct: globalMarket.market_cap_change_24h_pct != null ? parseFloat(globalMarket.market_cap_change_24h_pct.toFixed(2)) : null,
       btc_dominance_pct:         globalMarket.btc_dominance,
       altcoin_market_cap_usd:    globalMarket.altcoin_market_cap_usd,
     } : null,
@@ -308,9 +308,9 @@ async function buildAnalyzeContext(coin, primaryTf) {
       market_cap_usd: coinMarket.market_cap_usd,
       volume_24h_usd: coinMarket.volume_24h_usd,
       ath_usd:        coinMarket.ath_usd,
-      ath_change_pct: coinMarket.ath_change_pct,
+      ath_change_pct: coinMarket.ath_change_pct != null ? parseFloat(coinMarket.ath_change_pct.toFixed(2)) : null,
       atl_usd:        coinMarket.atl_usd,
-      atl_change_pct: coinMarket.atl_change_pct,
+      atl_change_pct: coinMarket.atl_change_pct != null ? parseFloat(coinMarket.atl_change_pct.toFixed(2)) : null,
     } : null,
 
     sentiment: {
