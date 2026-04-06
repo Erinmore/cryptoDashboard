@@ -85,33 +85,33 @@ describe('calculateMACD', () => {
     expect(calculateMACD([1, 2, 3])).toBeNull();
   });
 
-  test('returns object with value, signal, histogram, histogram_color', () => {
+  test('returns object with value, signal, histogram, momentum_state', () => {
     const closes = Array.from({ length: 50 }, (_, i) => 100 + Math.sin(i) * 10);
     const result = calculateMACD(closes);
     expect(result).toHaveProperty('value');
     expect(result).toHaveProperty('signal');
     expect(result).toHaveProperty('histogram');
-    expect(result).toHaveProperty('histogram_color');
+    expect(result).toHaveProperty('momentum_state');
   });
 
-  test('histogram_color is green variant when histogram > 0', () => {
+  test('momentum_state is bullish when histogram > 0', () => {
     // Fase plana larga + subida pronunciada: fuerza al fast EMA por encima del slow
     const flat = Array.from({ length: 60 }, () => 100);
     const rise = Array.from({ length: 40 }, (_, i) => 100 + i * 5);
     const closes = [...flat, ...rise];
     const result = calculateMACD(closes);
     expect(result.histogram).toBeGreaterThan(0);
-    expect(['green_dark', 'green_light']).toContain(result.histogram_color);
+    expect(['bullish_accelerating', 'bullish_decelerating']).toContain(result.momentum_state);
   });
 
-  test('histogram_color is red variant when histogram < 0', () => {
+  test('momentum_state is bearish when histogram < 0', () => {
     // Fase plana larga + caída pronunciada: fuerza al fast EMA por debajo del slow
     const flat = Array.from({ length: 60 }, () => 200);
     const fall = Array.from({ length: 40 }, (_, i) => 200 - i * 5);
     const closes = [...flat, ...fall];
     const result = calculateMACD(closes);
     expect(result.histogram).toBeLessThan(0);
-    expect(['red_dark', 'red_light']).toContain(result.histogram_color);
+    expect(['bearish_accelerating', 'bearish_decelerating']).toContain(result.momentum_state);
   });
 });
 
@@ -258,27 +258,27 @@ describe('calculateSupportResistance', () => {
   });
 });
 
-// ─── MACD histograma 4 colores ────────────────────────────────────────────────
+// ─── MACD momentum_state (4 estados: aceleración/desaceleración x dirección) ─────
 
-describe('calculateMACD histogram_color', () => {
+describe('calculateMACD momentum_state', () => {
   const flat = Array.from({ length: 60 }, () => 100);
 
-  test('green variant when histogram positive', () => {
+  test('bullish state when histogram positive', () => {
     const closes = [...flat, ...Array.from({ length: 40 }, (_, i) => 100 + i * 5)];
     const result = calculateMACD(closes);
-    expect(['green_dark', 'green_light']).toContain(result.histogram_color);
+    expect(['bullish_accelerating', 'bullish_decelerating']).toContain(result.momentum_state);
   });
 
-  test('red variant when histogram negative', () => {
+  test('bearish state when histogram negative', () => {
     const closes = [...flat, ...Array.from({ length: 40 }, (_, i) => 100 - i * 5)];
     const result = calculateMACD(closes);
-    expect(['red_dark', 'red_light']).toContain(result.histogram_color);
+    expect(['bearish_accelerating', 'bearish_decelerating']).toContain(result.momentum_state);
   });
 
-  test('histogram_color field always present', () => {
+  test('momentum_state field always present', () => {
     const closes = Array.from({ length: 50 }, (_, i) => 100 + Math.sin(i) * 10);
     const result = calculateMACD(closes);
-    expect(['green_dark', 'green_light', 'red_dark', 'red_light']).toContain(result.histogram_color);
+    expect(['bullish_accelerating', 'bullish_decelerating', 'bearish_accelerating', 'bearish_decelerating']).toContain(result.momentum_state);
   });
 });
 

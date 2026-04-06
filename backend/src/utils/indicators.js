@@ -83,19 +83,19 @@ export function calculateMACD(closes, fast = MACD_FAST, slow = MACD_SLOW, signal
     ? prevMACD - prevSignal
     : histogram;
 
-  // 4 colores según dirección y aceleración del histograma
-  let histogram_color;
+  // 4 estados según dirección y aceleración del histograma
+  let momentum_state;
   if (histogram >= 0) {
-    histogram_color = histogram >= prevHistogram ? 'green_dark' : 'green_light';
+    momentum_state = histogram >= prevHistogram ? 'bullish_accelerating' : 'bullish_decelerating';
   } else {
-    histogram_color = histogram <= prevHistogram ? 'red_dark' : 'red_light';
+    momentum_state = histogram <= prevHistogram ? 'bearish_accelerating' : 'bearish_decelerating';
   }
 
   return {
     value: parseFloat(lastMACD.toFixed(8)),
     signal: parseFloat(lastSignal.toFixed(8)),
     histogram: parseFloat(histogram.toFixed(8)),
-    histogram_color,
+    momentum_state,
   };
 }
 
