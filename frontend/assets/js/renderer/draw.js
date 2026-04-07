@@ -297,20 +297,23 @@ function formatTimeAxis(ts, prevTs, intervalMs = 3600000, stepBars = 1) {
   if (!ts) return '';
   const d = new Date(ts);
 
+  // Formato normalizado: DD/MM/AAAA para todos los timeframes
+  const dateFormat = { day: '2-digit', month: '2-digit', year: '2-digit' };
+
   // Regla 1: diario / semanal → solo fecha
   if (intervalMs >= 24 * 3600 * 1000) {
-    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+    return d.toLocaleDateString('es-ES', dateFormat);
   }
 
   // Regla 2: espaciado efectivo ≥ 12 h → siempre fecha (sin "HH:MM" sin contexto)
   if (stepBars * intervalMs >= 12 * 3600 * 1000) {
-    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+    return d.toLocaleDateString('es-ES', dateFormat);
   }
 
   // Regla 3: espaciado corto → fecha en cambio de día, hora intra-día
   const dayStr = d.toISOString().slice(0, 10);
   if (!prevTs || new Date(prevTs).toISOString().slice(0, 10) !== dayStr) {
-    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+    return d.toLocaleDateString('es-ES', dateFormat);
   }
   return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }

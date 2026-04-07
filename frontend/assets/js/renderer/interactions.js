@@ -444,10 +444,12 @@ function fmtAxisPrice(price) {
 function formatTimeCursor(ts, intervalMs = 3600000) {
   if (!ts) return '';
   const d = new Date(ts);
+  const dateFormat = { day: '2-digit', month: '2-digit', year: 'numeric' };
+
   if (intervalMs >= 24 * 3600 * 1000) {
-    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return d.toLocaleDateString('es-ES', dateFormat);
   }
-  const date = d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+  const date = d.toLocaleDateString('es-ES', dateFormat);
   const time = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
   return `${date} ${time}`;
 }

@@ -251,12 +251,14 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 
 `TIMEFRAMES = ['1h', '4h', '1D', '1W']` — ordenados de menor a mayor.
 
-| TF | Fuente CoinGecko | Candles aprox. | Cache TTL | Notas |
-|----|-----------------|----------------|-----------|-------|
-| 1h | `market_chart?days=7&interval=hourly` | ~168 | 60s | 1 tick/hora → `open = prev.close` para evitar dojis planos |
-| 4h | `/ohlc?days=30` | ~180 | 300s | Granularidad 4h nativa |
-| 1D | `/ohlc?days=365` | ~365 | 600s | Granularidad diaria nativa |
-| 1W | `market_chart?days=365` | ~52 | 1800s | CoinGecko devuelve daily para days>90; se agrupa en buckets de 168h (7 días) |
+| TF | Fuente | Candles | Cache TTL | Notas |
+|----|--------|---------|-----------|-------|
+| 1h | Binance klines `interval=1h&limit=168` | 168 | 60s | OHLCV real (high/low verdadero), sin API key |
+| 4h | Binance klines `interval=4h&limit=180` | 180 | 300s | OHLCV real, consistente con 1h |
+| 1D | Binance klines `interval=1d&limit=90` | 90 | 600s | OHLCV real; velas de 1 día exacto. CoinGecko market_chart solo da snapshots (no usar para OHLCV) |
+| 1W | Binance klines `interval=1w&limit=52` | 52 | 1800s | OHLCV real; velas alineadas a lunes UTC natively por Binance |
+
+**Fuente OHLCV:** Binance klines (`/api/v3/klines`) para todos los TFs. CoinGecko se mantiene solo para precio actual, BTC dominance y datos de mercado global.
 
 `draw.js → formatTime`: si intervalo entre velas ≥ 6h → `DD/MM`; si < 6h → `HH:MM`.
 

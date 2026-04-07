@@ -48,21 +48,19 @@ const client = {
 };
 
 /**
- * CoinGecko free tier granularidades:
- *   /ohlc: days=30 → 4h candles, days=365 → daily candles
- *   /market_chart: days≤90 hourly, days>90 daily
+ * OHLCV via Binance klines — fuente única para todos los timeframes.
  *
- * Para 1h: market_chart hourly (7d) → buckets de 1h.
- * Para 1W: market_chart daily (365d, CoinGecko devuelve diario para days>90) → buckets de 168h.
+ * CoinGecko market_chart solo devuelve precios puntuales (snapshots), no OHLCV real.
+ * Los high/low calculados desde snapshots siempre pierden movimientos intrahorarios.
+ * Binance klines provee OHLCV verdadero (misma fuente para 1h/4h/1D/1W), gratis, sin API key.
+ * Las velas semanales de Binance están alineadas a lunes UTC natively.
+ *
+ * Respuesta Binance klines: [openTime, open, high, low, close, volume, closeTime, ...]
  */
-const TF_CONFIG = {
-  '1h': { source: 'market_chart', days: 7,   bucketHours: 1,   interval: 'hourly', label: '1h' },
-  '4h': { source: 'ohlc',         days: 30,  label: '4h' },
-  '1D': { source: 'ohlc',         days: 365, label: '1D' },
-  // CoinGecko free tier rechaza interval=hourly cuando days>90 (HTTP 400).
-  // Para 1W se piden datos diarios (365d) y se agregan en buckets de 168h (7 días).
-  '1W': { source: 'market_chart', days: 365, bucketHours: 168, interval: 'daily', label: '1W' },
-};
+const BINANCE_BASE    = 'https://api.binance.com/api/v3';
+const BINANCE_SYMBOLS = { BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT' };
+const TF_INTERVAL     = { '1h': '1h', '4h': '4h', '1D': '1d', '1W': '1w' };
+const TF_LIMIT        = { '1h': 168,  '4h': 180,  '1D': 90,   '1W': 52  };
 
 /** Cache TTL por TF (segundos) — TFs altos cambian menos. */
 const TF_CACHE_TTL = {
@@ -75,128 +73,44 @@ const TF_CACHE_TTL = {
 // ─── OHLC ─────────────────────────────────────────────────────────────────────
 
 export async function fetchOHLC(coin, timeframe) {
-  const coinId = COINGECKO_IDS[coin.toUpperCase()];
-  if (!coinId) throw new ExternalApiError('CoinGecko', `Unknown coin: ${coin}`);
+  const symbol   = BINANCE_SYMBOLS[coin.toUpperCase()];
+  const interval = TF_INTERVAL[timeframe];
 
-  const config = TF_CONFIG[timeframe];
-  if (!config) throw new ExternalApiError('CoinGecko', `Unknown timeframe: ${timeframe}`);
+  if (!symbol)   throw new ExternalApiError('Binance', `Unknown coin: ${coin}`);
+  if (!interval) throw new ExternalApiError('Binance', `Unknown timeframe: ${timeframe}`);
 
   const cacheKey = `ohlc:${coin}:${timeframe}`;
-  const cached = cacheGet(cacheKey);
+  const cached   = cacheGet(cacheKey);
   if (cached) return cached;
 
   try {
-    let candles;
-
-    if (config.source === 'ohlc') {
-      // Fetch OHLC y volúmenes en paralelo
-      const [ohlcCandles, volumeMap] = await Promise.all([
-        fetchOHLCEndpoint(coinId, config.days),
-        fetchVolumeMap(coinId, config.days),
-      ]);
-      // Enriquecer cada vela con el volumen más cercano disponible
-      candles = ohlcCandles.map(c => ({
-        ...c,
-        volume: volumeMap.get(c.t) ?? 0,
-      }));
-    } else {
-      candles = await fetchMarketChartAggregated(coinId, config.days, config.bucketHours, config.interval);
-    }
-
+    const candles = await fetchBinanceKlines(symbol, interval, TF_LIMIT[timeframe]);
     cacheSet(cacheKey, candles, TF_CACHE_TTL[timeframe] ?? env.cache.ohlcTtl);
     return candles;
   } catch (err) {
     if (err instanceof ExternalApiError) throw err;
-    logger.warn({ coin, timeframe, err: err.message }, 'CoinGecko OHLC failed');
-    throw new ExternalApiError('CoinGecko', err.message);
+    logger.warn({ coin, timeframe, err: err.message }, 'Binance klines failed');
+    throw new ExternalApiError('Binance', err.message);
   }
 }
 
-async function fetchOHLCEndpoint(coinId, days) {
-  const { data } = await client.get(`/coins/${coinId}/ohlc`, {
-    params: { vs_currency: 'usd', days },
+/**
+ * Obtiene velas OHLCV reales desde Binance klines (API pública, sin auth).
+ * Cada elemento del array: [openTime, open, high, low, close, volume, ...]
+ */
+async function fetchBinanceKlines(symbol, interval, limit) {
+  const { data } = await axios.get(`${BINANCE_BASE}/klines`, {
+    params: { symbol, interval, limit },
+    timeout: 10000,
   });
-
-  // Respuesta: [[timestamp, open, high, low, close], ...]
-  return data.map(([t, o, h, l, c]) => ({
-    t,
-    open: o, high: h, low: l, close: c,
-    volume: 0, // CoinGecko OHLC no incluye volumen
+  return data.map(k => ({
+    t:      k[0],
+    open:   parseFloat(k[1]),
+    high:   parseFloat(k[2]),
+    low:    parseFloat(k[3]),
+    close:  parseFloat(k[4]),
+    volume: parseFloat(k[5]),
   }));
-}
-
-/**
- * Devuelve un Map<timestamp, volume> con los volúmenes del market_chart.
- * Se usa para enriquecer las candles del endpoint /ohlc que no tiene volumen.
- */
-async function fetchVolumeMap(coinId, days) {
-  try {
-    const { data } = await client.get(`/coins/${coinId}/market_chart`, {
-      params: { vs_currency: 'usd', days, interval: 'daily' },
-    });
-    const map = new Map();
-    const DAY_MS = 86400 * 1000;
-    for (const [ts, vol] of data.total_volumes ?? []) {
-      // Mapear el volumen a cada timestamp dentro del día
-      for (let offset = 0; offset < DAY_MS; offset += 1800 * 1000) {
-        map.set(ts - (ts % DAY_MS) + offset, vol / 48); // ~48 candles de 30min por día
-      }
-    }
-    return map;
-  } catch {
-    return new Map(); // No crítico, CVD/OBV quedarán en 0
-  }
-}
-
-/**
- * Construye OHLCV desde market_chart (hourly) agrupando en buckets de bucketHours horas.
- *
- * - Para buckets de 1h (un único tick de precio por bucket): el open se fija al close
- *   de la vela anterior para evitar dojis planos. High/low derivan de open y close.
- * - Para buckets de 8h+: hay múltiples ticks por bucket → open/high/low se calculan
- *   correctamente desde los precios reales dentro de la ventana.
- */
-async function fetchMarketChartAggregated(coinId, days, bucketHours, interval = 'hourly') {
-  const { data } = await client.get(`/coins/${coinId}/market_chart`, {
-    params: { vs_currency: 'usd', days, interval },
-  });
-
-  const { prices, total_volumes } = data;
-  const BUCKET_MS = bucketHours * 3600 * 1000;
-
-  const buckets = new Map();
-
-  for (const [ts, price] of prices) {
-    const key = Math.floor(ts / BUCKET_MS) * BUCKET_MS;
-    if (!buckets.has(key)) {
-      buckets.set(key, { t: key, open: price, high: price, low: price, close: price, volume: 0 });
-    }
-    const candle = buckets.get(key);
-    candle.high  = Math.max(candle.high, price);
-    candle.low   = Math.min(candle.low, price);
-    candle.close = price;
-  }
-
-  for (const [ts, vol] of total_volumes) {
-    const key = Math.floor(ts / BUCKET_MS) * BUCKET_MS;
-    if (buckets.has(key)) buckets.get(key).volume += vol;
-  }
-
-  const sorted = Array.from(buckets.values()).sort((a, b) => a.t - b.t);
-
-  // Para buckets de 1h hay un único tick → open=close=high=low.
-  // Usar el close anterior como open da cuerpos visibles y correctos.
-  if (bucketHours === 1) {
-    for (let i = 1; i < sorted.length; i++) {
-      const prev = sorted[i - 1];
-      const curr = sorted[i];
-      curr.open = prev.close;
-      curr.high = Math.max(curr.open, curr.close);
-      curr.low  = Math.min(curr.open, curr.close);
-    }
-  }
-
-  return sorted;
 }
 
 // ─── Precio actual ────────────────────────────────────────────────────────────

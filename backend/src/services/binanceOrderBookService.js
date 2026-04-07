@@ -13,7 +13,7 @@ import logger from '../middleware/logger.js';
 
 const BINANCE_API_BASE = 'https://api.binance.com/api/v3';
 const DEPTH_LIMIT = 20; // Top 20 niveles de bid/ask
-const REQUEST_TIMEOUT = 5000; // 5s
+const REQUEST_TIMEOUT = 8000; // 8s — tiempo realista para latencia de Binance + carga concurrente
 
 /**
  * Obtiene los mayores muros de compra y venta del order book de Binance,
