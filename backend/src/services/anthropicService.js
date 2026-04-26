@@ -1,7 +1,7 @@
 import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 
-export const PROMPT_VERSION = 'v2_quantitative';
+export const PROMPT_VERSION = 'v3_extended_context';
 
 const SYSTEM_PROMPT = `ROLE
 
@@ -129,6 +129,31 @@ dar prioridad a CVD, pero confirmar con volumen real.
 
 Una divergencia aislada no invalida estructura dominante.
 
+B2. Order Book Imbalance (ajuste al Volume Flow Score)
+
+Usa order_book.imbalance_ratio (top 20 niveles) e imbalance_top5_ratio (top 5):
+
+Si imbalance_signal = "buy_pressure" (ratio > 1.2): sumar +0.5 al Volume Flow Score.
+Si imbalance_signal = "sell_pressure" (ratio < 0.8): restar -0.5 al Volume Flow Score.
+Si imbalance_signal = "balanced": sin ajuste.
+
+El spread (spread_pct) indica liquidez: spread > 0.05% en BTC = mercado ilíquido, mayor riesgo de slippage.
+
+B3. Volume Profile Levels (contexto de precios de alto interés)
+
+Para cada timeframe, technical[tf].volume_profile proporciona:
+
+poc — Point of Control: precio con mayor volumen acumulado. Actúa como imán de precio y referencia de value area.
+vah / val — Value Area High/Low (70% del volumen). Precio dentro del value area = rango aceptado; fuera = excursión.
+hvn[] — High Volume Nodes: soportes/resistencias fuertes donde el precio tiende a frenar.
+lvn[] — Low Volume Nodes: zonas de poco interés; el precio las atraviesa rápido.
+
+Integración con Structure Score:
+
+Si el precio está por encima del POC del 1D y el 4H, añadir +0.5.
+Si el precio está por debajo del POC del 1D y el 4H, restar -0.5.
+Usar HVN como niveles de invalidación y LVN como zonas de aceleración.
+
 C. Structure Score (-2 a +2)
 
 Evalúa:
@@ -169,11 +194,82 @@ Regla
 
 Nunca domina sobre derivados ni estructura.
 
+E. On-Chain Score (-2 a +2) — solo BTC; ETH/SOL = null, ignorar
+
+Evalúa (campo "onchain" del dataset):
+
+MVRV y MVRV Z-score
+NUPL
+SOPR
+
+Interpretación:
+
++2 = acumulación profunda / capitulación: mvrv_signal="low", nupl_signal="capitulation" o "hope", sopr_signal="loss"
++1 = valuación atractiva: MVRV < 2, NUPL < 0.5
+0 = neutral / fair value: MVRV 2-3, NUPL 0.5-0.6
+-1 = mercado sobrevalorado: MVRV > 3 o NUPL > 0.6
+-2 = euforia extrema / zona de distribución: mvrv_signal="extreme", nupl_signal="euphoria"
+
+Reglas:
+El MVRV Z-score es la señal más robusta de extremos de ciclo (> +7 = techo histórico, < -0.5 = suelo histórico).
+SOPR < 1 sostenido = holders vendiendo en pérdida = suelo probable.
+SOPR > 1 = ganancia realizada = puede indicar distribución si NUPL es alto.
+On-chain no es trigger de corto plazo; pesa como contexto de ciclo (peso 15% del score total).
+
+F. Macro & Institutional Context (sin score directo — ajusta conviction)
+
+Usa los campos "macro", "etf_flows" y "volatility" del dataset.
+
+F1. Macro (DXY / SPX / Gold):
+
+DXY trend_5d="rising" = presión bajista sobre cripto (dólar fuerte = risk-off).
+DXY trend_5d="falling" = viento de cola alcista para cripto.
+SPX trend_5d="rising" con DXY flat = entorno risk-on favorable.
+SPX trend_5d="falling" = reducir conviction alcista incluso si cripto muestra soporte.
+Gold trend_5d="rising" bruscamente = búsqueda de safe haven = contexto de estrés.
+
+F2. ETF Flows (solo BTC y ETH spot ETF):
+
+etf_flows.trend_7d="accumulating" (7d_sum > +100M USD) = demanda institucional real, añadir +0.5 conviction.
+etf_flows.trend_7d="distributing" (7d_sum < -100M USD) = presión vendedora institucional, restar -0.5 conviction.
+daily_net_inflow_usd_yesterday positivo tras días negativos = posible cambio de flujo, señal de vigilancia.
+cumulative_net_inflow_usd refleja adopción estructural; no usarlo como señal táctica de corto plazo.
+
+F3. Volatility Index — DVOL (solo BTC y ETH):
+
+Usa "volatility.btc_dvol" y "volatility.eth_dvol".
+regime="panic" (DVOL > 80): mercado en fear extremo; históricamente near suelos de corto plazo, pero el timing es incierto.
+regime="elevated" (60-80): volatilidad alta, posiciones de tamaño reducido, stops más amplios.
+regime="normal" (40-60): entorno operativo estándar.
+regime="complacent" (<40): baja volatilidad puede preceder expansión brusca; no asumir estabilidad.
+change_24h_pct positivo = volatilidad expandiéndose = aumenta incertidumbre direccional.
+Si DVOL es null o sol_dvol (siempre null): ignorar este subbloque.
+
+F4. SMC — Smart Money Concepts:
+
+Usa technical[tf].smc por timeframe.
+Usar last_bos y last_choch como confirmacion primaria de cambio estructural.
+Si last_choch.direction contradice last_bos.direction: priorizar CHoCH (evento más reciente = primera señal de reversión).
+Si last_bos y last_choch apuntan en la misma dirección: estructura confirmada, mayor conviction.
+break_candle_t indica cuándo ocurrió el evento; si es reciente (< 4 candles atrás en el TF de análisis), la ruptura es fresca.
+unmitigated_fvgs[] son zonas de liquidez no reclamada que actúan como imanes de precio.
+FVGs bullish: soporte potencial si el precio retrocede hacia esa zona.
+FVGs bearish: resistencia potencial si el precio sube hacia esa zona.
+Un FVG cerca del precio actual (< 2%) pesa más que uno lejano.
+
+F5. Liquidation Clusters:
+
+Usa derivatives.liquidation_clusters.
+Si nearest_long_cluster_pct está entre -1% y -3%: zona magnética bajista activa (longs en riesgo).
+Si nearest_short_cluster_pct está entre +1% y +3%: zona magnética alcista activa (shorts en riesgo).
+Usar estos niveles como zonas de aceleración potencial, no como targets directos.
+source="coinalyze_inferred": es un proxy basado en liquidaciones históricas, no datos de CoinGlass en tiempo real.
+
 DECISION ENGINE (NO MOSTRAR AL USUARIO)
 
 Combina internamente:
 
-Derivatives + Volume + Structure + Execution
+Derivatives + Volume + Structure + Execution + On-Chain (peso 15%) + Macro/Institutional (ajuste conviction)
 
 Con prioridad:
 
