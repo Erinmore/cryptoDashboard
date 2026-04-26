@@ -24,6 +24,9 @@ const env = {
   coinalyzeApiKey: process.env.COINALYZE_API_KEY || '',
   get hasDerivativesData() { return Boolean(this.coinalyzeApiKey); },
 
+  // On-chain data (bitcoin-data.com / BGeometrics) — flag para apagar si la fuente cae
+  onchainEnabled: (process.env.ONCHAIN_DATA_ENABLED ?? 'true').toLowerCase() !== 'false',
+
   // Base de datos
   dbPath: process.env.DB_PATH || './data/cryptex.db',
 
@@ -37,6 +40,7 @@ const env = {
     liquidationsTtl:  parseInt(process.env.CACHE_LIQUIDATIONS_TTL, 10)  || 300,
     btcDominanceTtl:  parseInt(process.env.CACHE_BTC_DOMINANCE_TTL, 10) || 600,
     liquidationClustersTtl: parseInt(process.env.CACHE_LIQUIDATION_CLUSTERS_TTL, 10) || 600,
+    onchainTtl:       parseInt(process.env.CACHE_ONCHAIN_TTL, 10)        || 3600,
   },
 
   logLevel: process.env.LOG_LEVEL || 'info',

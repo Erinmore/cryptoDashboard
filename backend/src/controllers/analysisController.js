@@ -3,6 +3,7 @@ import { fetchFearGreed } from '../services/fearGreedService.js';
 import { fetchDerivativesData } from '../services/coinalyzeService.js';
 import { fetchOrderBookWalls } from '../services/binanceOrderBookService.js';
 import { fetchLiquidationClusters } from '../services/liquidationClustersService.js';
+import { fetchOnchainMetrics } from '../services/onchainService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
@@ -298,6 +299,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     coinMarketResult,
     orderBookResult,
     liquidationClustersResult,
+    onchainResult,
   ] = await Promise.allSettled([
     fetchOHLC(coin, '1h'),
     fetchOHLC(coin, '4h'),
@@ -310,6 +312,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     fetchCoinMarketData(coin),
     fetchOrderBookWalls(binanceSymbol),
     fetchLiquidationClusters(coin),
+    fetchOnchainMetrics(coin),
   ]);
 
   const resolve = (result) => (result.status === 'fulfilled' ? result.value : null);
@@ -328,6 +331,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const price        = resolve(priceResult);
   const orderBook    = resolve(orderBookResult);
   const liquidationClusters = resolve(liquidationClustersResult);
+  const onchain      = resolve(onchainResult);
 
   const technical = {};
   for (const tf of TIMEFRAMES) {
@@ -424,6 +428,8 @@ async function buildAnalyzeContext(coin, primaryTf) {
 
       liquidation_clusters: liquidationClusters,
     },
+
+    onchain,
 
     order_book: orderBook ? {
       buy_wall:             orderBook.buyWall,
