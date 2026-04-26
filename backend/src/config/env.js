@@ -36,6 +36,7 @@ const env = {
     longShortTtl:     parseInt(process.env.CACHE_LONG_SHORT_TTL, 10)    || 300,
     liquidationsTtl:  parseInt(process.env.CACHE_LIQUIDATIONS_TTL, 10)  || 300,
     btcDominanceTtl:  parseInt(process.env.CACHE_BTC_DOMINANCE_TTL, 10) || 600,
+    liquidationClustersTtl: parseInt(process.env.CACHE_LIQUIDATION_CLUSTERS_TTL, 10) || 600,
   },
 
   logLevel: process.env.LOG_LEVEL || 'info',
