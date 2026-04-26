@@ -100,11 +100,14 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   binanceOrderBookService.js ← fetchOrderBookWalls (depth=20: muros, spread, imbalance ratio top20/top5/signal), fetchBinanceTicker
   liquidationClustersService.js ← Inferencia de magnetic zones cruzando liquidaciones 1h con candles 1h (top 5 long/short, distancias)
   onchainService.js          ← Métricas on-chain BTC (MVRV, MVRV Z-score, NUPL, SOPR) — bitcoin-data.com free tier
+  etfFlowsService.js         ← Spot ETF flows BTC/ETH (SoSoValue, sin auth) — total_net_flow, 7d_sum, trend_7d, by_issuer[]
+  macroService.js            ← Macro context DXY/SPX/Gold (Yahoo Finance v8, sin auth) — value, change_24h_pct, trend_5d
   historyService.js          ← Gestión de históricos en memoria para análisis LLM (7-30 días)
   cacheService.js            ← Cache en memoria con TTL
 src/utils/
   indicators.js              ← Funciones matemáticas puras (sin I/O)
   volumeProfile.js           ← Volume Profile (POC, VAH, VAL, HVN, LVN) — función pura
+  smc.js                     ← Smart Money Concepts: detectSwings, detectLastBOS, detectLastCHoCH, detectUnmitigatedFVGs, calculateSMC — funciones puras
   errors.js                  ← AppError, ValidationError, ExternalApiError
 ```
 
@@ -112,7 +115,7 @@ src/utils/
 
 **`GET /api/data` devuelve:** `candles` (TF principal, con `taker_buy_base`/`taker_buy_quote`/`quote_volume` reales de Binance), `technical` (4 TFs, incluye `volume_profile` por TF), `sentiment`, `fear_greed`, `derivatives`, `btc_dominance`, `binance_walls` (con `imbalance_ratio`), `last_analysis`, precio, **`history`** (históricos para análisis LLM).
 
-**`GET /api/analyze/payload` añade además:** `order_book` (muros + imbalance), `derivatives.liquidation_clusters` (magnetic zones inferidas), `onchain` (MVRV/NUPL/SOPR para BTC), `volume_history` (CVD/VWAP), `timeframe_analysis` (conflictos entre TFs), resúmenes consolidados de históricos.
+**`GET /api/analyze/payload` añade además:** `order_book` (muros + imbalance), `derivatives.liquidation_clusters` (magnetic zones inferidas), `onchain` (MVRV/NUPL/SOPR para BTC), `etf_flows` (BTC/ETH spot ETF flows vía SoSoValue), `macro` (DXY/SPX/Gold vía Yahoo Finance), `volume_history` (CVD/VWAP), `timeframe_analysis` (conflictos entre TFs), resúmenes consolidados de históricos. `technical[tf]` incluye además `volume_profile` y `smc` (BOS/CHoCH/FVGs).
 
 ## Arquitectura del frontend
 
@@ -241,6 +244,8 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 | alternative.me | Fear & Greed Index (30 días) | Ninguna | 10min | Obtiene últimos 30 días (`limit=30`); completamente gratis, sin registro |
 | Coinalyze v1 | Funding Rate (+predicted), OI, L/S Ratio, Liquidaciones, clusters de liquidación | `COINALYZE_API_KEY` (gratis) | 30min FR, 5min OI/LSR/Liq, 10min liquidation_clusters | Ver estructura de respuesta real abajo |
 | bitcoin-data.com (BGeometrics) | On-chain BTC: MVRV, MVRV Z-score, NUPL, SOPR | Ninguna (free tier 8 req/h, **15 req/día**) | **12h** completo o parcial; **30min** cache negativo en fallo total | Solo BTC; ETH/SOL devuelven `null`. NUPL llega como string → parsear. Endpoints `/v1/{mvrv,mvrv-zscore,nupl,sopr}/last`. Datos diarios (cierre UTC), refrescar más a menudo gasta cuota sin valor |
+| SoSoValue | Spot ETF flows BTC/ETH (historicalInflowChart + currentEtfDataMetrics) | Ninguna (POST sin auth) | 1h normal, 30min negativo | SOL → `null` (sin spot ETF). Body `{"type":"us-btc-spot"\|"us-eth-spot"}`. Campos numéricos envueltos en `{value, lastUpdateDate, status}` → extraer `.value` |
+| Yahoo Finance v8 | Macro DXY/SPX/Gold (chart endpoint, interval=1d&range=10d) | Ninguna | 30min normal, 10min negativo | User-Agent obligatorio. Símbolos: `DX-Y.NYB`, `^GSPC`, `GC=F`. Cache coin-agnóstico (`macro:global`). closes[] puede traer null → filtrar |
 | Anthropic | Análisis IA | `ANTHROPIC_API_KEY` | Sin cache (on-demand) | — |
 
 **Endpoints y estructura de respuesta Coinalyze (verificados 2026-04-06):**
@@ -313,9 +318,10 @@ npm test
 - Los tests están en `backend/tests/`
 - **69 tests unitarios** en `indicators.test.js` — todos deben pasar siempre
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
+- **96 tests** en `indicators.test.js` (incluye 8 de SMC) — todos deben pasar siempre
 - No hay tests de integración aún (pendiente Fase 15)
 
-**Al añadir un nuevo indicador** en `utils/indicators.js`, añadir tests en `indicators.test.js` siguiendo el patrón existente: null con datos insuficientes, estructura del resultado, comportamiento en tendencia alcista/bajista.
+**Al añadir un nuevo indicador** en `utils/indicators.js` o `utils/`, añadir tests en `indicators.test.js` siguiendo el patrón existente: null con datos insuficientes, estructura del resultado, comportamiento en tendencia alcista/bajista.
 
 ---
 
@@ -345,10 +351,11 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 **Helpers adicionales (no en `indicators.js`):**
 - `calculateVolumeProfile(candles, opts?)` en `utils/volumeProfile.js` — POC, VAH, VAL, HVN/LVN (top 5), bin_size, total_volume. Distribución uniforme: cada vela contribuye `volume / numBins` a cada bin que cubre su rango.
 - `computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta })` en `services/indicatorService.js` — string ponderado por jerarquía del SYSTEM_PROMPT: estructura 50% (ADX+SuperTrend), ejecución 30% (RSI+MACD+WaveTrend+StochRSI), volumen 20%. Devuelve `strongly_bullish | bullish | neutral | bearish | strongly_bearish`.
+- `calculateSMC(candles, opts?)` en `utils/smc.js` — wrapper que devuelve `{ last_bos, last_choch, unmitigated_fvgs }`. Funciones internas: `detectSwings` (pivote fractal lookback=2), `detectLastBOS` (continuación de tendencia HH/HL o LH/LL), `detectLastCHoCH` (ruptura en dirección opuesta = primer aviso de reversión), `detectUnmitigatedFVGs` (ventana 100 velas, top 5 por dirección, más recientes primero). Expuesto como `technical[tf].smc`.
 
 ---
 
-## Estado del proyecto (2026-04-26)
+## Estado del proyecto (2026-04-27)
 
 | Bloque | Contenido | Estado |
 |--------|-----------|--------|
@@ -359,7 +366,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Bloque 4.5 | Sistema de históricos para análisis LLM (7-30 días) | ✅ Completo |
 | Sprint A' | Volume Delta/CVD con taker_buy real, predicted_rate_pct, computeTrend ponderado | ✅ Completo |
 | Sprint B' | Order book imbalance, Volume Profile, Liquidation Clusters, On-chain BTC | ✅ Completo |
-| Sprint C' | ETF Flows, Macro (DXY/SPX/Gold), SMC (BOS/CHoCH/FVG) | ⏳ Pendiente |
+| Sprint C' | ETF Flows, Macro (DXY/SPX/Gold), SMC (BOS/CHoCH/FVG) | ✅ Completo |
 | Sprint D' | Deribit DVOL, update SYSTEM_PROMPT con bloques nuevos | ⏳ Pendiente |
 | Bloque 5 | Tests integración, deploy VPS | ⏳ Pendiente |
 
@@ -408,6 +415,11 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **Volume Profile** (`technical[tf].volume_profile`): POC, VAH, VAL, HVN/LVN (top 5), distribución uniforme `volume / numBins`. Función pura en `utils/volumeProfile.js`
   - **Liquidation Clusters** (`derivatives.liquidation_clusters`): inferencia de magnetic zones cruzando `liquidation-history` 1h de Coinalyze con candles 1h de Binance (longs en swing low, shorts en swing high). Top 5 long/short, distancias % al cluster más cercano. `source: 'coinalyze_inferred'` para que el LLM sepa que es proxy, no CoinGlass real
   - **On-chain BTC** (`onchain`): MVRV, MVRV Z-score, NUPL, SOPR + clasificadores tipados (`low/fair/elevated/extreme`, `capitulation/hope/optimism/belief/euphoria`, `loss/neutral/profit_taking`). Free tier 15 req/día; cache 12h (4 req × 2 = 8 req/día) + cache negativo 30min en fallo total con sentinel `{__empty:true}` (commit `45568ae`)
+
+- **Sprint C' (2026-04-26) — contexto institucional y estructural**:
+  - **ETF Flows** (`etf_flows` top-level): `etfFlowsService.js` consume SoSoValue (POST sin auth). BTC + ETH cubiertos; SOL `null`. Output: `total_net_flow_usd_yesterday`, `total_net_flow_usd_7d_sum`, `trend_7d` (`accumulating/distributing/neutral`, umbral 100M USD), `by_issuer[]` top 10 por net_assets. Cache 1h / negativo 30min con sentinel `{__empty:true}`.
+  - **Macro** (`macro` top-level): `macroService.js` consume Yahoo Finance v8 chart. DXY (`DX-Y.NYB`), SPX (`^GSPC`), Gold (`GC=F`). Output por símbolo: `{value, change_24h_pct, trend_5d}`. User-Agent obligatorio. Cache 30min coin-agnóstico (`macro:global`) / negativo 10min. `closes[]` puede traer `null` (festivos/intradía) — se filtran antes de calcular trend.
+  - **SMC** (`technical[tf].smc`): `utils/smc.js` (funciones puras). `detectSwings`: pivote fractal lookback=2. `detectLastBOS`: rompe último swing en dirección de tendencia HH/HL o LH/LL (continuación). `detectLastCHoCH`: rompe en dirección opuesta (reversión). `detectUnmitigatedFVGs`: patrón 3 velas, mitigado si alguna vela posterior toca la zona, ventana 100 velas, top 5 por dirección. 8 tests nuevos (total 96/96).
 
 ---
 
