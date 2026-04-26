@@ -48,6 +48,9 @@ const env = {
     // SoSoValue ETF flows: publican una vez al día tras cierre US market
     etfFlowsTtl:         parseInt(process.env.CACHE_ETF_FLOWS_TTL, 10)          || 3600,
     etfFlowsNegativeTtl: parseInt(process.env.CACHE_ETF_FLOWS_NEGATIVE_TTL, 10) || 1800,
+    // Macro (Yahoo Finance): cierre diario, intradía cambia poco entre llamadas
+    macroTtl:         parseInt(process.env.CACHE_MACRO_TTL, 10)          || 1800,
+    macroNegativeTtl: parseInt(process.env.CACHE_MACRO_NEGATIVE_TTL, 10) || 600,
   },
 
   logLevel: process.env.LOG_LEVEL || 'info',

@@ -5,6 +5,7 @@ import { fetchOrderBookWalls } from '../services/binanceOrderBookService.js';
 import { fetchLiquidationClusters } from '../services/liquidationClustersService.js';
 import { fetchOnchainMetrics } from '../services/onchainService.js';
 import { fetchEtfFlows } from '../services/etfFlowsService.js';
+import { fetchMacroData } from '../services/macroService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
@@ -302,6 +303,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     liquidationClustersResult,
     onchainResult,
     etfFlowsResult,
+    macroResult,
   ] = await Promise.allSettled([
     fetchOHLC(coin, '1h'),
     fetchOHLC(coin, '4h'),
@@ -316,6 +318,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     fetchLiquidationClusters(coin),
     fetchOnchainMetrics(coin),
     fetchEtfFlows(coin),
+    fetchMacroData(),
   ]);
 
   const resolve = (result) => (result.status === 'fulfilled' ? result.value : null);
@@ -336,6 +339,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const liquidationClusters = resolve(liquidationClustersResult);
   const onchain      = resolve(onchainResult);
   const etfFlows     = resolve(etfFlowsResult);
+  const macro        = resolve(macroResult);
 
   const technical = {};
   for (const tf of TIMEFRAMES) {
@@ -436,6 +440,8 @@ async function buildAnalyzeContext(coin, primaryTf) {
     onchain,
 
     etf_flows: etfFlows,
+
+    macro,
 
     order_book: orderBook ? {
       buy_wall:             orderBook.buyWall,
