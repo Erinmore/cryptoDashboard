@@ -345,17 +345,38 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const macro        = resolve(macroResult);
   const volatility   = resolve(volatilityResult);
 
+  const currentPrice = price?.price ?? null;
+
   const technical = {};
   for (const tf of TIMEFRAMES) {
     if (candles[tf]?.length) {
       const indicators = computeIndicators(candles[tf], tf);
       const sr = indicators?.support_resistance;
       const distances = computeLevelDistances(
-        price?.price ?? null,
+        currentPrice,
         sr?.supports ?? [],
         sr?.resistances ?? []
       );
-      technical[tf] = { ...indicators, ...distances };
+
+      // Ordenar S/R y Fibonacci por proximidad al precio actual (más cercano primero)
+      let sortedIndicators = { ...indicators };
+      if (currentPrice !== null) {
+        if (sr?.supports?.length) {
+          sortedIndicators.support_resistance = {
+            ...sr,
+            supports:    [...sr.supports].sort((a, b) => Math.abs(currentPrice - a.price) - Math.abs(currentPrice - b.price)),
+            resistances: [...(sr.resistances ?? [])].sort((a, b) => Math.abs(currentPrice - a.price) - Math.abs(currentPrice - b.price)),
+          };
+        }
+        if (indicators?.fibonacci?.levels?.length) {
+          sortedIndicators.fibonacci = {
+            ...indicators.fibonacci,
+            levels: [...indicators.fibonacci.levels].sort((a, b) => Math.abs(currentPrice - a.price) - Math.abs(currentPrice - b.price)),
+          };
+        }
+      }
+
+      technical[tf] = { ...sortedIndicators, ...distances };
     }
   }
 
@@ -372,22 +393,22 @@ async function buildAnalyzeContext(coin, primaryTf) {
   return {
     coin,
     primary_tf: primaryTf,
-    price_current:        price?.price            ?? null,
+    price_current:        currentPrice != null ? parseFloat(currentPrice.toFixed(2)) : null,
     price_change_24h_pct: price?.change_24h_pct != null ? parseFloat(price.change_24h_pct.toFixed(2)) : null,
 
     global_market: globalMarket ? {
-      total_market_cap_usd:      globalMarket.total_market_cap_usd,
+      total_market_cap_usd:      globalMarket.total_market_cap_usd != null ? Math.round(globalMarket.total_market_cap_usd) : null,
       market_cap_change_24h_pct: globalMarket.market_cap_change_24h_pct != null ? parseFloat(globalMarket.market_cap_change_24h_pct.toFixed(2)) : null,
-      btc_dominance_pct:         globalMarket.btc_dominance,
-      altcoin_market_cap_usd:    globalMarket.altcoin_market_cap_usd,
+      btc_dominance_pct:         globalMarket.btc_dominance != null ? parseFloat(globalMarket.btc_dominance.toFixed(2)) : null,
+      altcoin_market_cap_usd:    globalMarket.altcoin_market_cap_usd != null ? Math.round(globalMarket.altcoin_market_cap_usd) : null,
     } : null,
 
     coin_market: coinMarket ? {
-      market_cap_usd: coinMarket.market_cap_usd,
-      volume_24h_usd: coinMarket.volume_24h_usd,
-      ath_usd:        coinMarket.ath_usd,
+      market_cap_usd: coinMarket.market_cap_usd != null ? Math.round(coinMarket.market_cap_usd) : null,
+      volume_24h_usd: coinMarket.volume_24h_usd != null ? Math.round(coinMarket.volume_24h_usd) : null,
+      ath_usd:        coinMarket.ath_usd != null ? parseFloat(coinMarket.ath_usd.toFixed(2)) : null,
       ath_change_pct: coinMarket.ath_change_pct != null ? parseFloat(coinMarket.ath_change_pct.toFixed(2)) : null,
-      atl_usd:        coinMarket.atl_usd,
+      atl_usd:        coinMarket.atl_usd != null ? parseFloat(coinMarket.atl_usd.toFixed(2)) : null,
       atl_change_pct: coinMarket.atl_change_pct != null ? parseFloat(coinMarket.atl_change_pct.toFixed(2)) : null,
     } : null,
 
@@ -460,7 +481,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     } : null,
 
     volume_history: {
-      cvd: cvdSummary,
+      cvd: cvdSummary ? { ...cvdSummary, source_tf: '1D', role: 'trend_context' } : null,
       vwap: vwapSummary,
     },
   };

@@ -82,7 +82,7 @@ export function computeIndicators(candles, timeframe) {
   const volumeProfile = calculateVolumeProfile(candles);
 
   // ── SMC: BOS / CHoCH / FVG ───────────────────────────────────
-  const smc = calculateSMC(candles);
+  const smc = calculateSMC(candles, { timeframe });
 
   // ── Market Regime ────────────────────────────────────────────
   const regime = detectMarketRegime(candles, closes);

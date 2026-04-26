@@ -853,6 +853,54 @@ describe('SMC — detectLastBOS', () => {
     expect(bos.direction).toBe('bullish');
     expect(bos.close).toBeGreaterThan(bos.broken_swing_price);
   });
+
+  test('returns most recent break chronologically, not first break from newest swing', () => {
+    // Estructura bullish mínima que garantiza exactamente 2 highs (SH1 < SH2) y 2 lows (HL).
+    // SH1 en idx=2 (price=105), SH2 en idx=8 (price=112, HH).
+    // SL1 en idx=5 (price=99, HL respecto al low implícito inicial).
+    //
+    // Break de SH1 (>105.4) ocurre en idx=10 (close=107) — primero en tiempo.
+    // Break de SH2 (>112.4) ocurre en idx=14 (close=114) — más reciente.
+    //
+    // El algoritmo correcto devuelve break_candle_idx=14 (más reciente).
+    const mk = (close, t) => ({ t, open: close, high: close + 0.4, low: close - 0.4, close, volume: 100 });
+    const candles = [
+      mk(100, 0), mk(103, 1),
+      mk(105, 2),                  // SH1: high=105.4
+      mk(103, 3), mk(101, 4),
+      mk(99,  5),                  // SL1 (HL)
+      mk(102, 6), mk(108, 7),
+      mk(112, 8),                  // SH2: high=112.4 (HH → bullish)
+      mk(110, 9),
+      mk(107, 10),                 // close=107 > 105.4 → break SH1, pero 107 < 112.4, no break SH2
+      mk(109, 11), mk(108, 12), mk(110, 13),
+      mk(114, 14),                 // close=114 > 112.4 → break SH2, más reciente
+      mk(113, 15),
+    ];
+
+    const bos = detectLastBOS(candles, { lookback: 2 });
+    expect(bos).not.toBeNull();
+    expect(bos.direction).toBe('bullish');
+    expect(bos.break_candle_idx).toBe(14);           // más reciente, no idx=10
+    expect(bos.broken_swing_price).toBeCloseTo(112.4, 1); // SH2, no SH1
+  });
+
+  test('returns null when BOS break_candle exceeds maxCandlesAgo', () => {
+    // El BOS ocurre en la última vela del array (candles_ago=0).
+    // Añadimos 5 velas neutras al final → el BOS queda a 5 velas atrás (candles_ago=5).
+    // Con maxCandlesAgo=3 debe devolver null. Con maxCandlesAgo=5 debe pasar.
+    const base = buildBullishStructure(); // 20 velas, BOS en idx 19
+    const extended = [
+      ...base,
+      { t: 20, open: 110, high: 111, low: 109, close: 110, volume: 100 },
+      { t: 21, open: 110, high: 111, low: 109, close: 110, volume: 100 },
+      { t: 22, open: 110, high: 111, low: 109, close: 110, volume: 100 },
+      { t: 23, open: 110, high: 111, low: 109, close: 110, volume: 100 },
+      { t: 24, open: 110, high: 111, low: 109, close: 110, volume: 100 },
+    ]; // 25 velas, BOS en idx 19 → candles_ago = 25-1-19 = 5
+    expect(detectLastBOS(extended, { lookback: 2, maxCandlesAgo: 3 })).toBeNull();
+    expect(detectLastBOS(extended, { lookback: 2, maxCandlesAgo: 5 })).not.toBeNull();
+  });
 });
 
 describe('SMC — detectLastCHoCH', () => {
@@ -906,20 +954,37 @@ describe('SMC — detectUnmitigatedFVGs', () => {
     expect(fvgs.bullish.length).toBe(1);
     expect(fvgs.bullish[0].low).toBeCloseTo(100);
     expect(fvgs.bullish[0].high).toBeCloseTo(102);
+    expect(fvgs.bullish[0].mitigation_pct).toBe(0);
+    expect(fvgs.bullish[0].candles_ago).toBe(3); // FVG en idx 2, array length=6 → 6-1-2=3
     expect(fvgs.bearish.length).toBe(0);
   });
 
-  test('marks FVG as mitigated when later candle revisits the gap zone', () => {
-    // Mismo gap [100, 102] que el test anterior, pero la vela 5 baja a 99 → cubre el gap
+  test('marks FVG as fully mitigated (excluded) when later candle covers entire gap', () => {
+    // Mismo gap [100, 102] que el test anterior, pero la vela 5 baja a 99 → cubre 100% del gap
     const candles = [
       { t: 0, open: 99,  high: 100, low: 98,  close: 99.5, volume: 100 },
       { t: 1, open: 100, high: 105, low: 100, close: 104,  volume: 100 },
       { t: 2, open: 104, high: 106, low: 102, close: 105,  volume: 100 },
       { t: 3, open: 105, high: 107, low: 103, close: 106,  volume: 100 },
       { t: 4, open: 106, high: 108, low: 104, close: 107,  volume: 100 },
-      { t: 5, open: 107, high: 107, low: 99,  close: 100,  volume: 100 },  // mitiga
+      { t: 5, open: 107, high: 107, low: 99,  close: 100,  volume: 100 },  // cubre todo el gap
     ];
     const fvgs = detectUnmitigatedFVGs(candles);
-    expect(fvgs.bullish.length).toBe(0);
+    expect(fvgs.bullish.length).toBe(0); // excluido porque mitigation_pct === 100
+  });
+
+  test('includes partially mitigated FVG with correct mitigation_pct', () => {
+    // Gap bullish [100, 104] (size=4). Vela posterior: low=101, high=109
+    // overlap = [max(101,100), min(109,104)] = [101,104] = 3 → 3/4 = 75%
+    const candles = [
+      { t: 0, open: 99,  high: 100, low: 98,  close: 99.5, volume: 100 },
+      { t: 1, open: 100, high: 106, low: 100, close: 105,  volume: 100 },
+      { t: 2, open: 105, high: 108, low: 104, close: 107,  volume: 100 },
+      { t: 3, open: 107, high: 109, low: 101, close: 108,  volume: 100 }, // overlap [101,104]=3/4=75%
+      { t: 4, open: 108, high: 110, low: 106, close: 109,  volume: 100 },
+    ];
+    const fvgs = detectUnmitigatedFVGs(candles);
+    expect(fvgs.bullish.length).toBe(1);
+    expect(fvgs.bullish[0].mitigation_pct).toBe(75); // 3/4 del gap cubierto
   });
 });

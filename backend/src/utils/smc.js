@@ -93,7 +93,10 @@ function inferStructuralTrend(swings) {
  * Detecta el último BOS (continuación de tendencia previa).
  *
  * @param {Array} candles
- * @param {{ lookback?: number }} [opts]
+ * @param {{ lookback?: number, maxCandlesAgo?: number }} [opts]
+ *   maxCandlesAgo: si el break_candle está más lejos del final del array que este
+ *   umbral, el evento se descarta (devuelve null). Alinear con el decay del prompt
+ *   según el TF: 4H→12, 1D→9, 1H→18, 1W→6. Sin límite por defecto (Infinity).
  * @returns {{
  *   direction: 'bullish'|'bearish',
  *   broken_swing_price: number,
@@ -103,93 +106,92 @@ function inferStructuralTrend(swings) {
  *   close: number
  * } | null}
  */
-export function detectLastBOS(candles, { lookback = 2 } = {}) {
+export function detectLastBOS(candles, { lookback = 2, maxCandlesAgo = Infinity } = {}) {
   const swings = detectSwings(candles, lookback);
   if (!swings) return null;
   const trend = inferStructuralTrend(swings);
   if (trend !== 'bullish' && trend !== 'bearish') return null;
 
-  // Iteramos los swings de más reciente a más antiguo. Para cada swing buscamos
-  // el PRIMER candle posterior que lo rompe en la dirección de la tendencia.
-  // Esto garantiza que break_candle_t refleja cuándo ocurrió la ruptura, no la
-  // posición actual del precio (que siempre sería el candle más reciente).
   const { highs, lows } = swings;
   const refSwings = trend === 'bullish' ? highs : lows;
-  const refSwingsSorted = [...refSwings].reverse(); // newest first
 
-  for (const swing of refSwingsSorted) {
+  // Recogemos el primer break de cada swing (el que fijó el evento estructural),
+  // luego nos quedamos con el de mayor break_candle_idx (más reciente en tiempo).
+  // Así "last BOS" es realmente el último cronológicamente, no el primero desde
+  // el swing más nuevo en posición del array.
+  let best = null;
+  for (const swing of refSwings) {
     for (let i = swing.idx + 1; i < candles.length; i++) {
       const close = candles[i].close;
-      if (trend === 'bullish' && close > swing.price) {
-        return {
-          direction: 'bullish',
-          broken_swing_price: swing.price,
-          broken_swing_t:     swing.t,
-          break_candle_idx:   i,
-          break_candle_t:     candles[i].t,
-          close,
-        };
-      }
-      if (trend === 'bearish' && close < swing.price) {
-        return {
-          direction: 'bearish',
-          broken_swing_price: swing.price,
-          broken_swing_t:     swing.t,
-          break_candle_idx:   i,
-          break_candle_t:     candles[i].t,
-          close,
-        };
+      const breaks = (trend === 'bullish' && close > swing.price) ||
+                     (trend === 'bearish' && close < swing.price);
+      if (breaks) {
+        if (!best || i > best.break_candle_idx) {
+          best = {
+            direction:          trend,
+            broken_swing_price: swing.price,
+            broken_swing_t:     swing.t,
+            break_candle_idx:   i,
+            break_candle_t:     candles[i].t,
+            close,
+          };
+        }
+        break; // primer break de este swing encontrado; pasar al siguiente swing
       }
     }
   }
-  return null;
+
+  if (!best) return null;
+  const candlesAgo = candles.length - 1 - best.break_candle_idx;
+  return candlesAgo > maxCandlesAgo ? null : best;
 }
 
 /**
  * Detecta el último CHoCH (reversión: rompe en dirección opuesta a la
  * tendencia previa).
  *
+ * @param {Array} candles
+ * @param {{ lookback?: number, maxCandlesAgo?: number }} [opts]
  * @returns {{direction, broken_swing_price, broken_swing_t, break_candle_idx, break_candle_t, close} | null}
  */
-export function detectLastCHoCH(candles, { lookback = 2 } = {}) {
+export function detectLastCHoCH(candles, { lookback = 2, maxCandlesAgo = Infinity } = {}) {
   const swings = detectSwings(candles, lookback);
   if (!swings) return null;
   const trend = inferStructuralTrend(swings);
   if (trend !== 'bullish' && trend !== 'bearish') return null;
 
-  // CHoCH: tendencia previa bajista pero close rompe último swing high → bullish CHoCH
-  //        tendencia previa alcista pero close rompe último swing low → bearish CHoCH
+  // CHoCH: tendencia previa bajista pero close rompe swing high → bullish CHoCH
+  //        tendencia previa alcista pero close rompe swing low  → bearish CHoCH
   const { highs, lows } = swings;
   const refSwings = trend === 'bearish' ? highs : lows;
   const direction = trend === 'bearish' ? 'bullish' : 'bearish';
-  const refSwingsSorted = [...refSwings].reverse(); // newest first
 
-  for (const swing of refSwingsSorted) {
+  // Mismo patrón que detectLastBOS: primer break de cada swing, luego el más reciente.
+  let best = null;
+  for (const swing of refSwings) {
     for (let i = swing.idx + 1; i < candles.length; i++) {
       const close = candles[i].close;
-      if (direction === 'bullish' && close > swing.price) {
-        return {
-          direction: 'bullish',
-          broken_swing_price: swing.price,
-          broken_swing_t:     swing.t,
-          break_candle_idx:   i,
-          break_candle_t:     candles[i].t,
-          close,
-        };
-      }
-      if (direction === 'bearish' && close < swing.price) {
-        return {
-          direction: 'bearish',
-          broken_swing_price: swing.price,
-          broken_swing_t:     swing.t,
-          break_candle_idx:   i,
-          break_candle_t:     candles[i].t,
-          close,
-        };
+      const breaks = (direction === 'bullish' && close > swing.price) ||
+                     (direction === 'bearish' && close < swing.price);
+      if (breaks) {
+        if (!best || i > best.break_candle_idx) {
+          best = {
+            direction,
+            broken_swing_price: swing.price,
+            broken_swing_t:     swing.t,
+            break_candle_idx:   i,
+            break_candle_t:     candles[i].t,
+            close,
+          };
+        }
+        break;
       }
     }
   }
-  return null;
+
+  if (!best) return null;
+  const candlesAgo = candles.length - 1 - best.break_candle_idx;
+  return candlesAgo > maxCandlesAgo ? null : best;
 }
 
 /**
@@ -225,15 +227,18 @@ export function detectUnmitigatedFVGs(candles, { windowBars = 100, maxResults = 
     if (right.low > left.high) {
       const lowZone  = left.high;
       const highZone = right.low;
-      if (!isMitigated(candles, i + 1, lowZone, highZone)) {
+      const mitPct = calcMitigationPct(candles, i + 1, lowZone, highZone);
+      if (mitPct < 100) {
         bullish.push({
-          idx_left:  i - 2,
-          idx_right: i,
-          t_left:    left.t,
-          t_right:   right.t,
-          low:       parseFloat(lowZone.toFixed(2)),
-          high:      parseFloat(highZone.toFixed(2)),
-          size_pct:  parseFloat(((highZone - lowZone) / lowZone * 100).toFixed(3)),
+          idx_left:       i - 2,
+          idx_right:      i,
+          t_left:         left.t,
+          t_right:        right.t,
+          candles_ago:    candles.length - 1 - i,
+          low:            parseFloat(lowZone.toFixed(2)),
+          high:           parseFloat(highZone.toFixed(2)),
+          size_pct:       parseFloat(((highZone - lowZone) / lowZone * 100).toFixed(3)),
+          mitigation_pct: mitPct,
         });
       }
     }
@@ -242,15 +247,18 @@ export function detectUnmitigatedFVGs(candles, { windowBars = 100, maxResults = 
     if (right.high < left.low) {
       const lowZone  = right.high;
       const highZone = left.low;
-      if (!isMitigated(candles, i + 1, lowZone, highZone)) {
+      const mitPct = calcMitigationPct(candles, i + 1, lowZone, highZone);
+      if (mitPct < 100) {
         bearish.push({
-          idx_left:  i - 2,
-          idx_right: i,
-          t_left:    left.t,
-          t_right:   right.t,
-          low:       parseFloat(lowZone.toFixed(2)),
-          high:      parseFloat(highZone.toFixed(2)),
-          size_pct:  parseFloat(((highZone - lowZone) / lowZone * 100).toFixed(3)),
+          idx_left:       i - 2,
+          idx_right:      i,
+          t_left:         left.t,
+          t_right:        right.t,
+          candles_ago:    candles.length - 1 - i,
+          low:            parseFloat(lowZone.toFixed(2)),
+          high:           parseFloat(highZone.toFixed(2)),
+          size_pct:       parseFloat(((highZone - lowZone) / lowZone * 100).toFixed(3)),
+          mitigation_pct: mitPct,
         });
       }
     }
@@ -266,6 +274,27 @@ export function detectUnmitigatedFVGs(candles, { windowBars = 100, maxResults = 
   };
 }
 
+/**
+ * Calcula el porcentaje de mitigación de un FVG por velas posteriores.
+ * 0 = intacto, 100 = completamente cubierto.
+ * Mide cuánto del gap [lowZone, highZone] ha sido solapado acumulativamente.
+ * @returns {number} mitigation_pct entre 0 y 100
+ */
+function calcMitigationPct(candles, fromIdx, lowZone, highZone) {
+  const gapSize = highZone - lowZone;
+  if (gapSize <= 0) return 100;
+  let maxOverlap = 0;
+  for (let j = fromIdx; j < candles.length; j++) {
+    const c = candles[j];
+    const overlapLow  = Math.max(c.low, lowZone);
+    const overlapHigh = Math.min(c.high, highZone);
+    if (overlapHigh > overlapLow) {
+      maxOverlap = Math.max(maxOverlap, overlapHigh - overlapLow);
+    }
+  }
+  return parseFloat(((maxOverlap / gapSize) * 100).toFixed(1));
+}
+
 function isMitigated(candles, fromIdx, lowZone, highZone) {
   for (let j = fromIdx; j < candles.length; j++) {
     const c = candles[j];
@@ -275,19 +304,51 @@ function isMitigated(candles, fromIdx, lowZone, highZone) {
   return false;
 }
 
+// Umbrales de maxCandlesAgo por TF — alineados con la tabla de decay del SYSTEM_PROMPT v4.
+// Señales más antiguas que este umbral se descartan (devuelven null) en vez de
+// llegar al LLM como ruido envejecido.
+const MAX_CANDLES_AGO_BY_TF = {
+  '1h': 18,
+  '4h': 12,
+  '1D': 9,
+  '1W': 6,
+};
+
 /**
  * Helper de alto nivel: empaqueta last_bos, last_choch y unmitigated_fvgs en
  * un solo objeto. Devuelve null si no hay datos suficientes para ningún cálculo.
+ *
+ * Añade `candles_ago` a BOS y CHoCH. Si la ruptura supera el umbral táctico del
+ * TF, detectLastBOS/CHoCH devuelven null — así el LLM recibe ausencia de señal
+ * en vez de eventos obsoletos. `break_candle_t` se mantiene para referencia absoluta.
+ *
+ * @param {Array} candles
+ * @param {{ lookback?: number, timeframe?: string }} [opts]
+ *   timeframe: '1h' | '4h' | '1D' | '1W' — determina maxCandlesAgo.
+ *   Sin timeframe → sin límite (comportamiento anterior, compatible con tests).
  */
 export function calculateSMC(candles, opts = {}) {
   if (!candles || candles.length < 10) return null;
-  const last_bos   = detectLastBOS(candles, opts);
-  const last_choch = detectLastCHoCH(candles, opts);
+
+  const maxCandlesAgo = opts.timeframe
+    ? (MAX_CANDLES_AGO_BY_TF[opts.timeframe] ?? Infinity)
+    : Infinity;
+
+  const smcOpts = { lookback: opts.lookback ?? 2, maxCandlesAgo };
+
+  const last_bos   = detectLastBOS(candles, smcOpts);
+  const last_choch = detectLastCHoCH(candles, smcOpts);
   const fvgs       = detectUnmitigatedFVGs(candles, opts);
   if (!last_bos && !last_choch && !fvgs) return null;
+
+  const addCandlesAgo = (event) => {
+    if (!event) return null;
+    return { ...event, candles_ago: candles.length - 1 - event.break_candle_idx };
+  };
+
   return {
-    last_bos,
-    last_choch,
+    last_bos:         addCandlesAgo(last_bos),
+    last_choch:       addCandlesAgo(last_choch),
     unmitigated_fvgs: fvgs,
   };
 }
