@@ -6,6 +6,7 @@ import { fetchLiquidationClusters } from '../services/liquidationClustersService
 import { fetchOnchainMetrics } from '../services/onchainService.js';
 import { fetchEtfFlows } from '../services/etfFlowsService.js';
 import { fetchMacroData } from '../services/macroService.js';
+import { fetchVolatilityData } from '../services/deribitService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
@@ -304,6 +305,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     onchainResult,
     etfFlowsResult,
     macroResult,
+    volatilityResult,
   ] = await Promise.allSettled([
     fetchOHLC(coin, '1h'),
     fetchOHLC(coin, '4h'),
@@ -319,6 +321,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     fetchOnchainMetrics(coin),
     fetchEtfFlows(coin),
     fetchMacroData(),
+    fetchVolatilityData(),
   ]);
 
   const resolve = (result) => (result.status === 'fulfilled' ? result.value : null);
@@ -340,6 +343,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const onchain      = resolve(onchainResult);
   const etfFlows     = resolve(etfFlowsResult);
   const macro        = resolve(macroResult);
+  const volatility   = resolve(volatilityResult);
 
   const technical = {};
   for (const tf of TIMEFRAMES) {
@@ -442,6 +446,8 @@ async function buildAnalyzeContext(coin, primaryTf) {
     etf_flows: etfFlows,
 
     macro,
+
+    volatility,
 
     order_book: orderBook ? {
       buy_wall:             orderBook.buyWall,

@@ -51,6 +51,8 @@ const env = {
     // Macro (Yahoo Finance): cierre diario, intradía cambia poco entre llamadas
     macroTtl:         parseInt(process.env.CACHE_MACRO_TTL, 10)          || 1800,
     macroNegativeTtl: parseInt(process.env.CACHE_MACRO_NEGATIVE_TTL, 10) || 600,
+    // Deribit DVOL: actualizado en tiempo real, cache corto para no martillear
+    deribitDvolTtl:   parseInt(process.env.CACHE_DERIBIT_DVOL_TTL, 10)   || 300,
   },
 
   logLevel: process.env.LOG_LEVEL || 'info',
