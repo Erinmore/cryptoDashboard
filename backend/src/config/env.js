@@ -45,6 +45,9 @@ const env = {
     onchainTtl:       parseInt(process.env.CACHE_ONCHAIN_TTL, 10)        || 43200,
     // Cache negativo cuando el fetch entero falla (evita martillear ante 429/outage)
     onchainNegativeTtl: parseInt(process.env.CACHE_ONCHAIN_NEGATIVE_TTL, 10) || 1800,
+    // SoSoValue ETF flows: publican una vez al día tras cierre US market
+    etfFlowsTtl:         parseInt(process.env.CACHE_ETF_FLOWS_TTL, 10)          || 3600,
+    etfFlowsNegativeTtl: parseInt(process.env.CACHE_ETF_FLOWS_NEGATIVE_TTL, 10) || 1800,
   },
 
   logLevel: process.env.LOG_LEVEL || 'info',
