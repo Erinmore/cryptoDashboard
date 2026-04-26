@@ -80,7 +80,7 @@ export function computeIndicators(candles, timeframe) {
   const regime = detectMarketRegime(candles, closes);
 
   // ── Trend summary ────────────────────────────────────────────
-  const trend = computeTrend({ rsi, macd, adx, superTrend, waveTrend });
+  const trend = computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta });
 
   return {
     timeframe,
@@ -102,38 +102,56 @@ export function computeIndicators(candles, timeframe) {
 }
 
 /**
- * Genera un resumen de tendencia combinando varios indicadores.
+ * Resumen de tendencia ponderado por jerarquía del SYSTEM_PROMPT:
+ *   estructura (50%) > ejecución (30%) > volumen local (20%).
+ * Derivados y on-chain son macro y se incorporan al payload fuera del bloque technical.
  */
-function computeTrend({ rsi, macd, adx, superTrend, waveTrend }) {
-  let bullScore = 0;
-  let total = 0;
-
-  if (rsi) {
-    total++;
-    if (rsi.value > 50) bullScore++;
-  }
-  if (macd) {
-    total++;
-    if (macd.histogram > 0) bullScore++;
-  }
+export function computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta }) {
+  // Estructura: ADX trend_direction + SuperTrend
+  let structureScore = 0, structureCount = 0;
   if (adx) {
-    total++;
-    if (adx.trend_direction === 'bullish') bullScore++;
+    structureScore += adx.trend_direction === 'bullish' ? 1 : -1;
+    structureCount++;
   }
   if (superTrend) {
-    total++;
-    if (superTrend.trend === 'UP') bullScore++;
+    structureScore += superTrend.trend === 'UP' ? 1 : -1;
+    structureCount++;
+  }
+  const structure = structureCount > 0 ? structureScore / structureCount : 0;
+
+  // Ejecución: RSI, MACD histogram, WaveTrend, StochRSI
+  let execScore = 0, execCount = 0;
+  if (rsi) {
+    execScore += rsi.value > 55 ? 1 : rsi.value < 45 ? -1 : 0;
+    execCount++;
+  }
+  if (macd) {
+    execScore += macd.histogram > 0 ? 1 : -1;
+    execCount++;
   }
   if (waveTrend) {
-    total++;
-    if (waveTrend.wt1 > 0) bullScore++;
+    execScore += waveTrend.wt1 > waveTrend.wt2 ? 1 : -1;
+    execCount++;
+  }
+  if (stochRsi) {
+    execScore += stochRsi.k > stochRsi.d ? 1 : -1;
+    execCount++;
+  }
+  const execution = execCount > 0 ? execScore / execCount : 0;
+
+  // Volumen local: buy_pressure_pct normalizado a [-1, +1]
+  let volume = 0;
+  if (volumeDelta) {
+    volume = (volumeDelta.buy_pressure_pct - 50) / 50;
   }
 
-  if (total === 0) return 'neutral';
-  const ratio = bullScore / total;
-  if (ratio >= 0.8) return 'strongly_bullish';
-  if (ratio >= 0.6) return 'bullish';
-  if (ratio <= 0.2) return 'strongly_bearish';
-  if (ratio <= 0.4) return 'bearish';
+  if (structureCount === 0 && execCount === 0 && !volumeDelta) return 'neutral';
+
+  const bias = structure * 0.5 + execution * 0.3 + volume * 0.2;
+
+  if (bias >= 0.6) return 'strongly_bullish';
+  if (bias >= 0.2) return 'bullish';
+  if (bias <= -0.6) return 'strongly_bearish';
+  if (bias <= -0.2) return 'bearish';
   return 'neutral';
 }
