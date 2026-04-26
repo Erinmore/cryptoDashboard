@@ -35,14 +35,15 @@ export function calculateVolumeProfile(candles, { bins = 50, targetPct = 0.70 } 
   const binSize = (rangeHigh - rangeLow) / bins;
   const volumes = new Array(bins).fill(0);
 
-  // Distribuir el volumen de cada vela entre los bins que cubre su rango
+  // Reparto uniforme del volumen entre los bins que cubre el rango [low, high].
+  // Una vela contribuye 100% de su volumen sin importar el tamaño relativo de
+  // su rango frente al binSize (una doji aporta todo a su único bin).
   for (const c of candles) {
     if (!c.volume || c.volume <= 0) continue;
-    const span = Math.max(c.high - c.low, binSize); // evita división por cero en doji
     const startBin = Math.min(bins - 1, Math.max(0, Math.floor((c.low - rangeLow) / binSize)));
     const endBin   = Math.min(bins - 1, Math.max(0, Math.floor((c.high - rangeLow) / binSize)));
     const numBins = endBin - startBin + 1;
-    const volPerBin = c.volume * (Math.min(c.high - c.low, binSize * numBins) / span) / numBins;
+    const volPerBin = c.volume / numBins;
     for (let i = startBin; i <= endBin; i++) {
       volumes[i] += volPerBin;
     }

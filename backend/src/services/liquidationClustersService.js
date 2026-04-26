@@ -41,7 +41,7 @@ export async function fetchLiquidationClusters(coin) {
     const now  = Math.floor(Date.now() / 1000);
     const from = now - HOURS * 3600;
 
-    const [liqRes, candles] = await Promise.all([
+    const [liqSettled, candlesSettled] = await Promise.allSettled([
       axios.get(`${BASE_URL}/liquidation-history`, {
         params: { api_key: env.coinalyzeApiKey, symbols: symbol, interval: '1hour', from, to: now },
         timeout: 8000,
@@ -49,7 +49,8 @@ export async function fetchLiquidationClusters(coin) {
       fetchOHLC(coin, '1h'),
     ]);
 
-    const buckets = liqRes.data?.[0]?.history ?? [];
+    const buckets = liqSettled.status === 'fulfilled' ? (liqSettled.value.data?.[0]?.history ?? []) : [];
+    const candles = candlesSettled.status === 'fulfilled' ? candlesSettled.value : null;
     if (!buckets.length || !candles?.length) return null;
 
     // Indexar candles por timestamp en segundos (Binance entrega ms)

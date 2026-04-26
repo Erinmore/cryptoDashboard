@@ -434,7 +434,8 @@ async function buildAnalyzeContext(coin, primaryTf) {
     order_book: orderBook ? {
       buy_wall:             orderBook.buyWall,
       sell_wall:            orderBook.sellWall,
-      spread_pct:           parseFloat(orderBook.spread_pct.toFixed(4)),
+      spread_usd:           parseFloat(orderBook.spread.toFixed(4)),
+      spread_pct:           parseFloat(orderBook.spread_pct.toFixed(6)),
       imbalance_ratio:      orderBook.imbalance_ratio,
       imbalance_top5_ratio: orderBook.imbalance_top5_ratio,
       imbalance_signal:     orderBook.imbalance_signal,
