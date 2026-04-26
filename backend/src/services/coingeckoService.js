@@ -104,12 +104,15 @@ async function fetchBinanceKlines(symbol, interval, limit) {
     timeout: 10000,
   });
   return data.map(k => ({
-    t:      k[0],
-    open:   parseFloat(k[1]),
-    high:   parseFloat(k[2]),
-    low:    parseFloat(k[3]),
-    close:  parseFloat(k[4]),
-    volume: parseFloat(k[5]),
+    t:               k[0],
+    open:            parseFloat(k[1]),
+    high:            parseFloat(k[2]),
+    low:             parseFloat(k[3]),
+    close:           parseFloat(k[4]),
+    volume:          parseFloat(k[5]),
+    quote_volume:    parseFloat(k[7]),
+    taker_buy_base:  parseFloat(k[9]),
+    taker_buy_quote: parseFloat(k[10]),
   }));
 }
 

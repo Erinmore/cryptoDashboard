@@ -189,6 +189,43 @@ describe('calculateVolumeDelta', () => {
     const result = calculateVolumeDelta(candles);
     expect(result.anomaly).toBe(true);
   });
+
+  test('source is heuristic when taker_buy_base missing', () => {
+    const candles = [{ open: 100, high: 105, low: 98, close: 104, volume: 1000 }];
+    const result = calculateVolumeDelta(candles);
+    expect(result.source).toBe('heuristic');
+  });
+
+  test('source is taker_real when all candles have taker_buy_base', () => {
+    const candles = [
+      { open: 100, high: 105, low: 98, close: 104, volume: 1000, taker_buy_base: 700 },
+      { open: 104, high: 108, low: 103, close: 107, volume: 1200, taker_buy_base: 800 },
+    ];
+    const result = calculateVolumeDelta(candles);
+    expect(result.source).toBe('taker_real');
+  });
+
+  test('taker_real with volume=1000 taker=700 gives 70% buy pressure', () => {
+    const candles = [{ open: 100, high: 105, low: 98, close: 104, volume: 1000, taker_buy_base: 700 }];
+    const result = calculateVolumeDelta(candles);
+    expect(result.buy_pressure_pct).toBeCloseTo(70.0, 1);
+    expect(result.sell_pressure_pct).toBeCloseTo(30.0, 1);
+  });
+
+  test('taker_real with volume=1000 taker=200 gives 20% buy pressure (sell dominant)', () => {
+    const candles = [{ open: 100, high: 105, low: 98, close: 104, volume: 1000, taker_buy_base: 200 }];
+    const result = calculateVolumeDelta(candles);
+    expect(result.buy_pressure_pct).toBeCloseTo(20.0, 1);
+  });
+
+  test('falls back to heuristic if any candle lacks taker_buy_base', () => {
+    const candles = [
+      { open: 100, high: 105, low: 98, close: 104, volume: 1000, taker_buy_base: 700 },
+      { open: 104, high: 108, low: 103, close: 107, volume: 1200 }, // sin taker
+    ];
+    const result = calculateVolumeDelta(candles);
+    expect(result.source).toBe('heuristic');
+  });
 });
 
 // ─── Fibonacci ────────────────────────────────────────────────────────────────
@@ -480,6 +517,34 @@ describe('calculateCVD', () => {
     const result = calculateCVD(candles);
     expect(result.divergence).toBe('bearish');
   });
+
+  test('source is heuristic when taker_buy_base missing', () => {
+    const candles = Array.from({ length: 10 }, () => makeCandle(101, 99, 100));
+    const result = calculateCVD(candles);
+    expect(result.source).toBe('heuristic');
+  });
+
+  test('source is taker_real and uses real delta when present', () => {
+    // 10 velas con taker_buy_base=80 sobre volume=100 → delta=+60 cada una → CVD final = 600
+    const candles = Array.from({ length: 10 }, () => ({
+      high: 101, low: 99, close: 100, open: 99, volume: 100, taker_buy_base: 80,
+    }));
+    const result = calculateCVD(candles);
+    expect(result.source).toBe('taker_real');
+    expect(result.value).toBeCloseTo(600, 1);
+    expect(result.trend).toBe('rising');
+  });
+
+  test('taker_real: sell-agressor candles produce negative delta', () => {
+    // taker_buy_base=20 sobre volume=100 → delta = 2*20 - 100 = -60
+    const candles = Array.from({ length: 10 }, () => ({
+      high: 101, low: 99, close: 100, open: 101, volume: 100, taker_buy_base: 20,
+    }));
+    const result = calculateCVD(candles);
+    expect(result.source).toBe('taker_real');
+    expect(result.value).toBeCloseTo(-600, 1);
+    expect(result.trend).toBe('falling');
+  });
 });
 
 // ─── VWAP ─────────────────────────────────────────────────────────────────────
@@ -586,3 +651,4 @@ describe('detectMarketRegime', () => {
     expect(['ranging', 'weak_trend']).toContain(result);
   });
 });
+

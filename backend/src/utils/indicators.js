@@ -130,17 +130,25 @@ export function calculateBollingerBands(closes, period = BB_PERIOD, stdDevMult =
 export function calculateVolumeDelta(candles) {
   if (!candles || candles.length === 0) return null;
 
+  // Ruta rápida: usar taker buy real de Binance si está presente en TODAS las velas.
+  const hasRealTaker = candles.every(c => typeof c.taker_buy_base === 'number');
+
   let totalBuy = 0;
   let totalSell = 0;
 
   for (const c of candles) {
+    if (hasRealTaker) {
+      totalBuy += c.taker_buy_base;
+      totalSell += c.volume - c.taker_buy_base;
+      continue;
+    }
+    // Fallback heurístico: proporción de movimiento alcista vs bajista
     const range = c.high - c.low;
     if (range === 0) {
       totalBuy += c.volume / 2;
       totalSell += c.volume / 2;
       continue;
     }
-    // Aproximación: proporción de movimiento alcista vs bajista
     const buyRatio = (c.close - c.low) / range;
     totalBuy += c.volume * buyRatio;
     totalSell += c.volume * (1 - buyRatio);
@@ -149,9 +157,15 @@ export function calculateVolumeDelta(candles) {
   const total = totalBuy + totalSell;
   const buyPct = total > 0 ? (totalBuy / total) * 100 : 50;
   const sellPct = 100 - buyPct;
-  const lastCandle = candles[candles.length - 1];
-  const lastRange = lastCandle.high - lastCandle.low;
-  const lastBuyRatio = lastRange > 0 ? (lastCandle.close - lastCandle.low) / lastRange : 0.5;
+
+  const last = candles[candles.length - 1];
+  let lastBuyRatio;
+  if (hasRealTaker && last.volume > 0) {
+    lastBuyRatio = last.taker_buy_base / last.volume;
+  } else {
+    const r = last.high - last.low;
+    lastBuyRatio = r > 0 ? (last.close - last.low) / r : 0.5;
+  }
 
   let lastCandleType;
   if (lastBuyRatio > 0.7) lastCandleType = 'strong_bullish';
@@ -164,6 +178,7 @@ export function calculateVolumeDelta(candles) {
     sell_pressure_pct: parseFloat(sellPct.toFixed(1)),
     last_candle_type: lastCandleType,
     anomaly: buyPct > 90 || buyPct < 10,
+    source: hasRealTaker ? 'taker_real' : 'heuristic',
   };
 }
 
@@ -443,18 +458,25 @@ export function calculateSuperTrend(
 export function calculateCVD(candles) {
   if (!candles || candles.length === 0) return null;
 
+  const hasRealTaker = candles.every(c => typeof c.taker_buy_base === 'number');
+
   let cvd = 0;
   const series = [];
 
   for (const c of candles) {
-    const range = c.high - c.low;
-    const buyRatio = range > 0 ? (c.close - c.low) / range : 0.5;
-    const delta = c.volume * (buyRatio * 2 - 1); // positivo si buy > sell
+    let delta;
+    if (hasRealTaker) {
+      // delta real: 2*taker_buy_base - volume = taker_buy - taker_sell
+      delta = 2 * c.taker_buy_base - c.volume;
+    } else {
+      const range = c.high - c.low;
+      const buyRatio = range > 0 ? (c.close - c.low) / range : 0.5;
+      delta = c.volume * (buyRatio * 2 - 1);
+    }
     cvd += delta;
     series.push(cvd);
   }
 
-  // DEBUG: Log first and last few values
   if (process.env.DEBUG_CVD_OBV === 'true') {
     console.log('[CVD] series.slice(0,3):', series.slice(0, 3));
     console.log('[CVD] series[-3:]:', series.slice(-3));
@@ -464,16 +486,16 @@ export function calculateCVD(candles) {
   const prev = series[Math.max(0, series.length - 6)]; // ventana 5 velas
   const trend = current > prev ? 'rising' : current < prev ? 'falling' : 'flat';
 
-  // Divergencia con precio
   const priceChange = candles[candles.length - 1].close - candles[Math.max(0, candles.length - 6)].close;
   let divergence = 'none';
-  if (priceChange > 0 && trend === 'falling') divergence = 'bearish'; // precio sube pero CVD cae
-  if (priceChange < 0 && trend === 'rising') divergence = 'bullish';  // precio cae pero CVD sube
+  if (priceChange > 0 && trend === 'falling') divergence = 'bearish';
+  if (priceChange < 0 && trend === 'rising') divergence = 'bullish';
 
   return {
     value: parseFloat(current.toFixed(4)),
     trend,
     divergence,
+    source: hasRealTaker ? 'taker_real' : 'heuristic',
   };
 }
 
