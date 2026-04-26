@@ -71,16 +71,12 @@ export async function fetchEtfFlows(coin) {
       ? [...historyData].sort((a, b) => a.date.localeCompare(b.date))
       : [];
 
-    // Yesterday: último entry de la serie histórica (los datos publican con un día
-    // de retraso respecto al cierre). El snapshot `dailyNetInflow` también lo trae,
-    // pero la serie es la fuente canónica para alinear con `7d_sum` y `trend_7d`.
-    //
     // NOTA DE CAMPO (verificado 2026-04-26): en la respuesta de SoSoValue,
     //   totalNetInflow = flujo DIARIO de ese día (puede ser negativo)
     //   cumNetInflow   = acumulado desde inception (~$39B para BTC)
-    // Por tanto usar totalNetInflow aquí es correcto; NO confundirlo con cumNetInflow.
     const lastEntry = historySorted.at(-1) ?? null;
-    const totalNetFlowYesterday = lastEntry ? num(lastEntry.totalNetInflow) : null;
+    const dailyNetInflowYesterday  = lastEntry ? num(lastEntry.totalNetInflow) : null;
+    const cumulativeNetInflow      = lastEntry ? num(lastEntry.cumNetInflow)   : null;
 
     // 7d sum: últimos 7 puntos de la serie. Días sin trading (fin de semana,
     // festivos US) no aparecen en la serie, así que "últimos 7 entries" ≈ últimas
@@ -110,12 +106,13 @@ export async function fetchEtfFlows(coin) {
       .slice(0, 10);
 
     const result = {
-      total_net_flow_usd_yesterday: totalNetFlowYesterday,
-      total_net_flow_usd_7d_sum:    total7dSum,
-      trend_7d:                     trend7d,
-      by_issuer:                    byIssuer,
-      as_of:                        lastEntry?.date ?? null,
-      source:                       'sosovalue.xyz',
+      daily_net_inflow_usd_yesterday: dailyNetInflowYesterday,
+      net_inflow_usd_7d_sum:          total7dSum,
+      cumulative_net_inflow_usd:      cumulativeNetInflow,
+      trend_7d:                       trend7d,
+      by_issuer:                      byIssuer,
+      as_of:                          lastEntry?.date ?? null,
+      source:                         'sosovalue.xyz',
     };
 
     cacheSet(cacheKey, result, env.cache.etfFlowsTtl);
