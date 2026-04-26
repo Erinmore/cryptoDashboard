@@ -51,3 +51,6 @@ ecosystem.config.js.bak
 
 # Misc
 .claude/
+
+# Local session notes (per-developer continuity log, not for repo)
+SESSION_STATE.md

@@ -93,20 +93,26 @@ src/controllers/             ← Orquestación, validación de params, formato r
 src/services/                ← Lógica de negocio, I/O externo, cache
   anthropicService.js        ← Stub: buildPrompt() completo, analyzeMarket() pendiente API key
   dbService.js               ← saveAnalysis(), getAnalysisHistory(), getLastAnalysis()
-  indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores
-  coingeckoService.js        ← fetchOHLC (1h/4h/1D/1W), fetchCurrentPrice, fetchBTCDominance
+  indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores + Volume Profile + computeTrend ponderado
+  coingeckoService.js        ← fetchOHLC (Binance klines: 1h/4h/1D/1W con taker_buy_base real), fetchCurrentPrice, fetchBTCDominance, fetchGlobalMarketData, fetchCoinMarketData
   fearGreedService.js        ← fetchFearGreed (alternative.me, gratis) + alimenta históricos
-  coinalyzeService.js        ← fetchFundingRate, fetchOpenInterest, fetchLongShortRatio, fetchLiquidations + históricos
+  coinalyzeService.js        ← fetchFundingRate (con predicted_rate_pct), fetchOpenInterest, fetchLongShortRatio, fetchLiquidations + históricos
+  binanceOrderBookService.js ← fetchOrderBookWalls (depth=20: muros, spread, imbalance ratio top20/top5/signal), fetchBinanceTicker
+  liquidationClustersService.js ← Inferencia de magnetic zones cruzando liquidaciones 1h con candles 1h (top 5 long/short, distancias)
+  onchainService.js          ← Métricas on-chain BTC (MVRV, MVRV Z-score, NUPL, SOPR) — bitcoin-data.com free tier
   historyService.js          ← Gestión de históricos en memoria para análisis LLM (7-30 días)
   cacheService.js            ← Cache en memoria con TTL
 src/utils/
   indicators.js              ← Funciones matemáticas puras (sin I/O)
+  volumeProfile.js           ← Volume Profile (POC, VAH, VAL, HVN, LVN) — función pura
   errors.js                  ← AppError, ValidationError, ExternalApiError
 ```
 
 **Flujo de una request:** `route → controller → services (en paralelo) → response`
 
-**`GET /api/data` devuelve:** `candles` (TF principal), `technical` (4 TFs), `sentiment`, `fear_greed`, `derivatives`, `btc_dominance`, `last_analysis`, precio, **`history`** (históricos para análisis LLM).
+**`GET /api/data` devuelve:** `candles` (TF principal, con `taker_buy_base`/`taker_buy_quote`/`quote_volume` reales de Binance), `technical` (4 TFs, incluye `volume_profile` por TF), `sentiment`, `fear_greed`, `derivatives`, `btc_dominance`, `binance_walls` (con `imbalance_ratio`), `last_analysis`, precio, **`history`** (históricos para análisis LLM).
+
+**`GET /api/analyze/payload` añade además:** `order_book` (muros + imbalance), `derivatives.liquidation_clusters` (magnetic zones inferidas), `onchain` (MVRV/NUPL/SOPR para BTC), `volume_history` (CVD/VWAP), `timeframe_analysis` (conflictos entre TFs), resúmenes consolidados de históricos.
 
 ## Arquitectura del frontend
 
@@ -229,9 +235,12 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 
 | Servicio | Uso | Auth | TTL cache | Notas |
 |----------|-----|------|-----------|-------|
-| CoinGecko v3 | OHLC (4 TFs), precio, BTC Dominance | Opcional (free tier) | 60s–1800s OHLC (per-TF), 30s precio, 10min dominance | — |
+| Binance klines | OHLCV real (4 TFs) con taker_buy_base/quote agressor data | Ninguna | 60s–1800s per-TF | Fuente principal de candles; campos `taker_buy_base`/`taker_buy_quote`/`quote_volume` críticos para CVD/VolumeDelta reales |
+| Binance depth/ticker | Order book top 20 + ticker 24h | Ninguna | 60s | `fetchOrderBookWalls` calcula muros + imbalance_ratio sobre 20 niveles + top 5 |
+| CoinGecko v3 | Precio actual, BTC Dominance, datos de mercado global y de coin | Opcional (free tier) | 30s precio, 10min dominance | Ya no se usa para OHLCV (Binance klines lo reemplazó) |
 | alternative.me | Fear & Greed Index (30 días) | Ninguna | 10min | Obtiene últimos 30 días (`limit=30`); completamente gratis, sin registro |
-| Coinalyze v1 | Funding Rate, OI, L/S Ratio, Liquidaciones | `COINALYZE_API_KEY` (gratis) | 30min FR, 5min OI/LSR, 5min Liq | Ver estructura de respuesta real abajo |
+| Coinalyze v1 | Funding Rate (+predicted), OI, L/S Ratio, Liquidaciones, clusters de liquidación | `COINALYZE_API_KEY` (gratis) | 30min FR, 5min OI/LSR/Liq, 10min liquidation_clusters | Ver estructura de respuesta real abajo |
+| bitcoin-data.com (BGeometrics) | On-chain BTC: MVRV, MVRV Z-score, NUPL, SOPR | Ninguna (free tier 8 req/h, **15 req/día**) | **12h** completo o parcial; **30min** cache negativo en fallo total | Solo BTC; ETH/SOL devuelven `null`. NUPL llega como string → parsear. Endpoints `/v1/{mvrv,mvrv-zscore,nupl,sopr}/last`. Datos diarios (cierre UTC), refrescar más a menudo gasta cuota sin valor |
 | Anthropic | Análisis IA | `ANTHROPIC_API_KEY` | Sin cache (on-demand) | — |
 
 **Endpoints y estructura de respuesta Coinalyze (verificados 2026-04-06):**
@@ -243,7 +252,9 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 - Liquidations: `GET /v1/liquidation-history?symbols=X&interval=1hour&from=T&to=T` → `[{ symbol, history: [{t, l, s}] }]` — `l` = longs liquidados (USD), `s` = shorts liquidados (USD) en últimas 24h
 
 **Degraded mode:**
-- Si `COINALYZE_API_KEY` no está configurada → `env.hasDerivativesData` es `false` y todos los servicios de Coinalyze devuelven `null` sin lanzar error
+- Si `COINALYZE_API_KEY` no está configurada → `env.hasDerivativesData` es `false` y todos los servicios de Coinalyze (incluido `liquidationClustersService`) devuelven `null` sin lanzar error
+- `ONCHAIN_DATA_ENABLED=false` en `.env` apaga `onchainService` (no requiere key, sólo flag)
+- Si bitcoin-data.com cae o se rate-limitea, `onchainService` cachea un sentinel `{__empty:true}` durante `CACHE_ONCHAIN_NEGATIVE_TTL` (30 min) en lugar de reintentar inmediatamente. La cuota free (15 req/día) se respeta porque el TTL completo es 12h y cada refresh consume 4 requests (4 × 2 = 8 req/día)
 
 ---
 
@@ -323,17 +334,21 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | `calculateADX(candles, period?)` | ADX + DMI |
 | `calculateBollingerBands(closes, period?, mult?)` | BB + width_pct + position (0.0-1.0, no status) |
 | `calculateSuperTrend(candles, ...)` | SuperTrend adaptativo — usar `st.support` (UP) o `st.resistance` (DOWN) para el nivel |
-| `calculateVolumeDelta(candles)` | Presión compradora/vendedora |
-| `calculateCVD(candles)` | Cumulative Volume Delta |
+| `calculateVolumeDelta(candles)` | Presión compradora/vendedora — usa `taker_buy_base` real de Binance cuando los candles lo traen (`source: 'taker_real'`); fallback heurístico `(close-low)/(high-low)` si falta o es inválido (NaN, fuera de rango) |
+| `calculateCVD(candles)` | Cumulative Volume Delta — mismo patrón taker_real / heuristic. Delta real = `2*taker_buy_base - volume` |
 | `calculateVWAP(candles, period?)` | VWAP (rolling 20-period) — Volume-Weighted Average Price |
 | `calculateFibonacci(high, low, levels?)` | Niveles Fibonacci |
 | `calculateSupportResistance(candles, ...)` | Soporte & Resistencia — devuelve `{supports, resistances}` sin campo `type` (ya declarado por la lista) |
 | `detectRSIDivergence(closes, ...)` | Divergencias RSI |
 | `detectMarketRegime(candles, closes)` | Régimen TRENDING/RANGING/HIGH_VOLATILITY — devuelve string plano, no objeto |
 
+**Helpers adicionales (no en `indicators.js`):**
+- `calculateVolumeProfile(candles, opts?)` en `utils/volumeProfile.js` — POC, VAH, VAL, HVN/LVN (top 5), bin_size, total_volume. Distribución uniforme: cada vela contribuye `volume / numBins` a cada bin que cubre su rango.
+- `computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta })` en `services/indicatorService.js` — string ponderado por jerarquía del SYSTEM_PROMPT: estructura 50% (ADX+SuperTrend), ejecución 30% (RSI+MACD+WaveTrend+StochRSI), volumen 20%. Devuelve `strongly_bullish | bullish | neutral | bearish | strongly_bearish`.
+
 ---
 
-## Estado del proyecto (2026-04-06)
+## Estado del proyecto (2026-04-26)
 
 | Bloque | Contenido | Estado |
 |--------|-----------|--------|
@@ -342,7 +357,11 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Bloque 3 | POST /api/analyze, historial, anthropicService stub | ✅ Completo (pendiente API key) |
 | Bloque 4 | Frontend Fases 7, 8, 9, 10, 11, 13 completas | ✅ Completo |
 | Bloque 4.5 | Sistema de históricos para análisis LLM (7-30 días) | ✅ Completo |
-| Bloque 5 | Tests integración, deploy VPS, docs | ⏳ Pendiente |
+| Sprint A' | Volume Delta/CVD con taker_buy real, predicted_rate_pct, computeTrend ponderado | ✅ Completo |
+| Sprint B' | Order book imbalance, Volume Profile, Liquidation Clusters, On-chain BTC | ✅ Completo |
+| Sprint C' | ETF Flows, Macro (DXY/SPX/Gold), SMC (BOS/CHoCH/FVG) | ⏳ Pendiente |
+| Sprint D' | Deribit DVOL, update SYSTEM_PROMPT con bloques nuevos | ⏳ Pendiente |
+| Bloque 5 | Tests integración, deploy VPS | ⏳ Pendiente |
 
 ### Detalle Bloque 4
 
@@ -357,8 +376,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 
 ### Fixes y mejoras adicionales implementados
 
-- **Bug 1h**: velas planas (open=close) corregido en `fetchMarketChartAggregated` usando `prev.close` como `open`
-- **Timeframes optimizados**: reducidos a 1h → 4h → 1D → 1W; cache per-TF (60s–1800s); 1W implementado vía agregación de datos diarios en buckets de 7 días
+- **Timeframes optimizados**: 1h → 4h → 1D → 1W; cache per-TF (60s–1800s); todos servidos por Binance klines nativo (1W con `interval=1w` alineado a lunes UTC)
 - **WaveTrend sidebar**: señal corregida — usa `wt.signal` del backend (`cross up/down`, `overbought/oversold`) en vez de solo `wt1 > 0`
 - **Coinalyze**: campos de respuesta corregidos tras verificar la API real (`value` en FR y OI; `l`/`s` en LSR)
 - **Open Interest**: sidebar muestra valor absoluto formateado (`$90.2M`) + cambio 24h real vía endpoint de históricos
@@ -379,6 +397,17 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - Ahora `fearGreedService` alimenta el histórico con todos los 30 días, usando timestamps reales de cada dato
   - `fear_greed_history` en `/api/analyze/payload` devuelve: `current`, `yesterday`, `7d_ago`, `30d_ago` con búsqueda exacta de fechas (fallback a dato más antiguo si no existe fecha exacta)
   - Datos históricos completamente alineados con sitio web de alternative.me
+
+- **Sprint A' (2026-04-26) — datos institucionales reales**:
+  - `calculateVolumeDelta` y `calculateCVD` consumen `taker_buy_base` real de Binance klines (índice 9). Campo `source` (`'taker_real' | 'heuristic'`) indica el origen al LLM. Guard `Number.isFinite` + clamp `[0, volume]` blinda contra NaN o datos corruptos
+  - `predicted_rate_pct` integrado en `fetchFundingRate` vía endpoint `/v1/predicted-funding-rate` (mismo Promise.allSettled, no servicio separado)
+  - `computeTrend` reescrito con jerarquía Estructura > Ejecución > Volumen (50/30/20) según pide el SYSTEM_PROMPT — devuelve `strongly_bullish | bullish | neutral | bearish | strongly_bearish`
+
+- **Sprint B' (2026-04-26) — expansión de fuentes**:
+  - **Order Book Imbalance** (`order_book` en payload): `imbalance_ratio` sobre 20 niveles, `imbalance_top5_ratio`, `imbalance_signal` (`buy_pressure` / `sell_pressure` / `balanced`); `spread_usd` y `spread_pct` con 6 decimales para mercados tight
+  - **Volume Profile** (`technical[tf].volume_profile`): POC, VAH, VAL, HVN/LVN (top 5), distribución uniforme `volume / numBins`. Función pura en `utils/volumeProfile.js`
+  - **Liquidation Clusters** (`derivatives.liquidation_clusters`): inferencia de magnetic zones cruzando `liquidation-history` 1h de Coinalyze con candles 1h de Binance (longs en swing low, shorts en swing high). Top 5 long/short, distancias % al cluster más cercano. `source: 'coinalyze_inferred'` para que el LLM sepa que es proxy, no CoinGlass real
+  - **On-chain BTC** (`onchain`): MVRV, MVRV Z-score, NUPL, SOPR + clasificadores tipados (`low/fair/elevated/extreme`, `capitulation/hope/optimism/belief/euphoria`, `loss/neutral/profit_taking`). Free tier 15 req/día; cache 12h (4 req × 2 = 8 req/día) + cache negativo 30min en fallo total con sentinel `{__empty:true}` (commit `45568ae`)
 
 ---
 
