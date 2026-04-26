@@ -74,6 +74,11 @@ export async function fetchEtfFlows(coin) {
     // Yesterday: último entry de la serie histórica (los datos publican con un día
     // de retraso respecto al cierre). El snapshot `dailyNetInflow` también lo trae,
     // pero la serie es la fuente canónica para alinear con `7d_sum` y `trend_7d`.
+    //
+    // NOTA DE CAMPO (verificado 2026-04-26): en la respuesta de SoSoValue,
+    //   totalNetInflow = flujo DIARIO de ese día (puede ser negativo)
+    //   cumNetInflow   = acumulado desde inception (~$39B para BTC)
+    // Por tanto usar totalNetInflow aquí es correcto; NO confundirlo con cumNetInflow.
     const lastEntry = historySorted.at(-1) ?? null;
     const totalNetFlowYesterday = lastEntry ? num(lastEntry.totalNetInflow) : null;
 

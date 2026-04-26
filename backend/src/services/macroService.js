@@ -99,8 +99,9 @@ async function fetchSymbol(symbol) {
 
   if (value === null && closes.length === 0) return null;
 
-  // change_24h_pct: usar último close vs penúltimo (un día de mercado).
-  // No usar `value` como punto final porque mezcla intradía con cierre.
+  // change_24h_pct: cambio de la última sesión de mercado (último cierre vs el anterior).
+  // Semántica: en fin de semana o festivo no hay nueva barra — el valor se congela
+  // en el cambio viernes-jueves hasta el lunes. No es "últimas 24h calendario".
   let change24hPct = null;
   if (closes.length >= 2) {
     const prev = closes.at(-2);

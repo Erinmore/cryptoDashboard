@@ -109,35 +109,37 @@ export function detectLastBOS(candles, { lookback = 2 } = {}) {
   const trend = inferStructuralTrend(swings);
   if (trend !== 'bullish' && trend !== 'bearish') return null;
 
-  // Recorremos las velas desde la más reciente hacia atrás. Una vela posterior
-  // a un swing es candidata si rompe el swing en la dirección de la tendencia.
+  // Iteramos los swings de más reciente a más antiguo. Para cada swing buscamos
+  // el PRIMER candle posterior que lo rompe en la dirección de la tendencia.
+  // Esto garantiza que break_candle_t refleja cuándo ocurrió la ruptura, no la
+  // posición actual del precio (que siempre sería el candle más reciente).
   const { highs, lows } = swings;
   const refSwings = trend === 'bullish' ? highs : lows;
+  const refSwingsSorted = [...refSwings].reverse(); // newest first
 
-  for (let i = candles.length - 1; i >= 0; i--) {
-    const close = candles[i].close;
-    // Último swing previo a esta vela
-    const swing = [...refSwings].reverse().find(s => s.idx < i);
-    if (!swing) continue;
-    if (trend === 'bullish' && close > swing.price) {
-      return {
-        direction: 'bullish',
-        broken_swing_price: swing.price,
-        broken_swing_t:     swing.t,
-        break_candle_idx:   i,
-        break_candle_t:     candles[i].t,
-        close,
-      };
-    }
-    if (trend === 'bearish' && close < swing.price) {
-      return {
-        direction: 'bearish',
-        broken_swing_price: swing.price,
-        broken_swing_t:     swing.t,
-        break_candle_idx:   i,
-        break_candle_t:     candles[i].t,
-        close,
-      };
+  for (const swing of refSwingsSorted) {
+    for (let i = swing.idx + 1; i < candles.length; i++) {
+      const close = candles[i].close;
+      if (trend === 'bullish' && close > swing.price) {
+        return {
+          direction: 'bullish',
+          broken_swing_price: swing.price,
+          broken_swing_t:     swing.t,
+          break_candle_idx:   i,
+          break_candle_t:     candles[i].t,
+          close,
+        };
+      }
+      if (trend === 'bearish' && close < swing.price) {
+        return {
+          direction: 'bearish',
+          broken_swing_price: swing.price,
+          broken_swing_t:     swing.t,
+          break_candle_idx:   i,
+          break_candle_t:     candles[i].t,
+          close,
+        };
+      }
     }
   }
   return null;
@@ -160,30 +162,31 @@ export function detectLastCHoCH(candles, { lookback = 2 } = {}) {
   const { highs, lows } = swings;
   const refSwings = trend === 'bearish' ? highs : lows;
   const direction = trend === 'bearish' ? 'bullish' : 'bearish';
+  const refSwingsSorted = [...refSwings].reverse(); // newest first
 
-  for (let i = candles.length - 1; i >= 0; i--) {
-    const close = candles[i].close;
-    const swing = [...refSwings].reverse().find(s => s.idx < i);
-    if (!swing) continue;
-    if (direction === 'bullish' && close > swing.price) {
-      return {
-        direction: 'bullish',
-        broken_swing_price: swing.price,
-        broken_swing_t:     swing.t,
-        break_candle_idx:   i,
-        break_candle_t:     candles[i].t,
-        close,
-      };
-    }
-    if (direction === 'bearish' && close < swing.price) {
-      return {
-        direction: 'bearish',
-        broken_swing_price: swing.price,
-        broken_swing_t:     swing.t,
-        break_candle_idx:   i,
-        break_candle_t:     candles[i].t,
-        close,
-      };
+  for (const swing of refSwingsSorted) {
+    for (let i = swing.idx + 1; i < candles.length; i++) {
+      const close = candles[i].close;
+      if (direction === 'bullish' && close > swing.price) {
+        return {
+          direction: 'bullish',
+          broken_swing_price: swing.price,
+          broken_swing_t:     swing.t,
+          break_candle_idx:   i,
+          break_candle_t:     candles[i].t,
+          close,
+        };
+      }
+      if (direction === 'bearish' && close < swing.price) {
+        return {
+          direction: 'bearish',
+          broken_swing_price: swing.price,
+          broken_swing_t:     swing.t,
+          break_candle_idx:   i,
+          break_candle_t:     candles[i].t,
+          close,
+        };
+      }
     }
   }
   return null;
