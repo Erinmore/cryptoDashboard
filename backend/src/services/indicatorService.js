@@ -15,6 +15,7 @@ import {
   detectMarketRegime,
 } from '../utils/indicators.js';
 
+import { calculateVolumeProfile } from '../utils/volumeProfile.js';
 import { RSI_OVERBOUGHT, RSI_OVERSOLD } from '../config/constants.js';
 
 /**
@@ -76,6 +77,9 @@ export function computeIndicators(candles, timeframe) {
   // ── Support & Resistance ─────────────────────────────────────
   const sr = calculateSupportResistance(candles);
 
+  // ── Volume Profile ───────────────────────────────────────────
+  const volumeProfile = calculateVolumeProfile(candles);
+
   // ── Market Regime ────────────────────────────────────────────
   const regime = detectMarketRegime(candles, closes);
 
@@ -98,6 +102,7 @@ export function computeIndicators(candles, timeframe) {
     vwap,
     fibonacci,
     support_resistance: sr,
+    volume_profile: volumeProfile,
   };
 }
 

@@ -17,6 +17,7 @@ import {
   detectMarketRegime,
 } from '../src/utils/indicators.js';
 import { computeTrend } from '../src/services/indicatorService.js';
+import { calculateVolumeProfile } from '../src/utils/volumeProfile.js';
 
 // ─── RSI ──────────────────────────────────────────────────────────────────────
 
@@ -731,5 +732,61 @@ describe('computeTrend', () => {
     // Verificación cualitativa: A no debe ser menos alcista que B
     const rank = { strongly_bearish: -2, bearish: -1, neutral: 0, bullish: 1, strongly_bullish: 2 };
     expect(rank[a]).toBeGreaterThanOrEqual(rank[b]);
+  });
+});
+
+// ─── Volume Profile ───────────────────────────────────────────────────────────
+
+describe('calculateVolumeProfile', () => {
+  const buildCandle = (low, high, volume) => ({
+    t: 0, open: low, high, low, close: high, volume,
+  });
+
+  test('returns null when not enough candles', () => {
+    const candles = Array.from({ length: 10 }, () => buildCandle(100, 101, 50));
+    expect(calculateVolumeProfile(candles)).toBeNull();
+  });
+
+  test('returns null when range is zero (all candles flat)', () => {
+    const candles = Array.from({ length: 30 }, () => buildCandle(100, 100, 50));
+    expect(calculateVolumeProfile(candles)).toBeNull();
+  });
+
+  test('returns full structure with valid candles', () => {
+    const candles = Array.from({ length: 30 }, (_, i) => buildCandle(100 + i * 0.1, 101 + i * 0.1, 100));
+    const vp = calculateVolumeProfile(candles);
+    expect(vp).not.toBeNull();
+    expect(vp).toHaveProperty('poc');
+    expect(vp).toHaveProperty('vah');
+    expect(vp).toHaveProperty('val');
+    expect(vp).toHaveProperty('hvn');
+    expect(vp).toHaveProperty('lvn');
+    expect(vp).toHaveProperty('bin_size');
+    expect(vp).toHaveProperty('total_volume');
+    expect(Array.isArray(vp.hvn)).toBe(true);
+    expect(Array.isArray(vp.lvn)).toBe(true);
+  });
+
+  test('POC is within [low, high] range and VAL <= POC <= VAH', () => {
+    const candles = [];
+    for (let i = 0; i < 50; i++) {
+      const center = 100 + Math.sin(i / 5) * 5;
+      candles.push(buildCandle(center - 0.5, center + 0.5, 100 + Math.random() * 50));
+    }
+    const vp = calculateVolumeProfile(candles);
+    expect(vp.poc).toBeGreaterThanOrEqual(vp.val);
+    expect(vp.poc).toBeLessThanOrEqual(vp.vah);
+    expect(vp.val).toBeLessThanOrEqual(vp.vah);
+  });
+
+  test('POC concentrates on price band with most volume', () => {
+    // 25 velas con volumen normal en 100-101, 5 velas con volumen alto en 110-111
+    const candles = [
+      ...Array.from({ length: 25 }, () => buildCandle(100, 101, 50)),
+      ...Array.from({ length: 5 }, () => buildCandle(110, 111, 1000)),
+    ];
+    const vp = calculateVolumeProfile(candles);
+    // POC debe estar cerca del cluster de 110-111, no del 100-101
+    expect(vp.poc).toBeGreaterThan(105);
   });
 });
