@@ -130,8 +130,15 @@ export function calculateBollingerBands(closes, period = BB_PERIOD, stdDevMult =
 export function calculateVolumeDelta(candles) {
   if (!candles || candles.length === 0) return null;
 
-  // Ruta rápida: usar taker buy real de Binance si está presente en TODAS las velas.
-  const hasRealTaker = candles.every(c => typeof c.taker_buy_base === 'number');
+  // Ruta rápida: usar taker buy real de Binance si está presente y es finito en TODAS las velas.
+  // typeof NaN === 'number', así que comprobamos también Number.isFinite para no aceptar
+  // valores corruptos que silenciosamente romperían la suma.
+  const hasRealTaker = candles.every(c =>
+    Number.isFinite(c.taker_buy_base) &&
+    Number.isFinite(c.volume) &&
+    c.taker_buy_base >= 0 &&
+    c.taker_buy_base <= c.volume
+  );
 
   let totalBuy = 0;
   let totalSell = 0;
@@ -458,7 +465,13 @@ export function calculateSuperTrend(
 export function calculateCVD(candles) {
   if (!candles || candles.length === 0) return null;
 
-  const hasRealTaker = candles.every(c => typeof c.taker_buy_base === 'number');
+  // Mismo guard que calculateVolumeDelta: bloquea NaN y valores fuera de rango.
+  const hasRealTaker = candles.every(c =>
+    Number.isFinite(c.taker_buy_base) &&
+    Number.isFinite(c.volume) &&
+    c.taker_buy_base >= 0 &&
+    c.taker_buy_base <= c.volume
+  );
 
   let cvd = 0;
   const series = [];
