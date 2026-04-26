@@ -64,6 +64,25 @@ export async function fetchOrderBookWalls(symbol) {
       volume: parseFloat(v),
     }));
 
+    // Imbalance ratio sobre los 20 niveles capturados (presión global)
+    const totalBidVolume = bids.reduce((s, [, v]) => s + parseFloat(v), 0);
+    const totalAskVolume = asks.reduce((s, [, v]) => s + parseFloat(v), 0);
+    const totalVolume    = totalBidVolume + totalAskVolume;
+    const imbalance_ratio = totalVolume > 0
+      ? parseFloat((totalBidVolume / totalVolume).toFixed(4))
+      : 0.5;
+
+    // Imbalance top 5 (presión inmediata vs profundidad lejana)
+    const bid5Vol = bids_top5.reduce((s, x) => s + x.volume, 0);
+    const ask5Vol = asks_top5.reduce((s, x) => s + x.volume, 0);
+    const imbalance_top5_ratio = (bid5Vol + ask5Vol) > 0
+      ? parseFloat((bid5Vol / (bid5Vol + ask5Vol)).toFixed(4))
+      : 0.5;
+
+    const imbalance_signal = imbalance_ratio > 0.60 ? 'buy_pressure'
+      : imbalance_ratio < 0.40 ? 'sell_pressure'
+      : 'balanced';
+
     return {
       buyWall,
       sellWall,
@@ -71,6 +90,9 @@ export async function fetchOrderBookWalls(symbol) {
       spread_pct,
       bids_top5,
       asks_top5,
+      imbalance_ratio,
+      imbalance_top5_ratio,
+      imbalance_signal,
       timestamp: new Date().toISOString(),
     };
   } catch (error) {

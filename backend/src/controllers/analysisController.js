@@ -1,6 +1,7 @@
 import { fetchOHLC, fetchCurrentPrice, fetchGlobalMarketData, fetchCoinMarketData } from '../services/coingeckoService.js';
 import { fetchFearGreed } from '../services/fearGreedService.js';
 import { fetchDerivativesData } from '../services/coinalyzeService.js';
+import { fetchOrderBookWalls } from '../services/binanceOrderBookService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
@@ -294,6 +295,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     derivativesResult,
     globalMarketResult,
     coinMarketResult,
+    orderBookResult,
   ] = await Promise.allSettled([
     fetchOHLC(coin, '1h'),
     fetchOHLC(coin, '4h'),
@@ -304,6 +306,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     fetchDerivativesData(coin),
     fetchGlobalMarketData(),
     fetchCoinMarketData(coin),
+    fetchOrderBookWalls(binanceSymbol),
   ]);
 
   const resolve = (result) => (result.status === 'fulfilled' ? result.value : null);
@@ -320,6 +323,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const globalMarket = resolve(globalMarketResult);
   const coinMarket   = resolve(coinMarketResult);
   const price        = resolve(priceResult);
+  const orderBook    = resolve(orderBookResult);
 
   const technical = {};
   for (const tf of TIMEFRAMES) {
@@ -414,6 +418,15 @@ async function buildAnalyzeContext(coin, primaryTf) {
         history:    liquidationsSummary,
       } : null,
     },
+
+    order_book: orderBook ? {
+      buy_wall:             orderBook.buyWall,
+      sell_wall:            orderBook.sellWall,
+      spread_pct:           parseFloat(orderBook.spread_pct.toFixed(4)),
+      imbalance_ratio:      orderBook.imbalance_ratio,
+      imbalance_top5_ratio: orderBook.imbalance_top5_ratio,
+      imbalance_signal:     orderBook.imbalance_signal,
+    } : null,
 
     volume_history: {
       cvd: cvdSummary,
