@@ -102,6 +102,7 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   onchainService.js          ← Métricas on-chain BTC (MVRV, MVRV Z-score, NUPL, SOPR) — bitcoin-data.com free tier
   etfFlowsService.js         ← Spot ETF flows BTC/ETH (SoSoValue, sin auth) — daily_net_inflow_usd_yesterday, net_inflow_usd_7d_sum, cumulative_net_inflow_usd, trend_7d, by_issuer[]
   macroService.js            ← Macro context DXY/SPX/Gold (Yahoo Finance v8, sin auth) — value, change_24h_pct, trend_5d
+  deribitService.js          ← DVOL volatility index BTC/ETH (Deribit public API, sin auth) — value, regime, change_24h_pct; SOL null. Cache 5min
   historyService.js          ← Gestión de históricos en memoria para análisis LLM (7-30 días)
   cacheService.js            ← Cache en memoria con TTL
 src/utils/
@@ -115,7 +116,7 @@ src/utils/
 
 **`GET /api/data` devuelve:** `candles` (TF principal, con `taker_buy_base`/`taker_buy_quote`/`quote_volume` reales de Binance), `technical` (4 TFs, incluye `volume_profile` por TF), `sentiment`, `fear_greed`, `derivatives`, `btc_dominance`, `binance_walls` (con `imbalance_ratio`), `last_analysis`, precio, **`history`** (históricos para análisis LLM).
 
-**`GET /api/analyze/payload` añade además:** `order_book` (muros + imbalance), `derivatives.liquidation_clusters` (magnetic zones inferidas), `onchain` (MVRV/NUPL/SOPR para BTC), `etf_flows` (BTC/ETH spot ETF flows vía SoSoValue), `macro` (DXY/SPX/Gold vía Yahoo Finance), `volume_history` (CVD/VWAP), `timeframe_analysis` (conflictos entre TFs), resúmenes consolidados de históricos. `technical[tf]` incluye además `volume_profile` y `smc` (BOS/CHoCH/FVGs).
+**`GET /api/analyze/payload` añade además:** `order_book` (muros + imbalance), `derivatives.liquidation_clusters` (magnetic zones inferidas), `onchain` (MVRV/NUPL/SOPR para BTC), `etf_flows` (BTC/ETH spot ETF flows vía SoSoValue), `macro` (DXY/SPX/Gold vía Yahoo Finance), `volatility` (btc_dvol/eth_dvol via Deribit — value, regime, change_24h_pct), `volume_history` (CVD/VWAP), `timeframe_analysis` (conflictos entre TFs), resúmenes consolidados de históricos. `technical[tf]` incluye además `volume_profile` y `smc` (BOS/CHoCH/FVGs).
 
 ## Arquitectura del frontend
 
@@ -246,6 +247,7 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 | bitcoin-data.com (BGeometrics) | On-chain BTC: MVRV, MVRV Z-score, NUPL, SOPR | Ninguna (free tier 8 req/h, **15 req/día**) | **12h** completo o parcial; **30min** cache negativo en fallo total | Solo BTC; ETH/SOL devuelven `null`. NUPL llega como string → parsear. Endpoints `/v1/{mvrv,mvrv-zscore,nupl,sopr}/last`. Datos diarios (cierre UTC), refrescar más a menudo gasta cuota sin valor |
 | SoSoValue | Spot ETF flows BTC/ETH (historicalInflowChart + currentEtfDataMetrics) | Ninguna (POST sin auth) | 1h normal, 30min negativo | SOL → `null` (sin spot ETF). Body `{"type":"us-btc-spot"\|"us-eth-spot"}`. Campos numéricos envueltos en `{value, lastUpdateDate, status}` → extraer `.value`. En `historicalInflowChart`: `totalNetInflow` = flujo **diario** (puede ser negativo); `cumNetInflow` = acumulado desde inception (~$39B BTC). NO confundirlos. |
 | Yahoo Finance v8 | Macro DXY/SPX/Gold (chart endpoint, interval=1d&range=10d) | Ninguna | 30min normal, 10min negativo | User-Agent obligatorio. Símbolos: `DX-Y.NYB`, `^GSPC`, `GC=F`. Cache coin-agnóstico (`macro:global`). closes[] puede traer null → filtrar |
+| Deribit public API | DVOL volatility index BTC/ETH (get_volatility_index_data) | Ninguna | 5min | resolution=43200 (12h), 48h de historia para change_24h_pct. SOL → `null` natural. Regime: panic >80 / elevated 60-80 / normal 40-60 / complacent <40 |
 | Anthropic | Análisis IA | `ANTHROPIC_API_KEY` | Sin cache (on-demand) | — |
 
 **Endpoints y estructura de respuesta Coinalyze (verificados 2026-04-06):**
@@ -367,7 +369,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Sprint A' | Volume Delta/CVD con taker_buy real, predicted_rate_pct, computeTrend ponderado | ✅ Completo |
 | Sprint B' | Order book imbalance, Volume Profile, Liquidation Clusters, On-chain BTC | ✅ Completo |
 | Sprint C' | ETF Flows, Macro (DXY/SPX/Gold), SMC (BOS/CHoCH/FVG) | ✅ Completo |
-| Sprint D' | Deribit DVOL, update SYSTEM_PROMPT con bloques nuevos | ⏳ Pendiente |
+| Sprint D' | Deribit DVOL, update SYSTEM_PROMPT v3_extended_context, docs | ✅ Completo |
 | Bloque 5 | Tests integración, deploy VPS | ⏳ Pendiente |
 
 ### Detalle Bloque 4
@@ -420,6 +422,10 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **ETF Flows** (`etf_flows` top-level): `etfFlowsService.js` consume SoSoValue (POST sin auth). BTC + ETH cubiertos; SOL `null`. Output: `daily_net_inflow_usd_yesterday` (flujo diario, puede ser negativo), `net_inflow_usd_7d_sum` (suma de 7 flujos diarios), `cumulative_net_inflow_usd` (acumulado desde inception del ETF), `trend_7d` (`accumulating/distributing/neutral`, umbral 100M USD), `by_issuer[]` top 10 por net_assets. Cache 1h / negativo 30min con sentinel `{__empty:true}`.
   - **Macro** (`macro` top-level): `macroService.js` consume Yahoo Finance v8 chart. DXY (`DX-Y.NYB`), SPX (`^GSPC`), Gold (`GC=F`). Output por símbolo: `{value, change_24h_pct, trend_5d}`. User-Agent obligatorio. Cache 30min coin-agnóstico (`macro:global`) / negativo 10min. `closes[]` puede traer `null` (festivos/intradía) — se filtran antes de calcular trend.
   - **SMC** (`technical[tf].smc`): `utils/smc.js` (funciones puras). `detectSwings`: pivote fractal lookback=2. `detectLastBOS`: itera swings newest→oldest y devuelve el **primer candle que primero rompió** el swing más reciente en dirección de tendencia HH/HL o LH/LL (continuación). `detectLastCHoCH`: mismo patrón pero en dirección opuesta (reversión). `break_candle_t` refleja el timestamp real del evento estructural, no la posición actual del precio. `detectUnmitigatedFVGs`: patrón 3 velas, mitigado si alguna vela posterior toca la zona, ventana 100 velas, top 5 por dirección. 8 tests nuevos (total 96/96).
+
+- **Sprint D' (2026-04-27) — volatilidad implícita y SYSTEM_PROMPT v3**:
+  - **DVOL** (`volatility` top-level): `deribitService.js` consume Deribit public API sin auth. Endpoint `GET /api/v2/public/get_volatility_index_data?currency={BTC|ETH}&resolution=43200`. BTC + ETH cubiertos; SOL → `null` natural (sin DVOL en Deribit). Output: `{ btc_dvol, eth_dvol, sol_dvol: null }`. Cada uno: `{ value, regime, change_24h_pct, source }`. Regime: `panic >80 / elevated 60-80 / normal 40-60 / complacent <40`. Cache 5min. Degraded mode (null en fallo).
+  - **SYSTEM_PROMPT v3_extended_context**: `anthropicService.js` actualizado de `v2_quantitative`. Nuevas secciones: B2 (Order Book Imbalance como ajuste al Volume Flow Score), B3 (Volume Profile POC/VAH/VAL/HVN/LVN), E (On-Chain Score -2..+2 con MVRV/NUPL/SOPR), F1-F5 (Macro + ETF Flows + DVOL + SMC + Liquidation Clusters como contexto institucional sin score directo).
 
 ---
 

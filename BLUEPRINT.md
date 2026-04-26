@@ -1,9 +1,9 @@
 # CRYPTEX — Blueprint Arquitectónico Completo
 
 **Fecha inicio:** 1 de abril de 2026  
-**Última actualización:** 3 de abril de 2026  
-**Estado:** EN DESARROLLO — Bloques 1, 2 y 3 completados; Bloque 4 completado; Bloque 4.5 (históricos para IA) completado; Bloque 5 pendiente  
-**Versión:** 1.5  
+**Última actualización:** 2026-04-27 (Sprint D' — DVOL, SYSTEM_PROMPT v3)  
+**Estado:** EN DESARROLLO — Sprints A'/B'/C'/D' completados; Bloque 5 pendiente  
+**Versión:** 2.0  
 
 ---
 
@@ -892,6 +892,62 @@ PRECIO ACTUAL: $95.420 (+3.45% 24h)
 ---
 
 ## 📦 SCHEMAS JSON
+
+### GET /api/analyze/payload — Bloques top-level
+
+```
+payload
+├── coin                        "BTC" | "ETH" | "SOL"
+├── primary_tf                  "1h" | "4h" | "1D" | "1W"
+├── price_current               number | null
+├── price_change_24h_pct        number | null
+├── global_market               { total_market_cap_usd, market_cap_change_24h_pct, btc_dominance_pct, altcoin_market_cap_usd }
+├── coin_market                 { market_cap_usd, volume_24h_usd, ath_usd, ath_change_pct, atl_usd, atl_change_pct }
+├── sentiment
+│   ├── fear_greed              { value, classification, trend, trend_7d_change }
+│   └── fear_greed_history      { current, yesterday, 7d_ago, 30d_ago, period_min/max/avg, trend_30d }
+├── technical                   { "1h": {...}, "4h": {...}, "1D": {...}, "1W": {...} }
+│   └── technical[tf]
+│       ├── rsi, macd, stoch_rsi, wave_trend, adx, bollinger_bands,
+│       │   super_trend, fibonacci, support_resistance, volume_delta,
+│       │   cvd, vwap, market_regime, trend
+│       ├── volume_profile      { poc, vah, val, hvn[], lvn[], bin_size, total_volume }  ← Sprint B'
+│       ├── smc                 { last_bos, last_choch, unmitigated_fvgs[] }              ← Sprint C'
+│       ├── distance_to_nearest_support_pct
+│       └── distance_to_nearest_resistance_pct
+├── timeframe_analysis          { primary_tf, conflict, reasoning, hierarchy_tiers }
+├── derivatives
+│   ├── funding_rate            { rate_pct, annualized_pct, severity, trend, signal, predicted_rate_pct, history }
+│   ├── open_interest           { value_usd, change_24h_pct, signal, history }
+│   ├── long_short_ratio        { long_pct, short_pct, signal, history }
+│   ├── liquidations_24h        { longs_usd, shorts_usd, total_usd, signal, history }
+│   └── liquidation_clusters    { long_clusters[], short_clusters[], nearest_long_cluster_pct,  ← Sprint B'
+│                                  nearest_short_cluster_pct, source }
+├── onchain                     { mvrv, mvrv_zscore, mvrv_signal, nupl, nupl_signal,            ← Sprint B'
+│                                  sopr, sopr_signal, exchange_netflow_24h_btc, source, as_of }
+│                                 (null para ETH/SOL; null si ONCHAIN_DATA_ENABLED=false)
+├── etf_flows                   { daily_net_inflow_usd_yesterday, net_inflow_usd_7d_sum,        ← Sprint C'
+│                                  cumulative_net_inflow_usd, trend_7d, by_issuer[], as_of, source }
+│                                 (null para SOL; null en fallo)
+├── macro                       { dxy: { value, change_24h_pct, trend_5d },                     ← Sprint C'
+│                                  spx: { value, change_24h_pct, trend_5d },
+│                                  gold: { value, change_24h_pct, trend_5d } }
+│                                 (coin-agnóstico; null en fallo)
+├── volatility                  { btc_dvol, eth_dvol, sol_dvol: null }                          ← Sprint D'
+│   └── btc_dvol / eth_dvol     { value, regime, change_24h_pct, source }
+│                                 regime: "panic" | "elevated" | "normal" | "complacent"
+├── order_book                  { buy_wall, sell_wall, spread_usd, spread_pct,                  ← Sprint B'
+│                                  imbalance_ratio, imbalance_top5_ratio, imbalance_signal }
+└── volume_history              { cvd: { ...summary }, vwap: { ...summary } }
+```
+
+### SYSTEM_PROMPT versiones
+
+| Versión | Fecha | Bloques cubiertos |
+|---------|-------|-------------------|
+| v1 | Sprint inicial | Técnicos básicos, sentimiento |
+| v2_quantitative | Sprint A' | Derivatives Engine completo, Volume Flow, Structure, Execution |
+| v3_extended_context | Sprint D' | + Order Book (B2), Volume Profile (B3), On-Chain (E), Macro/ETF/DVOL/SMC/Clusters (F) |
 
 ### Response de Análisis Completo
 
