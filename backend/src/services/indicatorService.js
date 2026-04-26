@@ -16,6 +16,7 @@ import {
 } from '../utils/indicators.js';
 
 import { calculateVolumeProfile } from '../utils/volumeProfile.js';
+import { calculateSMC } from '../utils/smc.js';
 import { RSI_OVERBOUGHT, RSI_OVERSOLD } from '../config/constants.js';
 
 /**
@@ -80,6 +81,9 @@ export function computeIndicators(candles, timeframe) {
   // ── Volume Profile ───────────────────────────────────────────
   const volumeProfile = calculateVolumeProfile(candles);
 
+  // ── SMC: BOS / CHoCH / FVG ───────────────────────────────────
+  const smc = calculateSMC(candles);
+
   // ── Market Regime ────────────────────────────────────────────
   const regime = detectMarketRegime(candles, closes);
 
@@ -103,6 +107,7 @@ export function computeIndicators(candles, timeframe) {
     fibonacci,
     support_resistance: sr,
     volume_profile: volumeProfile,
+    smc,
   };
 }
 

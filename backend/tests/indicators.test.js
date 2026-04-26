@@ -18,6 +18,12 @@ import {
 } from '../src/utils/indicators.js';
 import { computeTrend } from '../src/services/indicatorService.js';
 import { calculateVolumeProfile } from '../src/utils/volumeProfile.js';
+import {
+  detectSwings,
+  detectLastBOS,
+  detectLastCHoCH,
+  detectUnmitigatedFVGs,
+} from '../src/utils/smc.js';
 
 // ─── RSI ──────────────────────────────────────────────────────────────────────
 
@@ -788,5 +794,132 @@ describe('calculateVolumeProfile', () => {
     const vp = calculateVolumeProfile(candles);
     // POC debe estar cerca del cluster de 110-111, no del 100-101
     expect(vp.poc).toBeGreaterThan(105);
+  });
+});
+
+// ─── SMC: BOS / CHoCH / FVG ──────────────────────────────────────────────────
+
+describe('SMC — detectSwings', () => {
+  // Helper: crea vela centrada en `mid` con rango ±0.5 y close=mid
+  const c = (t, mid, hi = mid + 0.5, lo = mid - 0.5) =>
+    ({ t, open: mid, high: hi, low: lo, close: mid, volume: 100 });
+
+  test('returns null with insufficient candles', () => {
+    expect(detectSwings([c(0, 100), c(1, 101)], 2)).toBeNull();
+  });
+
+  test('detects fractal swing high in zigzag', () => {
+    // Pico claro en idx 4: ...100 101 102 103 104(top) 103 102 101 100...
+    const candles = [
+      c(0, 100), c(1, 101), c(2, 102), c(3, 103), c(4, 104),
+      c(5, 103), c(6, 102), c(7, 101), c(8, 100),
+    ];
+    const swings = detectSwings(candles, 2);
+    expect(swings.highs.length).toBeGreaterThanOrEqual(1);
+    expect(swings.highs[0].idx).toBe(4);
+    expect(swings.highs[0].price).toBeCloseTo(104.5);
+  });
+});
+
+describe('SMC — detectLastBOS', () => {
+  // Construye serie con tendencia alcista clara (HH/HL) y luego ruptura final.
+  const buildBullishStructure = () => {
+    // Swings deseados:
+    //   low en 95 (idx 2) → high en 105 (idx 6) → low en 100 (idx 10) → high en 110 (idx 14)
+    //   tendencia: HL (95→100) + HH (105→110) → bullish.
+    // Después, vela final con close > 110 → BOS bullish.
+    const seq = [
+      100, 98, 95, 98, 102,
+      104, 105, 103, 101, 100,
+      100, 102, 105, 108, 110,
+      108, 105, 103, 105, 112,  // última: cierre 112 > 110 → BOS
+    ];
+    return seq.map((mid, i) => ({
+      t: i, open: mid, high: mid + 0.4, low: mid - 0.4, close: mid, volume: 100,
+    }));
+  };
+
+  test('returns null when structure is undefined (not enough swings)', () => {
+    const flat = Array.from({ length: 10 }, (_, i) => ({
+      t: i, open: 100, high: 100.1, low: 99.9, close: 100, volume: 100,
+    }));
+    expect(detectLastBOS(flat)).toBeNull();
+  });
+
+  test('detects bullish BOS when close breaks last swing high in uptrend', () => {
+    const candles = buildBullishStructure();
+    const bos = detectLastBOS(candles, { lookback: 2 });
+    expect(bos).not.toBeNull();
+    expect(bos.direction).toBe('bullish');
+    expect(bos.close).toBeGreaterThan(bos.broken_swing_price);
+  });
+});
+
+describe('SMC — detectLastCHoCH', () => {
+  test('detects bearish CHoCH when uptrend close breaks below last swing low', () => {
+    // Estructura alcista con dos swing highs y dos swing lows bien separados:
+    //   SL1 en idx2 (89.6), SH1 en idx6 (110.4), SL2 en idx10 (97.6) → HL,
+    //   SH2 en idx14 (115.4) → HH. trend = bullish.
+    // Velas 15-19 forman el retroceso; close final (93) < SL2.low (97.6) → CHoCH bearish.
+    const seq = [
+      100,  95,  90,  95, 102,   // 0-4:  SL1 en idx2
+      106, 110, 106, 102,  99,   // 5-9:  SH1 en idx6, baja hacia SL2
+       98, 102, 107, 112, 115,   // 10-14: SL2 en idx10, SH2 en idx14
+      112, 108, 103,  98,  93,   // 15-19: retroceso; close=93 < SL2.low(97.6)
+    ];
+    const candles = seq.map((mid, i) => ({
+      t: i, open: mid, high: mid + 0.4, low: mid - 0.4, close: mid, volume: 100,
+    }));
+    const choch = detectLastCHoCH(candles, { lookback: 2 });
+    expect(choch).not.toBeNull();
+    expect(choch.direction).toBe('bearish');
+    expect(choch.close).toBeLessThan(choch.broken_swing_price);
+  });
+});
+
+describe('SMC — detectUnmitigatedFVGs', () => {
+  test('returns empty arrays when no gap exists', () => {
+    // 30 velas continuas sin huecos
+    const candles = Array.from({ length: 30 }, (_, i) => ({
+      t: i, open: 100, high: 100.5, low: 99.5, close: 100, volume: 100,
+    }));
+    const fvgs = detectUnmitigatedFVGs(candles);
+    expect(fvgs.bullish).toEqual([]);
+    expect(fvgs.bearish).toEqual([]);
+  });
+
+  test('detects bullish FVG with gap and no mitigation', () => {
+    // Patrón bullish FVG en idx 0,1,2 con vela 1 fuerte alcista.
+    //   vela 0: high=100  → tope del gap inferior
+    //   vela 1: cuerpo grande 100→105
+    //   vela 2: low=102   → suelo del gap superior; gap = [100, 102]
+    // Velas posteriores se mantienen por encima de 102 → no mitigan.
+    const candles = [
+      { t: 0, open: 99,  high: 100, low: 98,  close: 99.5, volume: 100 },
+      { t: 1, open: 100, high: 105, low: 100, close: 104,  volume: 100 },
+      { t: 2, open: 104, high: 106, low: 102, close: 105,  volume: 100 },
+      { t: 3, open: 105, high: 107, low: 103, close: 106,  volume: 100 },
+      { t: 4, open: 106, high: 108, low: 104, close: 107,  volume: 100 },
+      { t: 5, open: 107, high: 109, low: 105, close: 108,  volume: 100 },
+    ];
+    const fvgs = detectUnmitigatedFVGs(candles);
+    expect(fvgs.bullish.length).toBe(1);
+    expect(fvgs.bullish[0].low).toBeCloseTo(100);
+    expect(fvgs.bullish[0].high).toBeCloseTo(102);
+    expect(fvgs.bearish.length).toBe(0);
+  });
+
+  test('marks FVG as mitigated when later candle revisits the gap zone', () => {
+    // Mismo gap [100, 102] que el test anterior, pero la vela 5 baja a 99 → cubre el gap
+    const candles = [
+      { t: 0, open: 99,  high: 100, low: 98,  close: 99.5, volume: 100 },
+      { t: 1, open: 100, high: 105, low: 100, close: 104,  volume: 100 },
+      { t: 2, open: 104, high: 106, low: 102, close: 105,  volume: 100 },
+      { t: 3, open: 105, high: 107, low: 103, close: 106,  volume: 100 },
+      { t: 4, open: 106, high: 108, low: 104, close: 107,  volume: 100 },
+      { t: 5, open: 107, high: 107, low: 99,  close: 100,  volume: 100 },  // mitiga
+    ];
+    const fvgs = detectUnmitigatedFVGs(candles);
+    expect(fvgs.bullish.length).toBe(0);
   });
 });

@@ -1,0 +1,290 @@
+/**
+ * smc.js — Smart Money Concepts: swings, BOS, CHoCH, FVG.
+ *
+ * Funciones puras sobre candles {t, open, high, low, close, volume}.
+ * Sin I/O, sin dependencias externas.
+ *
+ * Definiciones operativas (las del libro de SMC, simplificadas y deterministas):
+ *
+ *   - Swing high/low: pivote fractal. Una vela `i` es swing high si su `high`
+ *     es estrictamente mayor que el `high` de las `lookback` velas a cada lado.
+ *     Análogo para swing low con `low`.
+ *
+ *   - BOS (Break of Structure): el cierre actual rompe el último swing
+ *     EN LA DIRECCIÓN DE LA TENDENCIA PREVIA. Confirma continuación.
+ *     - Bullish BOS: tendencia previa = alcista (HH/HL) y close > swing_high previo.
+ *     - Bearish BOS: tendencia previa = bajista (LH/LL) y close < swing_low previo.
+ *
+ *   - CHoCH (Change of Character): el cierre actual rompe el último swing
+ *     EN DIRECCIÓN OPUESTA a la tendencia previa. Primer aviso de reversión.
+ *     - Bullish CHoCH: tendencia previa bajista, close > último swing_high.
+ *     - Bearish CHoCH: tendencia previa alcista, close < último swing_low.
+ *
+ *   - FVG (Fair Value Gap): patrón de 3 velas con hueco entre vela `i` y `i-2`.
+ *     - Bullish FVG: low[i] > high[i-2]   → zona [high[i-2], low[i]]
+ *     - Bearish FVG: high[i] < low[i-2]   → zona [high[i], low[i-2]]
+ *     "Unmitigated" si ninguna vela posterior cubrió la zona con su rango.
+ *
+ * Las funciones devuelven `null` (no objetos vacíos) cuando no hay datos
+ * suficientes o cuando no hay evento detectable, para alinear con el resto
+ * del payload (el LLM trata `null` como "señal ausente").
+ */
+
+/**
+ * Detecta swings fractales sobre el array de candles.
+ *
+ * @param {Array<{high:number, low:number, close:number, t:number}>} candles
+ * @param {number} [lookback=2] - Velas a cada lado a comparar. 2 = pivot de 5 velas.
+ * @returns {{ highs: Array<{idx,t,price}>, lows: Array<{idx,t,price}> } | null}
+ */
+export function detectSwings(candles, lookback = 2) {
+  if (!candles || candles.length < lookback * 2 + 1) return null;
+  const highs = [];
+  const lows = [];
+
+  for (let i = lookback; i < candles.length - lookback; i++) {
+    const h = candles[i].high;
+    const l = candles[i].low;
+    let isHigh = true;
+    let isLow = true;
+    for (let j = 1; j <= lookback; j++) {
+      if (candles[i - j].high >= h || candles[i + j].high >= h) isHigh = false;
+      if (candles[i - j].low  <= l || candles[i + j].low  <= l) isLow  = false;
+      if (!isHigh && !isLow) break;
+    }
+    if (isHigh) highs.push({ idx: i, t: candles[i].t, price: h });
+    if (isLow)  lows.push({  idx: i, t: candles[i].t, price: l });
+  }
+
+  return { highs, lows };
+}
+
+/**
+ * Determina la tendencia estructural previa al cierre actual leyendo los
+ * últimos dos swings high y los últimos dos swings low.
+ *
+ *   - HH + HL → bullish
+ *   - LH + LL → bearish
+ *   - cualquier otra combinación → ranging (no hay estructura definida)
+ *
+ * @returns {'bullish'|'bearish'|'ranging'|null}
+ */
+function inferStructuralTrend(swings) {
+  if (!swings) return null;
+  const { highs, lows } = swings;
+  if (highs.length < 2 || lows.length < 2) return null;
+
+  const lastHigh = highs.at(-1).price;
+  const prevHigh = highs.at(-2).price;
+  const lastLow  = lows.at(-1).price;
+  const prevLow  = lows.at(-2).price;
+
+  const hh = lastHigh > prevHigh;
+  const hl = lastLow  > prevLow;
+  const lh = lastHigh < prevHigh;
+  const ll = lastLow  < prevLow;
+
+  if (hh && hl) return 'bullish';
+  if (lh && ll) return 'bearish';
+  return 'ranging';
+}
+
+/**
+ * Detecta el último BOS (continuación de tendencia previa).
+ *
+ * @param {Array} candles
+ * @param {{ lookback?: number }} [opts]
+ * @returns {{
+ *   direction: 'bullish'|'bearish',
+ *   broken_swing_price: number,
+ *   broken_swing_t: number,
+ *   break_candle_idx: number,
+ *   break_candle_t: number,
+ *   close: number
+ * } | null}
+ */
+export function detectLastBOS(candles, { lookback = 2 } = {}) {
+  const swings = detectSwings(candles, lookback);
+  if (!swings) return null;
+  const trend = inferStructuralTrend(swings);
+  if (trend !== 'bullish' && trend !== 'bearish') return null;
+
+  // Recorremos las velas desde la más reciente hacia atrás. Una vela posterior
+  // a un swing es candidata si rompe el swing en la dirección de la tendencia.
+  const { highs, lows } = swings;
+  const refSwings = trend === 'bullish' ? highs : lows;
+
+  for (let i = candles.length - 1; i >= 0; i--) {
+    const close = candles[i].close;
+    // Último swing previo a esta vela
+    const swing = [...refSwings].reverse().find(s => s.idx < i);
+    if (!swing) continue;
+    if (trend === 'bullish' && close > swing.price) {
+      return {
+        direction: 'bullish',
+        broken_swing_price: swing.price,
+        broken_swing_t:     swing.t,
+        break_candle_idx:   i,
+        break_candle_t:     candles[i].t,
+        close,
+      };
+    }
+    if (trend === 'bearish' && close < swing.price) {
+      return {
+        direction: 'bearish',
+        broken_swing_price: swing.price,
+        broken_swing_t:     swing.t,
+        break_candle_idx:   i,
+        break_candle_t:     candles[i].t,
+        close,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Detecta el último CHoCH (reversión: rompe en dirección opuesta a la
+ * tendencia previa).
+ *
+ * @returns {{direction, broken_swing_price, broken_swing_t, break_candle_idx, break_candle_t, close} | null}
+ */
+export function detectLastCHoCH(candles, { lookback = 2 } = {}) {
+  const swings = detectSwings(candles, lookback);
+  if (!swings) return null;
+  const trend = inferStructuralTrend(swings);
+  if (trend !== 'bullish' && trend !== 'bearish') return null;
+
+  // CHoCH: tendencia previa bajista pero close rompe último swing high → bullish CHoCH
+  //        tendencia previa alcista pero close rompe último swing low → bearish CHoCH
+  const { highs, lows } = swings;
+  const refSwings = trend === 'bearish' ? highs : lows;
+  const direction = trend === 'bearish' ? 'bullish' : 'bearish';
+
+  for (let i = candles.length - 1; i >= 0; i--) {
+    const close = candles[i].close;
+    const swing = [...refSwings].reverse().find(s => s.idx < i);
+    if (!swing) continue;
+    if (direction === 'bullish' && close > swing.price) {
+      return {
+        direction: 'bullish',
+        broken_swing_price: swing.price,
+        broken_swing_t:     swing.t,
+        break_candle_idx:   i,
+        break_candle_t:     candles[i].t,
+        close,
+      };
+    }
+    if (direction === 'bearish' && close < swing.price) {
+      return {
+        direction: 'bearish',
+        broken_swing_price: swing.price,
+        broken_swing_t:     swing.t,
+        break_candle_idx:   i,
+        break_candle_t:     candles[i].t,
+        close,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Detecta FVGs no mitigados en las últimas `windowBars` velas.
+ *
+ * Un FVG queda mitigado si alguna vela POSTERIOR a la vela `i` (la 3ª del
+ * patrón) tiene rango que se solapa con la zona del gap. Se permiten mitigaciones
+ * parciales: "unmitigated" estricto requiere que el rango de toda vela posterior
+ * NO toque la zona [low_zone, high_zone].
+ *
+ * @param {Array} candles
+ * @param {{ windowBars?: number, maxResults?: number }} [opts]
+ * @returns {{
+ *   bullish: Array<{idx_left, idx_right, t_left, t_right, low, high, size_pct}>,
+ *   bearish: Array<{idx_left, idx_right, t_left, t_right, low, high, size_pct}>
+ * } | null}
+ */
+export function detectUnmitigatedFVGs(candles, { windowBars = 100, maxResults = 5 } = {}) {
+  if (!candles || candles.length < 3) return null;
+
+  const start = Math.max(2, candles.length - windowBars);
+  const bullish = [];
+  const bearish = [];
+
+  // El FVG necesita las velas i-2, i-1 (cuerpo intermedio, no se evalúa) y i.
+  // El "gap" se mide entre vela `i-2` y vela `i`; la vela `i-1` simplemente
+  // marca el momentum que abrió el hueco.
+  for (let i = start; i < candles.length; i++) {
+    const left  = candles[i - 2];
+    const right = candles[i];
+
+    // Bullish FVG: low de la vela actual > high de la vela de hace 2
+    if (right.low > left.high) {
+      const lowZone  = left.high;
+      const highZone = right.low;
+      if (!isMitigated(candles, i + 1, lowZone, highZone)) {
+        bullish.push({
+          idx_left:  i - 2,
+          idx_right: i,
+          t_left:    left.t,
+          t_right:   right.t,
+          low:       parseFloat(lowZone.toFixed(2)),
+          high:      parseFloat(highZone.toFixed(2)),
+          size_pct:  parseFloat(((highZone - lowZone) / lowZone * 100).toFixed(3)),
+        });
+      }
+    }
+
+    // Bearish FVG: high actual < low de hace 2
+    if (right.high < left.low) {
+      const lowZone  = right.high;
+      const highZone = left.low;
+      if (!isMitigated(candles, i + 1, lowZone, highZone)) {
+        bearish.push({
+          idx_left:  i - 2,
+          idx_right: i,
+          t_left:    left.t,
+          t_right:   right.t,
+          low:       parseFloat(lowZone.toFixed(2)),
+          high:      parseFloat(highZone.toFixed(2)),
+          size_pct:  parseFloat(((highZone - lowZone) / lowZone * 100).toFixed(3)),
+        });
+      }
+    }
+  }
+
+  // Más recientes primero, top N
+  bullish.reverse();
+  bearish.reverse();
+
+  return {
+    bullish: bullish.slice(0, maxResults),
+    bearish: bearish.slice(0, maxResults),
+  };
+}
+
+function isMitigated(candles, fromIdx, lowZone, highZone) {
+  for (let j = fromIdx; j < candles.length; j++) {
+    const c = candles[j];
+    // Solapamiento de rangos: si [c.low, c.high] intersecta [lowZone, highZone]
+    if (c.low <= highZone && c.high >= lowZone) return true;
+  }
+  return false;
+}
+
+/**
+ * Helper de alto nivel: empaqueta last_bos, last_choch y unmitigated_fvgs en
+ * un solo objeto. Devuelve null si no hay datos suficientes para ningún cálculo.
+ */
+export function calculateSMC(candles, opts = {}) {
+  if (!candles || candles.length < 10) return null;
+  const last_bos   = detectLastBOS(candles, opts);
+  const last_choch = detectLastCHoCH(candles, opts);
+  const fvgs       = detectUnmitigatedFVGs(candles, opts);
+  if (!last_bos && !last_choch && !fvgs) return null;
+  return {
+    last_bos,
+    last_choch,
+    unmitigated_fvgs: fvgs,
+  };
+}
