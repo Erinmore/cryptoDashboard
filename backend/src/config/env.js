@@ -40,7 +40,11 @@ const env = {
     liquidationsTtl:  parseInt(process.env.CACHE_LIQUIDATIONS_TTL, 10)  || 300,
     btcDominanceTtl:  parseInt(process.env.CACHE_BTC_DOMINANCE_TTL, 10) || 600,
     liquidationClustersTtl: parseInt(process.env.CACHE_LIQUIDATION_CLUSTERS_TTL, 10) || 600,
-    onchainTtl:       parseInt(process.env.CACHE_ONCHAIN_TTL, 10)        || 3600,
+    // 12h: bitcoin-data.com publica MVRV/NUPL/SOPR una vez al día (cierre UTC).
+    // Refrescar más a menudo gasta cuota free (15 req/día) sin nuevos datos.
+    onchainTtl:       parseInt(process.env.CACHE_ONCHAIN_TTL, 10)        || 43200,
+    // Cache negativo cuando el fetch entero falla (evita martillear ante 429/outage)
+    onchainNegativeTtl: parseInt(process.env.CACHE_ONCHAIN_NEGATIVE_TTL, 10) || 1800,
   },
 
   logLevel: process.env.LOG_LEVEL || 'info',

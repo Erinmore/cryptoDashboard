@@ -32,7 +32,12 @@ export async function fetchOnchainMetrics(coin) {
 
   const cacheKey = `onchain:${coin}`;
   const cached = cacheGet(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    // Sentinel para cache negativo: cacheGet trata null como miss, así que
+    // guardamos { __empty: true } para distinguir "fetch falló recientemente"
+    // de "no hay entrada" y evitar martillear la API free-tier (15 req/día).
+    return cached.__empty ? null : cached;
+  }
 
   try {
     const [mvrvRes, zscoreRes, nuplRes, soprRes] = await Promise.allSettled([
@@ -52,7 +57,9 @@ export async function fetchOnchainMetrics(coin) {
       .find(r => r.status === 'fulfilled')?.value.data?.d ?? null;
 
     if (mvrv === null && mvrvZscore === null && nupl === null && sopr === null) {
-      logger.warn({ coin }, 'Onchain: all metrics null, skipping');
+      // Fallo total: cachear null para no quemar cuota en cada /api/analyze/payload
+      logger.warn({ coin }, 'Onchain: all metrics null, caching negative');
+      cacheSet(cacheKey, { __empty: true }, env.cache.onchainNegativeTtl);
       return null;
     }
 
@@ -69,14 +76,13 @@ export async function fetchOnchainMetrics(coin) {
       as_of:  asOf,
     };
 
-    // TTL completo si las 4 vinieron, TTL corto (5 min) si parcial
-    // (rate limit free tier de 8/h hace que ráfagas paralelas pierdan llamadas)
-    const isComplete = mvrv !== null && mvrvZscore !== null && nupl !== null && sopr !== null;
-    const ttl = isComplete ? env.cache.onchainTtl : 300;
-    cacheSet(cacheKey, result, ttl);
+    // Mismo TTL completo o parcial: los datos son diarios, no tiene sentido un TTL
+    // corto que provoque ráfagas repetidas y consuma la cuota de 15 req/día.
+    cacheSet(cacheKey, result, env.cache.onchainTtl);
     return result;
   } catch (err) {
-    logger.warn({ coin, err: err.message }, 'Onchain fetch failed');
+    logger.warn({ coin, err: err.message }, 'Onchain fetch failed, caching negative');
+    cacheSet(cacheKey, null, env.cache.onchainNegativeTtl);
     return null;
   }
 }
