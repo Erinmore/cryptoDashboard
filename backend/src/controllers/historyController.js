@@ -10,8 +10,10 @@ export function getHistory(req, res, next) {
       throw new ValidationError(`coin must be one of: ${COINS.join(', ')}`);
     }
 
-    const limit  = Math.min(Math.max(parseInt(req.query.limit, 10)  || 10, 1), 50);
-    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const rawLimit  = parseInt(req.query.limit,  10);
+    const rawOffset = parseInt(req.query.offset, 10);
+    const limit  = Math.min(Math.max(Number.isFinite(rawLimit)  ? rawLimit  : 10, 1), 50);
+    const offset = Math.max(Number.isFinite(rawOffset) ? rawOffset : 0, 0);
 
     const { total, analyses } = getAnalysisHistory(coin, limit, offset);
 
