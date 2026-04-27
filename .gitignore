@@ -54,3 +54,6 @@ ecosystem.config.js.bak
 
 # Local session notes (per-developer continuity log, not for repo)
 SESSION_STATE.md
+
+# Dev launcher runtime files (PIDs + logs)
+.dev/

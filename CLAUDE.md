@@ -67,12 +67,27 @@ npm run preview # Previsualizar build de producción
 
 **No hay Makefile ni scripts de raíz.** Backend desde `backend/`, frontend desde `frontend/`.
 
+### Dev launcher — `scripts/runSystem.sh`
+
+Menú interactivo para gestionar backend y frontend sin abrir dos terminales:
+
+```bash
+./scripts/runSystem.sh          # menú interactivo
+./scripts/runSystem.sh start    [backend|frontend|both]
+./scripts/runSystem.sh stop     [backend|frontend|both]
+./scripts/runSystem.sh logs     [backend|frontend|both]
+./scripts/runSystem.sh follow   [backend|frontend|both]
+```
+
+PIDs y logs guardados en `.dev/` (ignorado por git). Estado `● running / ○ stopped` visible en cabecera del menú. `q` cierra el launcher sin matar los procesos.
+
 ---
 
 ## Arquitectura del backend
 
 ```
-src/index.js                 ← Entry point, monta Express, init DB, graceful shutdown
+src/app.js                   ← Factory createApp() — Express app sin listen() (usado por tests)
+src/index.js                 ← Entry point: importa createApp, llama listen(), graceful shutdown
 src/config/
   env.js                     ← Todas las variables de entorno con defaults
   constants.js               ← Constantes de indicadores, coins, timeframes
@@ -318,11 +333,13 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **111 tests** en `indicators.test.js` (incluye 8 de SMC + 12 de audit hardening) — todos deben pasar siempre
+- **158 tests totales**: 111 unitarios (`indicators.test.js`) + 47 integración (`integration.test.js`)
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
-- No hay tests de integración aún (pendiente Fase 15)
+- Los tests de integración usan supertest + `jest.unstable_mockModule` para mockear todos los servicios externos — offline, deterministas, ~1.5s
 
 **Al añadir un nuevo indicador** en `utils/indicators.js` o `utils/`, añadir tests en `indicators.test.js` siguiendo el patrón existente: null con datos insuficientes, estructura del resultado, comportamiento en tendencia alcista/bajista.
+
+**Patrón de mocks ESM (integration.test.js):** usar `jest.unstable_mockModule` antes del `await import()` del app. Importar el app desde `src/app.js` (no `src/index.js`) para evitar `EADDRINUSE` en tests. Los mocks con `mockRejectedValueOnce` sobre servicios cacheados no propagan — el cache absorbe la llamada; para degraded-mode tests usar `mockResolvedValueOnce(null)` con coin/tf distintos al test anterior.
 
 ---
 
@@ -370,7 +387,8 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Sprint C' | ETF Flows, Macro (DXY/SPX/Gold), SMC (BOS/CHoCH/FVG) | ✅ Completo |
 | Sprint D' | Deribit DVOL, update SYSTEM_PROMPT v3_extended_context, docs | ✅ Completo |
 | Sprint Audit | Auditoría técnica + fixes correctitud (SuperTrend, ADX naming, S/R clustering, RSI divergence, computeTrend ranging, payload semántica) | ✅ Completo |
-| Bloque 5 | Tests integración, deploy VPS | ⏳ Pendiente |
+| Fase 15 | Tests de integración de endpoints (47 tests, supertest) | ✅ Completo |
+| Bloque 5 | Tests integración ✅, deploy VPS ⏳, panel historial IA ⏳ | ⏳ Parcial |
 
 ### Detalle Bloque 4
 
@@ -426,6 +444,13 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 - **Sprint D' (2026-04-27) — volatilidad implícita y SYSTEM_PROMPT v3**:
   - **DVOL** (`volatility` top-level): `deribitService.js` consume Deribit public API sin auth. Endpoint `GET /api/v2/public/get_volatility_index_data?currency={BTC|ETH}&resolution=43200`. BTC + ETH cubiertos; SOL → `null` natural (sin DVOL en Deribit). Output: `{ btc_dvol, eth_dvol, sol_dvol: null }`. Cada uno: `{ value, regime, change_24h_pct, source }`. Regime: `panic >80 / elevated 60-80 / normal 40-60 / complacent <40`. Cache 5min. Degraded mode (null en fallo).
   - **SYSTEM_PROMPT v3_extended_context**: `anthropicService.js` actualizado de `v2_quantitative`. Nuevas secciones: B2 (Order Book Imbalance como ajuste al Volume Flow Score), B3 (Volume Profile POC/VAH/VAL/HVN/LVN), E (On-Chain Score -2..+2 con MVRV/NUPL/SOPR), F1-F5 (Macro + ETF Flows + DVOL + SMC + Liquidation Clusters como contexto institucional sin score directo).
+
+- **Fase 15 (2026-04-27) — tests de integración**:
+  - `backend/tests/integration.test.js` — 47 tests con supertest. Cubre: `GET /health`, `GET /api/data` (candles, indicadores, degraded mode, validación), `GET /api/analyze/payload` (todos los bloques top-level: smc, volume_profile, order_book, macro, volatility, onchain, etf_flows, timeframe_analysis, distance fields), `GET /api/history/:coin` (paginación, clamp, validación), `POST /api/analyze` (stub LLM), 404/error handler.
+  - `src/app.js` extraído como factory `createApp()` — separa construcción del app de `app.listen()`, necesario para importar en tests sin `EADDRINUSE`.
+  - `src/index.js` simplificado: importa `createApp`, llama `listen()` por separado.
+  - **Bug fix `historyController`**: `parseInt('0', 10) || 10` evaluaba a `10` (el `|| 10` pisaba el `0` explícito del usuario). Corregido con `Number.isFinite(rawLimit) ? rawLimit : 10`.
+  - **Total: 158/158 tests pasan** (111 unitarios + 47 integración).
 
 - **Sprint Audit (2026-04-27) — auditoría técnica y fixes de correctitud**:
   - **SuperTrend (CRITICAL)**: bandas inicializadas con la primera vela (antes `0`, lo que rompía el "stickiness" en la 1ª iteración). El multiplicador adaptativo se aplica ahora a TODA la serie (antes solo a la última vela, produciendo discontinuidades artificiales en el `trend` final).
@@ -510,10 +535,10 @@ Estos resúmenes proporcionan contexto consolidado para decisiones más informad
 
 ## Próximo paso
 
-**Bloque 5:**
-1. Panel frontend de histórico análisis IA (Fase 12 — backend ya operativo)
-2. Deploy VPS: Nginx + SSL/TLS (certbot) + PM2 (Fase 14)
-3. Tests de integración de endpoints (Fase 15)
+**Bloque 5 (en curso):**
+1. ~~Tests de integración de endpoints (Fase 15)~~ ✅ — 47 tests, `bc1f10a`
+2. Panel frontend de histórico análisis IA (Fase 12 — backend ya operativo)
+3. Deploy VPS: Nginx + SSL/TLS (certbot) + PM2 (Fase 14)
 
 **Pendiente de API key:**
 `src/services/anthropicService.js` — rellenar el cuerpo de `analyzeMarket()`.
