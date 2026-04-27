@@ -30,7 +30,7 @@ async function fetchDvol(coin) {
 
   const cacheKey = `deribit_dvol:${coin}`;
   const cached = cacheGet(cacheKey);
-  if (cached !== null && cached !== undefined) return cached;
+  if (cached) return cached.__empty ? null : cached;
 
   const endTs = Date.now();
   const startTs = endTs - 48 * 3600 * 1000; // 48h de historia

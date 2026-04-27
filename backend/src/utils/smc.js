@@ -275,10 +275,12 @@ export function detectUnmitigatedFVGs(candles, { windowBars = 100, maxResults = 
 }
 
 /**
- * Calcula el porcentaje de mitigación de un FVG por velas posteriores.
- * 0 = intacto, 100 = completamente cubierto.
- * Mide cuánto del gap [lowZone, highZone] ha sido solapado acumulativamente.
- * @returns {number} mitigation_pct entre 0 y 100
+ * Mitigation por overlap individual máximo: la vela posterior con mayor solape
+ * con el gap define el % mitigado. Semántica SMC clásica — una sola vela tocando
+ * el gap basta para invalidarlo. NO es overlap acumulado: dos velas tocando 50%
+ * cada una NO suman 100%, queda como 50%.
+ *
+ * 0 = intacto, 100 = una vela cubrió todo el gap.
  */
 function calcMitigationPct(candles, fromIdx, lowZone, highZone) {
   const gapSize = highZone - lowZone;
@@ -293,15 +295,6 @@ function calcMitigationPct(candles, fromIdx, lowZone, highZone) {
     }
   }
   return parseFloat(((maxOverlap / gapSize) * 100).toFixed(1));
-}
-
-function isMitigated(candles, fromIdx, lowZone, highZone) {
-  for (let j = fromIdx; j < candles.length; j++) {
-    const c = candles[j];
-    // Solapamiento de rangos: si [c.low, c.high] intersecta [lowZone, highZone]
-    if (c.low <= highZone && c.high >= lowZone) return true;
-  }
-  return false;
 }
 
 // Umbrales de maxCandlesAgo por TF — alineados con la tabla de decay del SYSTEM_PROMPT v4.

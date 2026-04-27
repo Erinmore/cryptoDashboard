@@ -47,7 +47,13 @@ export async function fetchOnchainMetrics(coin) {
       axios.get(`${BASE_URL}/sopr/last`,        { timeout: REQUEST_TIMEOUT }),
     ]);
 
-    const num = (v) => (v === null || v === undefined ? null : parseFloat(v));
+    // Robust contra strings no-numéricos ("N/A", undefined): isFinite atrapa NaN
+    // y evita que basura se cuele al payload como número silencioso.
+    const num = (v) => {
+      if (v === null || v === undefined) return null;
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n : null;
+    };
 
     const mvrv         = mvrvRes.status   === 'fulfilled' ? num(mvrvRes.value.data?.mvrv)             : null;
     const mvrvZscore   = zscoreRes.status === 'fulfilled' ? num(zscoreRes.value.data?.mvrvZscore)     : null;

@@ -358,25 +358,11 @@ async function buildAnalyzeContext(coin, primaryTf) {
         sr?.resistances ?? []
       );
 
-      // Ordenar S/R y Fibonacci por proximidad al precio actual (más cercano primero)
-      let sortedIndicators = { ...indicators };
-      if (currentPrice !== null) {
-        if (sr?.supports?.length) {
-          sortedIndicators.support_resistance = {
-            ...sr,
-            supports:    [...sr.supports].sort((a, b) => Math.abs(currentPrice - a.price) - Math.abs(currentPrice - b.price)),
-            resistances: [...(sr.resistances ?? [])].sort((a, b) => Math.abs(currentPrice - a.price) - Math.abs(currentPrice - b.price)),
-          };
-        }
-        if (indicators?.fibonacci?.levels?.length) {
-          sortedIndicators.fibonacci = {
-            ...indicators.fibonacci,
-            levels: [...indicators.fibonacci.levels].sort((a, b) => Math.abs(currentPrice - a.price) - Math.abs(currentPrice - b.price)),
-          };
-        }
-      }
-
-      technical[tf] = { ...sortedIndicators, ...distances };
+      // No reordenamos supports/resistances por valor absoluto: rompía la semántica
+      // "supports[0] = más cercano por debajo / resistances[0] = más cercana por
+      // encima" que ya garantiza calculateSupportResistance. Si hace falta exponer
+      // niveles ordenados por distancia, hacerlo en un campo separado.
+      technical[tf] = { ...indicators, ...distances };
     }
   }
 
@@ -430,7 +416,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
       funding_rate: fr ? {
         rate_pct:           fr.rate_pct,
         annualized_pct:     fr.annualized_pct,
-        severity:           fr.rate_pct > 0.5 ? 'extreme' : fr.rate_pct > 0.2 ? 'high' : fr.rate_pct > 0.05 ? 'elevated' : 'normal',
+        severity:           fr.severity,
         trend:              fr.trend,
         signal:             fr.signal,
         predicted_rate_pct: fr.predicted_rate_pct,

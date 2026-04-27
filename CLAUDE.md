@@ -318,9 +318,8 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **69 tests unitarios** en `indicators.test.js` — todos deben pasar siempre
+- **111 tests** en `indicators.test.js` (incluye 8 de SMC + 12 de audit hardening) — todos deben pasar siempre
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
-- **96 tests** en `indicators.test.js` (incluye 8 de SMC) — todos deben pasar siempre
 - No hay tests de integración aún (pendiente Fase 15)
 
 **Al añadir un nuevo indicador** en `utils/indicators.js` o `utils/`, añadir tests en `indicators.test.js` siguiendo el patrón existente: null con datos insuficientes, estructura del resultado, comportamiento en tendencia alcista/bajista.
@@ -370,6 +369,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Sprint B' | Order book imbalance, Volume Profile, Liquidation Clusters, On-chain BTC | ✅ Completo |
 | Sprint C' | ETF Flows, Macro (DXY/SPX/Gold), SMC (BOS/CHoCH/FVG) | ✅ Completo |
 | Sprint D' | Deribit DVOL, update SYSTEM_PROMPT v3_extended_context, docs | ✅ Completo |
+| Sprint Audit | Auditoría técnica + fixes correctitud (SuperTrend, ADX naming, S/R clustering, RSI divergence, computeTrend ranging, payload semántica) | ✅ Completo |
 | Bloque 5 | Tests integración, deploy VPS | ⏳ Pendiente |
 
 ### Detalle Bloque 4
@@ -426,6 +426,23 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 - **Sprint D' (2026-04-27) — volatilidad implícita y SYSTEM_PROMPT v3**:
   - **DVOL** (`volatility` top-level): `deribitService.js` consume Deribit public API sin auth. Endpoint `GET /api/v2/public/get_volatility_index_data?currency={BTC|ETH}&resolution=43200`. BTC + ETH cubiertos; SOL → `null` natural (sin DVOL en Deribit). Output: `{ btc_dvol, eth_dvol, sol_dvol: null }`. Cada uno: `{ value, regime, change_24h_pct, source }`. Regime: `panic >80 / elevated 60-80 / normal 40-60 / complacent <40`. Cache 5min. Degraded mode (null en fallo).
   - **SYSTEM_PROMPT v3_extended_context**: `anthropicService.js` actualizado de `v2_quantitative`. Nuevas secciones: B2 (Order Book Imbalance como ajuste al Volume Flow Score), B3 (Volume Profile POC/VAH/VAL/HVN/LVN), E (On-Chain Score -2..+2 con MVRV/NUPL/SOPR), F1-F5 (Macro + ETF Flows + DVOL + SMC + Liquidation Clusters como contexto institucional sin score directo).
+
+- **Sprint Audit (2026-04-27) — auditoría técnica y fixes de correctitud**:
+  - **SuperTrend (CRITICAL)**: bandas inicializadas con la primera vela (antes `0`, lo que rompía el "stickiness" en la 1ª iteración). El multiplicador adaptativo se aplica ahora a TODA la serie (antes solo a la última vela, produciendo discontinuidades artificiales en el `trend` final).
+  - **ADX naming**: variable interna `atr` renombrada a `smTR` (era una suma suavizada Wilder, no un ATR). El ratio `smPlusDM/smTR` queda matemáticamente idéntico.
+  - **`calculateSupportResistance`**: clustering ya no es path-dependent — los precios candidatos se ordenan antes del agrupamiento (greedy fallaba si el primer high del slice era outlier). Reclasificación cruzada por posición real respecto al precio actual: clusters de highs que tras promediar quedan por debajo del precio se cuentan como soporte (antes se descartaban silenciosamente).
+  - **`detectRSIDivergence`**: pivot fractal `lookback=2` (alineado con SMC), antes pivot simple de 3 velas → ruidoso en ranging. Serie RSI iterativa O(n) (antes O(n²) llamando `calculateRSI(slice)` por cada vela).
+  - **`calculateStochRSI`**: misma optimización O(n²)→O(n) en serie RSI interna.
+  - **`computeTrend`**: ADX no contribuye al score estructural cuando `regime === 'ranging'` (antes su `trend_direction` era ruido estadístico que sesgaba el bias).
+  - **`calculateCVD` divergence**: añadido threshold 0.1% sobre `priceChange` para evitar divergencias falsas con movimientos de precio mínimos.
+  - **`onchainService.num()`**: usa `Number.isFinite` para protegerse contra strings no-numéricos como `"N/A"` (antes `parseFloat("N/A") = NaN` colaba al payload).
+  - **`coinalyzeService.fetchFundingRate`**: campo `severity` (`normal/elevated/high/extreme`) calculado en el servicio, expuesto por igual en `/api/data` y `/api/analyze/payload` (antes solo en analyze).
+  - **`analysisController` S/R**: eliminado el reordenado por `Math.abs(currentPrice - price)` que rompía la semántica "supports[0] = más cercano por debajo". `calculateSupportResistance` ya garantiza el orden correcto.
+  - **Precisión numérica**: MACD/ATR/CVD/VWAP cambiados de `toFixed(8|4)` a `toFixed(2)` — para BTC ($90k) los decimales extra eran ruido que degradaba la legibilidad del LLM.
+  - **RSI guard**: caso `avgGain===0 && avgLoss===0` (precio totalmente flat) devuelve `50` (antes `NaN` por `0/0`).
+  - **`calcMitigationPct` SMC**: comentario corregido (mide overlap individual máximo, no acumulado — semántica SMC clásica). Función muerta `isMitigated` eliminada.
+  - **Cache armonizado**: `deribitService` usa el mismo patrón `cached.__empty ? null : cached` que el resto.
+  - **12 tests nuevos** cubriendo: RSI flat market, BB stdDev=0, ADX ranging, SuperTrend UP↔DOWN transitions, CVD con `taker_buy_base` corrupto (NaN/negativo/>volume), Volume Profile single-bin, computeTrend con ADX en ranging vs trending. **111/111 tests pasan**.
 
 ---
 

@@ -11,6 +11,13 @@ import {
 
 // ─── RSI (Wilder's smoothing) ─────────────────────────────────────────────────
 
+function rsiFromAvgs(avgGain, avgLoss) {
+  if (avgLoss === 0 && avgGain === 0) return 50;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return parseFloat((100 - 100 / (1 + rs)).toFixed(2));
+}
+
 export function calculateRSI(closes, period = RSI_PERIOD) {
   if (closes.length < period + 1) return null;
 
@@ -35,6 +42,7 @@ export function calculateRSI(closes, period = RSI_PERIOD) {
     avgLoss = (avgLoss * (period - 1) + loss) / period;
   }
 
+  if (avgLoss === 0 && avgGain === 0) return 50; // precio totalmente flat
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
   return parseFloat((100 - 100 / (1 + rs)).toFixed(2));
@@ -92,9 +100,9 @@ export function calculateMACD(closes, fast = MACD_FAST, slow = MACD_SLOW, signal
   }
 
   return {
-    value: parseFloat(lastMACD.toFixed(8)),
-    signal: parseFloat(lastSignal.toFixed(8)),
-    histogram: parseFloat(histogram.toFixed(8)),
+    value: parseFloat(lastMACD.toFixed(2)),
+    signal: parseFloat(lastSignal.toFixed(2)),
+    histogram: parseFloat(histogram.toFixed(2)),
     momentum_state,
   };
 }
@@ -216,7 +224,7 @@ export function calculateATR(candles, period = 14) {
   for (let i = period; i < trs.length; i++) {
     atr = (atr * (period - 1) + trs[i]) / period;
   }
-  return parseFloat(atr.toFixed(8));
+  return parseFloat(atr.toFixed(2));
 }
 
 // ─── Stochastic RSI ───────────────────────────────────────────────────────────
@@ -230,10 +238,26 @@ export function calculateStochRSI(
 ) {
   if (closes.length < rsiPeriod + stochPeriod + smoothK + smoothD) return null;
 
-  // Calcular serie completa de RSI (un valor por cada vela desde rsiPeriod+1)
+  // Serie RSI iterativa O(n): recalculamos avgGain/avgLoss con Wilder smoothing
+  // en una sola pasada en vez de invocar calculateRSI(slice) por cada vela.
   const rsiSeries = [];
-  for (let end = rsiPeriod + 1; end <= closes.length; end++) {
-    rsiSeries.push(calculateRSI(closes.slice(0, end), rsiPeriod));
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= rsiPeriod; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += -diff;
+  }
+  let avgGain = gains / rsiPeriod;
+  let avgLoss = losses / rsiPeriod;
+  // Primer punto RSI corresponde a closes[rsiPeriod]
+  rsiSeries.push(rsiFromAvgs(avgGain, avgLoss));
+  for (let i = rsiPeriod + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff >= 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (rsiPeriod - 1) + gain) / rsiPeriod;
+    avgLoss = (avgLoss * (rsiPeriod - 1) + loss) / rsiPeriod;
+    rsiSeries.push(rsiFromAvgs(avgGain, avgLoss));
   }
 
   if (rsiSeries.length < stochPeriod) return null;
@@ -348,20 +372,21 @@ export function calculateADX(candles, period = ADX_PERIOD) {
     minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
   }
 
-  // Wilder smoothing inicial
-  let atr = trArr.slice(0, period).reduce((a, b) => a + b, 0);
+  // Wilder smoothed sums (no medias): mantiene la misma escala en numerador y
+  // denominador, así que +DI/-DI quedan correctos como ratio de sumas suavizadas.
+  let smTR = trArr.slice(0, period).reduce((a, b) => a + b, 0);
   let smPlusDM = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
   let smMinusDM = minusDM.slice(0, period).reduce((a, b) => a + b, 0);
 
   const dxArr = [];
 
   for (let i = period; i < trArr.length; i++) {
-    atr = atr - atr / period + trArr[i];
+    smTR = smTR - smTR / period + trArr[i];
     smPlusDM = smPlusDM - smPlusDM / period + plusDM[i];
     smMinusDM = smMinusDM - smMinusDM / period + minusDM[i];
 
-    const plusDI = atr > 0 ? (smPlusDM / atr) * 100 : 0;
-    const minusDI = atr > 0 ? (smMinusDM / atr) * 100 : 0;
+    const plusDI = smTR > 0 ? (smPlusDM / smTR) * 100 : 0;
+    const minusDI = smTR > 0 ? (smMinusDM / smTR) * 100 : 0;
     const diSum = plusDI + minusDI;
     dxArr.push(diSum > 0 ? (Math.abs(plusDI - minusDI) / diSum) * 100 : 0);
   }
@@ -374,10 +399,8 @@ export function calculateADX(candles, period = ADX_PERIOD) {
     adx = (adx * (period - 1) + dxArr[i]) / period;
   }
 
-  // +DI y -DI finales (última iteración)
-  const lastAtr = atr;
-  const plusDI = lastAtr > 0 ? (smPlusDM / lastAtr) * 100 : 0;
-  const minusDI = lastAtr > 0 ? (smMinusDM / lastAtr) * 100 : 0;
+  const plusDI = smTR > 0 ? (smPlusDM / smTR) * 100 : 0;
+  const minusDI = smTR > 0 ? (smMinusDM / smTR) * 100 : 0;
 
   let regime;
   if (adx >= ADX_TRENDING_THRESHOLD) regime = 'trending';
@@ -427,14 +450,26 @@ export function calculateSuperTrend(
     ? multiplier * (currentAtr / atrEmaLast)
     : multiplier;
 
-  // Calcular SuperTrend con el multiplicador adaptativo
+  // SuperTrend canónico con multiplicador adaptativo aplicado a TODA la serie.
+  // Antes el adaptive solo se aplicaba a la última vela, lo que producía saltos
+  // discontinuos entre la penúltima banda histórica y la final, pudiendo invertir
+  // el `trend` artificialmente. Ahora todo el cálculo es consistente.
   const candlesAligned = candles.slice(candles.length - atrSeries.length - 1);
-  let upperBand = 0, lowerBand = 0, trend = 1; // 1=UP, -1=DOWN
+  const mult = adaptiveMultiplier;
 
-  for (let i = 1; i < candlesAligned.length; i++) {
+  // Inicializar bandas con la primera vela (en vez de 0) para que el "stickiness"
+  // funcione desde la iteración 1. Antes upperBand=0/lowerBand=0 hacía trivialmente
+  // verdaderas las condiciones de reset en la primera iteración.
+  const firstAtr = atrSeries[0];
+  const firstMid = (candlesAligned[1].high + candlesAligned[1].low) / 2;
+  let upperBand = firstMid + mult * firstAtr;
+  let lowerBand = firstMid - mult * firstAtr;
+  let trend = candlesAligned[1].close > upperBand ? 1
+    : candlesAligned[1].close < lowerBand ? -1 : 1;
+
+  for (let i = 2; i < candlesAligned.length; i++) {
     const atrVal = atrSeries[i - 1];
     const mid = (candlesAligned[i].high + candlesAligned[i].low) / 2;
-    const mult = i === candlesAligned.length - 1 ? adaptiveMultiplier : multiplier;
 
     const basicUpper = mid + mult * atrVal;
     const basicLower = mid - mult * atrVal;
@@ -499,13 +534,16 @@ export function calculateCVD(candles) {
   const prev = series[Math.max(0, series.length - 6)]; // ventana 5 velas
   const trend = current > prev ? 'rising' : current < prev ? 'falling' : 'flat';
 
-  const priceChange = candles[candles.length - 1].close - candles[Math.max(0, candles.length - 6)].close;
+  const prevClose = candles[Math.max(0, candles.length - 6)].close;
+  const priceChange = candles[candles.length - 1].close - prevClose;
+  // Threshold 0.1% para evitar marcar divergence con ruido de precio mínimo.
+  const priceThreshold = Math.abs(prevClose) * 0.001;
   let divergence = 'none';
-  if (priceChange > 0 && trend === 'falling') divergence = 'bearish';
-  if (priceChange < 0 && trend === 'rising') divergence = 'bullish';
+  if (priceChange > priceThreshold && trend === 'falling') divergence = 'bearish';
+  if (priceChange < -priceThreshold && trend === 'rising') divergence = 'bullish';
 
   return {
-    value: parseFloat(current.toFixed(4)),
+    value: parseFloat(current.toFixed(2)),
     trend,
     divergence,
     source: hasRealTaker ? 'taker_real' : 'heuristic',
@@ -551,7 +589,7 @@ export function calculateVWAP(candles, period = 20) {
   if (priceChange < 0 && distNow > distPrev + distThreshold) divergence = 'bullish';
 
   return {
-    value: parseFloat(currentVwap.toFixed(4)),
+    value: parseFloat(currentVwap.toFixed(2)),
     trend,
     divergence,
   };
@@ -562,23 +600,45 @@ export function calculateVWAP(candles, period = 20) {
 export function detectRSIDivergence(closes, rsiPeriod = RSI_PERIOD, lookback = 20) {
   if (closes.length < rsiPeriod + lookback) return 'none';
 
-  // Serie RSI completa
+  // Serie RSI iterativa O(n) — ver calculateStochRSI para la misma técnica.
   const rsiSeries = [];
-  for (let end = rsiPeriod + 1; end <= closes.length; end++) {
-    rsiSeries.push(calculateRSI(closes.slice(0, end), rsiPeriod));
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= rsiPeriod; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += -diff;
+  }
+  let avgGain = gains / rsiPeriod;
+  let avgLoss = losses / rsiPeriod;
+  rsiSeries.push(rsiFromAvgs(avgGain, avgLoss));
+  for (let i = rsiPeriod + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff >= 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (rsiPeriod - 1) + gain) / rsiPeriod;
+    avgLoss = (avgLoss * (rsiPeriod - 1) + loss) / rsiPeriod;
+    rsiSeries.push(rsiFromAvgs(avgGain, avgLoss));
   }
 
   const priceSlice = closes.slice(-lookback);
   const rsiSlice = rsiSeries.slice(-lookback);
 
-  // Detectar pivots simples (valor mayor/menor que sus vecinos inmediatos)
+  // Pivot fractal lookback=2 (pivote de 5 velas) — alineado con SMC, reduce
+  // falsos positivos vs el pivot de 3 velas en mercados con ruido.
+  const PIVOT_LB = 2;
   const priceHighs = [], priceLows = [], rsiHighs = [], rsiLows = [];
-  for (let i = 1; i < priceSlice.length - 1; i++) {
-    if (priceSlice[i] > priceSlice[i - 1] && priceSlice[i] > priceSlice[i + 1]) {
+  for (let i = PIVOT_LB; i < priceSlice.length - PIVOT_LB; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = 1; j <= PIVOT_LB; j++) {
+      if (priceSlice[i - j] >= priceSlice[i] || priceSlice[i + j] >= priceSlice[i]) isHigh = false;
+      if (priceSlice[i - j] <= priceSlice[i] || priceSlice[i + j] <= priceSlice[i]) isLow = false;
+      if (!isHigh && !isLow) break;
+    }
+    if (isHigh) {
       priceHighs.push({ i, v: priceSlice[i] });
       rsiHighs.push({ i, v: rsiSlice[i] });
     }
-    if (priceSlice[i] < priceSlice[i - 1] && priceSlice[i] < priceSlice[i + 1]) {
+    if (isLow) {
       priceLows.push({ i, v: priceSlice[i] });
       rsiLows.push({ i, v: rsiSlice[i] });
     }
@@ -632,43 +692,51 @@ export function calculateSupportResistance(candles, lookback = SR_LOOKBACK, minT
   const slice = candles.slice(-lookback);
   const levels = [];
 
-  // Recogemos highs y lows como candidatos
   for (const candle of slice) {
-    levels.push({ price: candle.high, isResistance: true });
-    levels.push({ price: candle.low, isResistance: false });
+    levels.push(candle.high);
+    levels.push(candle.low);
   }
 
-  // Agrupamos niveles cercanos (dentro de tolerance)
+  // Ordenar candidatos antes del clustering: garantiza que niveles próximos en
+  // precio se evalúan consecutivamente y elimina la dependencia del orden temporal.
+  // Antes el clustering era greedy y el primer high del slice anclaba el cluster.
+  levels.sort((a, b) => a - b);
+
   const grouped = [];
-  for (const candidate of levels) {
+  for (const price of levels) {
     const existing = grouped.find(g =>
-      Math.abs(g.price - candidate.price) / g.price <= tolerancePct
+      Math.abs(g.price - price) / g.price <= tolerancePct
     );
     if (existing) {
       existing.touches++;
-      existing.price = (existing.price + candidate.price) / 2; // promedio
+      // Media incremental para no sesgar hacia el primer toque.
+      existing.price = existing.price + (price - existing.price) / existing.touches;
     } else {
-      grouped.push({ price: candidate.price, isResistance: candidate.isResistance, touches: 1, strength: 1 });
+      grouped.push({ price, touches: 1 });
     }
   }
 
-  // Filtrar por mínimo de toques y calcular fuerza
-  const filtered = grouped
-    .filter(g => g.touches >= minTouches)
-    .map(g => ({ ...g, strength: Math.min(Math.floor(g.touches / 2), 5) }));
-
   const currentPrice = slice[slice.length - 1].close;
 
+  // Reclasificar por posición real respecto al precio actual: un cluster de highs
+  // que tras promediar quedó por debajo del precio se considera soporte. Antes se
+  // descartaba silenciosamente.
+  const filtered = grouped
+    .filter(g => g.touches >= minTouches)
+    .map(g => ({
+      price: g.price,
+      touches: g.touches,
+      strength: Math.min(Math.floor(g.touches / 2), 5),
+    }));
+
   const supports = filtered
-    .filter(g => !g.isResistance && g.price < currentPrice)
+    .filter(g => g.price < currentPrice)
     .sort((a, b) => b.price - a.price)
-    .map(g => ({ price: g.price, touches: g.touches, strength: g.strength }))
     .slice(0, 3);
 
   const resistances = filtered
-    .filter(g => g.isResistance && g.price >= currentPrice)
+    .filter(g => g.price >= currentPrice)
     .sort((a, b) => a.price - b.price)
-    .map(g => ({ price: g.price, touches: g.touches, strength: g.strength }))
     .slice(0, 3);
 
   return { supports, resistances };

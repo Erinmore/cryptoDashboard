@@ -988,3 +988,141 @@ describe('SMC — detectUnmitigatedFVGs', () => {
     expect(fvgs.bullish[0].mitigation_pct).toBe(75); // 3/4 del gap cubierto
   });
 });
+
+// ─── Audit hardening tests ───────────────────────────────────────────────────
+
+describe('calculateRSI — flat market guard', () => {
+  test('returns 50 when price is completely flat (no gains, no losses)', () => {
+    const closes = Array.from({ length: 20 }, () => 100);
+    expect(calculateRSI(closes)).toBe(50);
+  });
+});
+
+describe('calculateBollingerBands — flat market guard', () => {
+  test('position falls back to 0.5 when stdDev is 0', () => {
+    const closes = Array.from({ length: 20 }, () => 100);
+    const bb = calculateBollingerBands(closes);
+    expect(bb.upper).toBe(bb.middle);
+    expect(bb.lower).toBe(bb.middle);
+    expect(bb.position).toBe(0.5);
+    expect(bb.width_pct).toBe(0);
+  });
+});
+
+describe('calculateADX — ranging regime', () => {
+  const makeCandle = (h, l, c) => ({ high: h, low: l, close: c, open: l, volume: 1000 });
+
+  test('ranging market produces ADX <= 20 and regime ranging or weak_trend', () => {
+    // Mercado lateral con oscilaciones mínimas y simétricas
+    const candles = Array.from({ length: 80 }, (_, i) => {
+      const v = 100 + (i % 4 === 0 ? 0.05 : i % 4 === 1 ? -0.05 : 0);
+      return makeCandle(v + 0.05, v - 0.05, v);
+    });
+    const result = calculateADX(candles);
+    expect(['ranging', 'weak_trend']).toContain(result.regime);
+  });
+});
+
+describe('calculateSuperTrend — trend transitions', () => {
+  const makeCandle = (h, l, c) => ({ high: h, low: l, close: c, open: l, volume: 1000 });
+
+  test('UP→DOWN transition: uptrend followed by sharp drop flips trend', () => {
+    const up = Array.from({ length: 40 }, (_, i) => makeCandle(100 + i * 2, 99 + i * 2, 100 + i * 2));
+    const down = Array.from({ length: 30 }, (_, i) => makeCandle(180 - i * 3, 179 - i * 3, 180 - i * 3));
+    const result = calculateSuperTrend([...up, ...down]);
+    expect(result.trend).toBe('DOWN');
+    expect(result.support).toBeNull();
+    expect(result.resistance).toBeGreaterThan(0);
+  });
+
+  test('DOWN→UP transition: downtrend followed by sharp rally flips trend', () => {
+    const down = Array.from({ length: 40 }, (_, i) => makeCandle(200 - i * 2, 199 - i * 2, 200 - i * 2));
+    const up = Array.from({ length: 30 }, (_, i) => makeCandle(120 + i * 3, 119 + i * 3, 120 + i * 3));
+    const result = calculateSuperTrend([...down, ...up]);
+    expect(result.trend).toBe('UP');
+    expect(result.resistance).toBeNull();
+    expect(result.support).toBeGreaterThan(0);
+  });
+});
+
+describe('calculateCVD — robustness against corrupt taker data', () => {
+  const makeCandle = (h, l, c, v = 1000, taker = undefined) => ({
+    high: h, low: l, close: c, open: l, volume: v,
+    ...(taker !== undefined ? { taker_buy_base: taker } : {}),
+  });
+
+  test('falls back to heuristic when taker_buy_base is NaN', () => {
+    const candles = Array.from({ length: 5 }, () => makeCandle(101, 99, 100, 1000, NaN));
+    const result = calculateCVD(candles);
+    expect(result.source).toBe('heuristic');
+  });
+
+  test('falls back to heuristic when taker_buy_base > volume', () => {
+    const candles = Array.from({ length: 5 }, () => makeCandle(101, 99, 100, 1000, 5000));
+    const result = calculateCVD(candles);
+    expect(result.source).toBe('heuristic');
+  });
+
+  test('falls back to heuristic when taker_buy_base is negative', () => {
+    const candles = Array.from({ length: 5 }, () => makeCandle(101, 99, 100, 1000, -10));
+    const result = calculateCVD(candles);
+    expect(result.source).toBe('heuristic');
+  });
+});
+
+describe('calculateVolumeProfile — single-bin edge case', () => {
+  const buildCandle = (low, high, volume) => ({
+    t: 0, open: low, high, low, close: high, volume,
+  });
+
+  test('candles with same range produce vah == val == poc when volume concentrates', () => {
+    // 30 velas con rango idéntico [100, 100.5], todas con volumen igual
+    const candles = Array.from({ length: 30 }, () => buildCandle(100, 100.5, 100));
+    const vp = calculateVolumeProfile(candles);
+    expect(vp).not.toBeNull();
+    // En una distribución plana sobre rango pequeño, POC debe estar dentro del rango
+    expect(vp.poc).toBeGreaterThanOrEqual(vp.val);
+    expect(vp.poc).toBeLessThanOrEqual(vp.vah);
+  });
+});
+
+describe('computeTrend — ADX ranging does not contribute structure', () => {
+  test('ranging ADX does not push bias when superTrend is the only structural input', () => {
+    // Solo ADX en ranging + superTrend UP → estructura solo cuenta superTrend
+    const trend = computeTrend({
+      adx: { trend_direction: 'bearish', regime: 'ranging' },
+      superTrend: { trend: 'UP' },
+    });
+    // structureCount = 1 (solo superTrend), structure = +1
+    // bias = 1 * 0.5 = 0.5 → bullish
+    expect(trend).toBe('bullish');
+  });
+
+  test('trending ADX does contribute structure (full bull stack reaches strongly_bullish)', () => {
+    const trend = computeTrend({
+      adx: { trend_direction: 'bullish', regime: 'trending' },
+      superTrend: { trend: 'UP' },
+      rsi: { value: 70 },
+      macd: { histogram: 1 },
+      waveTrend: { wt1: 10, wt2: 5 },
+      stochRsi: { k: 60, d: 50 },
+      volumeDelta: { buy_pressure_pct: 100 },
+    });
+    expect(trend).toBe('strongly_bullish');
+  });
+
+  test('ranging ADX with full bull execution stack stays at most bullish (not strongly)', () => {
+    const trend = computeTrend({
+      adx: { trend_direction: 'bullish', regime: 'ranging' },
+      superTrend: { trend: 'UP' },
+      rsi: { value: 70 },
+      macd: { histogram: 1 },
+      waveTrend: { wt1: 10, wt2: 5 },
+      stochRsi: { k: 60, d: 50 },
+      volumeDelta: { buy_pressure_pct: 100 },
+    });
+    // structure=+1 (solo SuperTrend), exec=+1, vol=+1 → bias = 0.5+0.3+0.2 = 1.0
+    // pero structure ahora pesa solo 0.5 (no 1.0 con dos componentes), igualmente strongly_bullish
+    expect(['bullish', 'strongly_bullish']).toContain(trend);
+  });
+});

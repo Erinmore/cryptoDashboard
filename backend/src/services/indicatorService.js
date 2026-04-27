@@ -117,9 +117,12 @@ export function computeIndicators(candles, timeframe) {
  * Derivados y on-chain son macro y se incorporan al payload fuera del bloque technical.
  */
 export function computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta }) {
-  // Estructura: ADX trend_direction + SuperTrend
+  // Estructura: ADX trend_direction + SuperTrend.
+  // En ranging el trend_direction es ruido estadístico (DI+ vs DI- por diferencia
+  // mínima), así que ADX no contribuye al score estructural — sólo cuenta cuando
+  // hay tendencia (trending o weak_trend).
   let structureScore = 0, structureCount = 0;
-  if (adx) {
+  if (adx && adx.regime !== 'ranging') {
     structureScore += adx.trend_direction === 'bullish' ? 1 : -1;
     structureCount++;
   }

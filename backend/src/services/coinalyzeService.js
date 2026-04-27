@@ -69,11 +69,19 @@ export async function fetchFundingRate(coin) {
       : null;
     const predictedRate = predictedEntry?.value ?? null;
 
+    const ratePct = parseFloat((rate * 100).toFixed(4));
+
     const result = {
       rate: parseFloat(rate.toFixed(6)),
-      rate_pct: parseFloat((rate * 100).toFixed(4)),
+      rate_pct: ratePct,
       annualized_pct: parseFloat((rate * 3 * 365 * 100).toFixed(2)), // 3 pagos/día × 365
       trend,
+      // severity se calcula aquí para que /api/data y /api/analyze/payload lo
+      // expongan idéntico, en vez de duplicar el clasificador en cada controller.
+      severity: ratePct > 0.5 ? 'extreme'
+        : ratePct > 0.2 ? 'high'
+        : ratePct > 0.05 ? 'elevated'
+        : 'normal',
       signal: rate > 0.001 ? 'longs_overloaded'
         : rate < -0.0005 ? 'shorts_overloaded'
         : 'balanced',
