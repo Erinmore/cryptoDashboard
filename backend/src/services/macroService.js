@@ -66,6 +66,22 @@ export async function fetchMacroData() {
       return null;
     }
 
+    // macro_regime: clasificación sintetizada de DXY, SPX y Gold para reducir varianza del LLM.
+    const spxTrend = out.spx?.trend_5d;
+    const dxyTrend = out.dxy?.trend_5d;
+    const goldTrend = out.gold?.trend_5d;
+    let macroRegime = 'mixed';
+    let macroRegimeBasis = [];
+    if (spxTrend) macroRegimeBasis.push(`SPX ${spxTrend}`);
+    if (dxyTrend) macroRegimeBasis.push(`DXY ${dxyTrend}`);
+    if (goldTrend) macroRegimeBasis.push(`Gold ${goldTrend}`);
+    if (spxTrend === 'rising' && dxyTrend === 'falling') macroRegime = 'risk_on';
+    else if (spxTrend === 'falling' && dxyTrend === 'rising') macroRegime = 'risk_off';
+    else if (spxTrend === 'rising' && dxyTrend !== 'rising') macroRegime = 'risk_on';
+    else if (spxTrend === 'falling' && dxyTrend !== 'falling') macroRegime = 'risk_off';
+
+    out.macro_regime = macroRegime;
+    out.macro_regime_basis = macroRegimeBasis.join(' + ') || null;
     out.source = 'yahoo-finance';
     cacheSet(cacheKey, out, env.cache.macroTtl);
     return out;

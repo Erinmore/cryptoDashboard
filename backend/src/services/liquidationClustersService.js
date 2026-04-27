@@ -95,8 +95,21 @@ export async function fetchLiquidationClusters(coin) {
 
     const binCenter = (idx) => parseFloat((rangeLow + binSize * (idx + 0.5)).toFixed(2));
 
+    // Formato legible para el LLM: "182.74M" / "45.20K" / "850"
+    const fmtUsd = (n) => {
+      if (n >= 1e6)  return `${(n / 1e6).toFixed(2)}M`;
+      if (n >= 1e3)  return `${(n / 1e3).toFixed(2)}K`;
+      return `${n.toFixed(0)}`;
+    };
+
     const toClusters = (bins) => bins
-      .map((b, i) => ({ price: binCenter(i), total_usd: parseFloat(b.usd.toFixed(2)), count: b.count }))
+      .map((b, i) => ({
+        price: binCenter(i),
+        total_usd: parseFloat(b.usd.toFixed(2)),
+        total_usd_display: fmtUsd(b.usd),
+        unit: 'usd',
+        count: b.count,
+      }))
       .filter(x => x.total_usd > 0)
       .sort((a, b) => b.total_usd - a.total_usd)
       .slice(0, TOP_N);

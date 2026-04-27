@@ -78,10 +78,13 @@ export async function fetchFundingRate(coin) {
       trend,
       // severity se calcula aquí para que /api/data y /api/analyze/payload lo
       // expongan idéntico, en vez de duplicar el clasificador en cada controller.
-      severity: ratePct > 0.5 ? 'extreme'
-        : ratePct > 0.2 ? 'high'
-        : ratePct > 0.05 ? 'elevated'
+      severity: ratePct >= 0
+        ? (ratePct > 0.5 ? 'extreme' : ratePct > 0.2 ? 'high' : ratePct > 0.05 ? 'elevated' : 'normal')
         : 'normal',
+      // severity_negative cubre el caso simétrico: shorts sobreextendidos (señal de squeeze alcista).
+      severity_negative: ratePct < 0
+        ? (ratePct < -0.5 ? 'extreme_short_overload' : ratePct < -0.2 ? 'high_short_overload' : ratePct < -0.05 ? 'elevated_short_overload' : null)
+        : null,
       signal: rate > 0.001 ? 'longs_overloaded'
         : rate < -0.0005 ? 'shorts_overloaded'
         : 'balanced',
@@ -235,7 +238,7 @@ export async function fetchLongShortRatio(coin) {
       : longPct < 40 ? 'shorts_dominant_contrarian_bull'
       : 'balanced';
 
-    const result = { long_pct: longPct, short_pct: shortPct, signal };
+    const result = { long_pct: longPct, short_pct: shortPct, signal, source: 'coinalyze' };
 
     cacheSet(cacheKey, result, env.cache.longShortTtl);
 

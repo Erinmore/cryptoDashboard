@@ -1126,3 +1126,96 @@ describe('computeTrend — ADX ranging does not contribute structure', () => {
     expect(['bullish', 'strongly_bullish']).toContain(trend);
   });
 });
+
+// ─── CVD — nuevos campos de divergencia (D2) ──────────────────────────────────
+
+describe('calculateCVD — divergencia explícita', () => {
+  const makeCandles = (n, trend = 'flat') => {
+    return Array.from({ length: n }, (_, i) => {
+      const base = 100;
+      const close = trend === 'up' ? base + i * 0.5 : trend === 'down' ? base - i * 0.5 : base;
+      return {
+        open: close - 0.1, high: close + 0.5, low: close - 0.5, close,
+        volume: 10, taker_buy_base: 5,
+      };
+    });
+  };
+
+  test('output includes divergence_window_candles field', () => {
+    const candles = makeCandles(50);
+    const result = calculateCVD(candles);
+    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('divergence_window_candles');
+    expect(result.divergence_window_candles).toBeGreaterThan(0);
+  });
+
+  test('output includes price_change_pct_window and cvd_change_pct_window', () => {
+    const candles = makeCandles(50);
+    const result = calculateCVD(candles);
+    expect(result).toHaveProperty('price_change_pct_window');
+    expect(result).toHaveProperty('cvd_change_pct_window');
+    expect(typeof result.price_change_pct_window).toBe('number');
+    expect(typeof result.cvd_change_pct_window).toBe('number');
+  });
+
+  test('with 50 flat candles, divergence_window_candles = 20 (min of WINDOW, series-1)', () => {
+    const candles = makeCandles(50);
+    const result = calculateCVD(candles);
+    expect(result.divergence_window_candles).toBe(20);
+  });
+
+  test('with only 10 candles, divergence_window_candles = 9 (all available)', () => {
+    const candles = makeCandles(10);
+    const result = calculateCVD(candles);
+    expect(result.divergence_window_candles).toBe(9);
+  });
+});
+
+// ─── VolumeProfile — metadata de periodo (D3) ────────────────────────────────
+
+describe('calculateVolumeProfile — metadata de periodo', () => {
+  const makeVPCandles = (n) => Array.from({ length: n }, (_, i) => ({
+    t: (1700000000 + i * 3600) * 1000,
+    open: 100, high: 105, low: 95, close: 102, volume: 100,
+  }));
+
+  test('includes period_start matching first candle timestamp', () => {
+    const candles = makeVPCandles(30);
+    const result = calculateVolumeProfile(candles);
+    expect(result).toHaveProperty('period_start', candles[0].t);
+  });
+
+  test('includes period_end matching last candle timestamp', () => {
+    const candles = makeVPCandles(30);
+    const result = calculateVolumeProfile(candles);
+    expect(result).toHaveProperty('period_end', candles[candles.length - 1].t);
+  });
+
+  test('includes candles_covered equal to array length', () => {
+    const candles = makeVPCandles(30);
+    const result = calculateVolumeProfile(candles);
+    expect(result.candles_covered).toBe(30);
+  });
+});
+
+// ─── Bollinger Bands — window y std_dev_mult (D14) ───────────────────────────
+
+describe('calculateBollingerBands — campos de metadata', () => {
+  test('includes window field equal to period parameter', () => {
+    const closes = Array.from({ length: 30 }, (_, i) => 100 + Math.sin(i) * 5);
+    const result = calculateBollingerBands(closes, 20, 2);
+    expect(result).toHaveProperty('window', 20);
+  });
+
+  test('includes std_dev_mult field', () => {
+    const closes = Array.from({ length: 30 }, (_, i) => 100 + Math.sin(i) * 5);
+    const result = calculateBollingerBands(closes, 20, 2);
+    expect(result).toHaveProperty('std_dev_mult', 2);
+  });
+
+  test('default window is 20', () => {
+    const closes = Array.from({ length: 30 }, (_, i) => 100 + Math.sin(i) * 5);
+    const result = calculateBollingerBands(closes);
+    expect(result.window).toBe(20);
+  });
+});

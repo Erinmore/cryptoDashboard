@@ -73,16 +73,51 @@ export function computeIndicators(candles, timeframe) {
   // ── Fibonacci ────────────────────────────────────────────────
   const high = Math.max(...highs);
   const low  = Math.min(...lows);
-  const fibonacci = calculateFibonacci(high, low);
+  const highIdx = highs.indexOf(high);
+  const lowIdx  = lows.indexOf(low);
+  const fibLevels = calculateFibonacci(high, low);
+  const fibonacci = {
+    swing_high: high,
+    swing_low: low,
+    swing_high_date: candles[highIdx]?.t ? new Date(candles[highIdx].t).toISOString().split('T')[0] : null,
+    swing_low_date:  candles[lowIdx]?.t  ? new Date(candles[lowIdx].t).toISOString().split('T')[0] : null,
+    type: 'retracement',
+    levels: fibLevels,
+  };
 
   // ── Support & Resistance ─────────────────────────────────────
   const sr = calculateSupportResistance(candles);
 
   // ── Volume Profile ───────────────────────────────────────────
-  const volumeProfile = calculateVolumeProfile(candles);
+  const vpRaw = calculateVolumeProfile(candles);
+  const currentPrice = closes[closes.length - 1];
+  let volumeProfile = vpRaw;
+  if (vpRaw && currentPrice) {
+    const pocDistPct = Math.abs((vpRaw.poc - currentPrice) / currentPrice * 100);
+    const vpValid = pocDistPct <= 5;
+    volumeProfile = {
+      ...vpRaw,
+      poc_distance_pct: parseFloat(pocDistPct.toFixed(2)),
+      valid: vpValid,
+      invalid_reason: vpValid ? null : 'poc_distance_pct_exceeds_threshold',
+    };
+  }
 
   // ── SMC: BOS / CHoCH / FVG ───────────────────────────────────
   const smc = calculateSMC(candles, { timeframe });
+
+  // Anotar validez del BOS según si el precio actual ha retrocedido por debajo del nivel roto.
+  if (smc?.last_bos && currentPrice) {
+    const bos = smc.last_bos;
+    const retracedBelow = bos.direction === 'bullish'
+      ? currentPrice < bos.broken_swing_price
+      : currentPrice > bos.broken_swing_price;
+    bos.valid = !retracedBelow;
+    bos.invalid_reason = retracedBelow ? 'price_retraced_below_broken_level' : null;
+    bos.retracement_pct = retracedBelow
+      ? parseFloat(((currentPrice - bos.broken_swing_price) / bos.broken_swing_price * 100).toFixed(2))
+      : null;
+  }
 
   // ── Market Regime ────────────────────────────────────────────
   const regime = detectMarketRegime(candles, closes);
@@ -90,9 +125,23 @@ export function computeIndicators(candles, timeframe) {
   // ── Trend summary ────────────────────────────────────────────
   const trend = computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta });
 
+  // momentum_alignment: true si el computeTrend (momentum) coincide con la tendencia estructural de precio.
+  const momentumAlignedWithTrend = (() => {
+    if (!trend || !superTrend) return null;
+    const trendBullish = trend === 'bullish' || trend === 'strongly_bullish';
+    const trendBearish = trend === 'bearish' || trend === 'strongly_bearish';
+    const stBullish = superTrend.trend === 'UP';
+    if (trendBullish && stBullish) return true;
+    if (trendBearish && !stBullish) return true;
+    if (trend === 'neutral') return null;
+    return false;
+  })();
+
   return {
     timeframe,
     trend,
+    trend_basis: 'ema_cross_swing',
+    momentum_alignment: momentumAlignedWithTrend,
     regime,
     rsi,
     stoch_rsi: stochRsi,

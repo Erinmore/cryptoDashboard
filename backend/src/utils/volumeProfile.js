@@ -99,5 +99,8 @@ export function calculateVolumeProfile(candles, { bins = 50, targetPct = 0.70 } 
     lvn,
     bin_size:     parseFloat(binSize.toFixed(4)),
     total_volume: parseFloat(totalVolume.toFixed(2)),
+    period_start:    candles[0]?.t ?? null,
+    period_end:      candles[candles.length - 1]?.t ?? null,
+    candles_covered: candles.length,
   };
 }

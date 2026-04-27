@@ -130,6 +130,8 @@ export function calculateBollingerBands(closes, period = BB_PERIOD, stdDevMult =
     lower: parseFloat(lower.toFixed(2)),
     width_pct: parseFloat(((bandWidth / mean) * 100).toFixed(2)),
     position: parseFloat(position.toFixed(4)),
+    window: period,
+    std_dev_mult: stdDevMult,
   };
 }
 
@@ -531,21 +533,31 @@ export function calculateCVD(candles) {
   }
 
   const current = series[series.length - 1];
-  const prev = series[Math.max(0, series.length - 6)]; // ventana 5 velas
+  // Ventana de 20 velas para divergencia (captura desviaciones estructurales, no ruido de 5 barras).
+  const DIVERGENCE_WINDOW = 20;
+  const windowIdx = Math.max(0, series.length - DIVERGENCE_WINDOW - 1);
+  const prev = series[windowIdx];
   const trend = current > prev ? 'rising' : current < prev ? 'falling' : 'flat';
 
-  const prevClose = candles[Math.max(0, candles.length - 6)].close;
-  const priceChange = candles[candles.length - 1].close - prevClose;
+  const prevClose = candles[windowIdx].close;
+  const lastClose = candles[candles.length - 1].close;
+  const priceChange = lastClose - prevClose;
   // Threshold 0.1% para evitar marcar divergence con ruido de precio mínimo.
   const priceThreshold = Math.abs(prevClose) * 0.001;
   let divergence = 'none';
   if (priceChange > priceThreshold && trend === 'falling') divergence = 'bearish';
   if (priceChange < -priceThreshold && trend === 'rising') divergence = 'bullish';
 
+  const cvdChange = prev !== 0 ? (current - prev) / Math.abs(prev) * 100 : 0;
+  const priceChangePct = prevClose !== 0 ? priceChange / prevClose * 100 : 0;
+
   return {
     value: parseFloat(current.toFixed(2)),
     trend,
     divergence,
+    divergence_window_candles: Math.min(DIVERGENCE_WINDOW, series.length - 1),
+    price_change_pct_window: parseFloat(priceChangePct.toFixed(2)),
+    cvd_change_pct_window: parseFloat(cvdChange.toFixed(2)),
     source: hasRealTaker ? 'taker_real' : 'heuristic',
   };
 }

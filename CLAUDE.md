@@ -333,7 +333,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **158 tests totales**: 111 unitarios (`indicators.test.js`) + 47 integración (`integration.test.js`)
+- **168 tests totales**: 121 unitarios (`indicators.test.js`) + 47 integración (`integration.test.js`)
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
 - Los tests de integración usan supertest + `jest.unstable_mockModule` para mockear todos los servicios externos — offline, deterministas, ~1.5s
 
@@ -361,7 +361,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | `calculateVolumeDelta(candles)` | Presión compradora/vendedora — usa `taker_buy_base` real de Binance cuando los candles lo traen (`source: 'taker_real'`); fallback heurístico `(close-low)/(high-low)` si falta o es inválido (NaN, fuera de rango) |
 | `calculateCVD(candles)` | Cumulative Volume Delta — mismo patrón taker_real / heuristic. Delta real = `2*taker_buy_base - volume` |
 | `calculateVWAP(candles, period?)` | VWAP (rolling 20-period) — Volume-Weighted Average Price |
-| `calculateFibonacci(high, low, levels?)` | Niveles Fibonacci |
+| `calculateFibonacci(high, low, levels?)` | Niveles Fibonacci — el wrapper en `indicatorService` lo expone como `{ swing_high, swing_low, swing_high_date, swing_low_date, type: 'retracement', levels[] }` |
 | `calculateSupportResistance(candles, ...)` | Soporte & Resistencia — devuelve `{supports, resistances}` sin campo `type` (ya declarado por la lista) |
 | `detectRSIDivergence(closes, ...)` | Divergencias RSI |
 | `detectMarketRegime(candles, closes)` | Régimen TRENDING/RANGING/HIGH_VOLATILITY — devuelve string plano, no objeto |
@@ -388,6 +388,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Sprint D' | Deribit DVOL, update SYSTEM_PROMPT v3_extended_context, docs | ✅ Completo |
 | Sprint Audit | Auditoría técnica + fixes correctitud (SuperTrend, ADX naming, S/R clustering, RSI divergence, computeTrend ranging, payload semántica) | ✅ Completo |
 | Fase 15 | Tests de integración de endpoints (47 tests, supertest) | ✅ Completo |
+| Sprint Briefing | Deficiencias de dataset + prompt auditadas (briefing 2026-04-27): D1-D22, P1-P7 | ✅ Completo |
 | Bloque 5 | Tests integración ✅, deploy VPS ⏳, panel historial IA ⏳ | ⏳ Parcial |
 
 ### Detalle Bloque 4
@@ -469,6 +470,31 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **Cache armonizado**: `deribitService` usa el mismo patrón `cached.__empty ? null : cached` que el resto.
   - **`onchainService` catch path (2026-04-27)**: `cacheSet(cacheKey, null, ...)` → `cacheSet(cacheKey, { __empty: true }, ...)`. El armonizado anterior solo había llegado a `deribitService`; aquí el `null` se interpretaba como cache miss y cada request post-fallo re-pegaba bitcoin-data.com, agotando la cuota free (15 req/día) en minutos. Ahora el sentinel bloquea reintentos durante `onchainNegativeTtl` (30 min) como pretendía el diseño original.
   - **12 tests nuevos** cubriendo: RSI flat market, BB stdDev=0, ADX ranging, SuperTrend UP↔DOWN transitions, CVD con `taker_buy_base` corrupto (NaN/negativo/>volume), Volume Profile single-bin, computeTrend con ADX en ranging vs trending. **111/111 tests pasan**.
+
+- **Sprint Briefing (2026-04-27) — deficiencias de dataset + prompt**:
+  - **D1** (`coinalyzeService`): `severity_negative` simétrico para funding negativo (`elevated/high/extreme_short_overload`). El campo `severity` (positivo) se mantiene sin cambios.
+  - **D2** (`indicators.js`): `calculateCVD` ampliado a ventana 20 velas para divergencia. Añadidos campos `divergence_window_candles`, `price_change_pct_window`, `cvd_change_pct_window` al output.
+  - **D3** (`volumeProfile.js` + `indicatorService.js`): Volume Profile incluye `period_start`, `period_end`, `candles_covered`. Flag `valid`, `poc_distance_pct`, `invalid_reason` calculados en `indicatorService` donde se conoce el precio actual.
+  - **D4** (`analysisController`): CVD summary añade `change_pct_24h`, `high_7d`, `low_7d`.
+  - **D5** (`liquidationClustersService`): Cada cluster incluye `total_usd_display` ("182.74M") y `unit: 'usd'`.
+  - **D6** (`indicatorService`): Fibonacci estructurado como `{ swing_high, swing_low, swing_high_date, swing_low_date, type: 'retracement', levels[] }`.
+  - **D7** (`coinalyzeService`): L/S Ratio incluye `source: 'coinalyze'`.
+  - **D8** (`analysisController`): ETF flows enriquecido con `data_lag_days`, `data_freshness`, `freshness_warning`.
+  - **D9** (`analysisController`): `exchange_netflow_unavailable_reason: 'not_in_free_tier'` cuando el campo es null.
+  - **D11/D12** (`analysisController`): Liquidations history 7d y CVD summary devuelven `null` si hay menos de 2 puntos históricos (evita datos espurios 7d ≡ 24h con servidor recién arrancado).
+  - **D13** (`indicatorService`): Payload de TF incluye `trend_basis: 'ema_cross_swing'` y `momentum_alignment` (bool: el computeTrend coincide con SuperTrend).
+  - **D14** (`indicators.js`): Bollinger Bands incluye `window` y `std_dev_mult`.
+  - **D15** (`macroService`): `macro_regime` ('risk_on' / 'risk_off' / 'mixed') + `macro_regime_basis` sintetizados desde SPX/DXY/Gold.
+  - **D21** (`indicatorService`): `last_bos` anotado con `valid`, `invalid_reason`, `retracement_pct` (precio retrocedió por debajo del nivel roto = `valid: false`).
+  - **D22** (`analysisController`): `price_source: 'binance_spot'` + `price_timestamp_utc` en el raíz del payload.
+  - **P1** (prompt): Regla FUNDING NEGATIVO simétrica con +1/+2 al Derivatives Score según `severity_negative`.
+  - **P2** (prompt): Regla BOS POST-RETROCESO (usa `last_bos.valid`) + regla de secuencia CHoCH→BOS trampa estructural.
+  - **P3** (prompt): Fallback de Volume Profile cuando `poc_distance_pct > 5` o `valid=false`.
+  - **P4** (prompt): Regla VWAP como ajuste de convicción (no scoring directo).
+  - **P5** (prompt): Estado PREPARAR como cuarto output (setup cargado pero sin trigger confirmado).
+  - **P6** (prompt): Interacción multiplicativa ETF Flows × Funding (+0.5 conviction en co-ocurrencia).
+  - **P7** (prompt): Nomenclatura de TFs estandarizada (`"1h"`, `"4h"`, `"1D"`, `"1W"`). Versión: `v4_2_briefing_fixes`.
+  - **10 tests nuevos** cubriendo: CVD divergencia explícita (4 tests), VolumeProfile metadata (3), Bollinger Bands metadata (3). **168/168 tests pasan** (121 unitarios + 47 integración).
 
 ---
 

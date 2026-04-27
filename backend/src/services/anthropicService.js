@@ -1,7 +1,7 @@
 import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 
-export const PROMPT_VERSION = 'v4_1_onchain_conviction';
+export const PROMPT_VERSION = 'v4_2_briefing_fixes';
 
 const SYSTEM_PROMPT = `ROLE
 
@@ -105,6 +105,16 @@ severity="high" (> 0.2%): coste de carry agresivo. Los longs deben tener cataliz
 severity="elevated" (> 0.05%): mercado cargado. Usar como filtro de riesgo adicional.
 severity="normal" (<= 0.05%): sin impacto diferencial en el score.
 
+FUNDING NEGATIVO — SEVERITY RULE (señal de short squeeze)
+
+Un funding rate negativo indica que los shorts están pagando a los longs — señal de que el mercado está cargado de posiciones cortas. Cuando es extremo, la probabilidad de un short squeeze aumenta si aparece un trigger de ruptura.
+
+severity_negative="elevated_short_overload" (< -0.05%): mercado cargado de shorts. Usar como filtro de contexto. Sin impacto directo en el score.
+severity_negative="high_short_overload" (< -0.2%): coste de carry agresivo para shorts. Señal de squeeze potencial si existe trigger. Añadir +1 al Derivatives Score.
+severity_negative="extreme_short_overload" (< -0.5%): squeeze de shorts estadísticamente probable si existe trigger de ruptura. Añadir +2 al Derivatives Score. Reducir convicción SHORT a mínimo — abrir short con funding extremo negativo implica pagar un coste de carry insostenible.
+
+REGLA: Si funding negativo extremo persiste sin expansión de OI ni trigger de ruptura, mantener el score pero no ejecutar — el squeeze puede tardar o no materializarse.
+
 FUNDING PERSISTENCE FILTER
 
 Si Funding extremo persiste sin:
@@ -201,7 +211,24 @@ REGLA DE EXCURSIÓN DE PRECIO (volume profile):
 
 Si el precio está más de un 2% por encima del VAH del TF primario: marcar como excursión alcista. Reducir convicción de LONG un nivel. Añadir al Risk Score.
 Si el precio está más de un 2% por debajo del VAL del TF primario: marcar como excursión bajista. Reducir convicción de SHORT un nivel. Añadir al Risk Score.
-Si el POC del TF primario está más de un 5% alejado del precio actual: ese volume profile ya no representa el rango activo. Ignorarlo como referencia táctica y señalarlo explícitamente en el análisis.
+Si el POC del TF primario está más de un 5% alejado del precio actual (campo poc_distance_pct > 5 o valid=false): ese volume profile ya no representa el rango activo. Ignorarlo como referencia táctica y señalarlo explícitamente en el análisis.
+
+FALLBACK DE VOLUME PROFILE:
+
+Si el volume profile del TF primario es inválido (poc_distance_pct > 5 o valid=false):
+1. Usar el VP del TF inmediatamente inferior como sustituto táctico (fallback: 4H → 1H, 1D → 4H).
+2. Indicar explícitamente en el análisis que el VP primario fue descartado y cuál se usa como referencia.
+3. Reducir la convicción de los niveles VP en un grado: de soporte/resistencia fuerte a referencia orientativa.
+4. Si todos los VPs disponibles son inválidos: operar sin referencia de VP y señalarlo en el Risk Score.
+
+VWAP — REGLA DE CONTEXTO (no scoring directo):
+
+El VWAP refleja el precio promedio ponderado por volumen. No puntúa en ningún score, pero ajusta la convicción.
+
+Precio > VWAP 1D: confirma momentum alcista diario. Refuerza bias alcista si Structure Score >= +1.
+Precio < VWAP 1D: señal de debilidad estructural. Añade cautela a cualquier bias alcista.
+VWAP divergence="bearish" en 1D con precio subiendo: bandera de advertencia equivalente a CVD 1D divergente. Reduce convicción LONG en 1 nivel.
+VWAP divergence="bullish" en 1D con precio cayendo: bandera de cautela para shorts.
 
 C. Structure Score (-2 a +2)
 
@@ -290,6 +317,20 @@ etf_flows.trend_7d="distributing" (7d_sum < -100M USD) = presión vendedora inst
 daily_net_inflow_usd_yesterday positivo tras días negativos = posible cambio de flujo, señal de vigilancia.
 cumulative_net_inflow_usd refleja adopción estructural; no usarlo como señal táctica de corto plazo.
 
+Si data_freshness="stale" (data_lag_days > 2): usar ETF flows exclusivamente como contexto estructural, no como señal táctica de corto plazo. El dato está desactualizado para timing intradía.
+
+INTERACCIÓN ETF FLOWS × FUNDING (señal de co-ocurrencia):
+
+La co-ocurrencia de flujos institucionales y presión de funding es estadísticamente más significativa que la suma aritmética de dos señales independientes.
+
+Si etf_flows.trend_7d="accumulating" Y funding_rate.severity_negative ∈ {"high_short_overload", "extreme_short_overload"}:
+→ Añadir +0.5 adicional al conviction global (no al Derivatives Score, sino al conviction del output final).
+→ Señalar en el análisis como "confluencia institucional + presión de short squeeze".
+
+Si etf_flows.trend_7d="distributing" Y funding_rate.severity ∈ {"high", "extreme"} (funding positivo extremo):
+→ Restar -0.5 adicional al conviction global.
+→ Señalar como "presión de distribución institucional + riesgo de liquidation cascade".
+
 F3. Volatility Index — DVOL (solo BTC y ETH):
 
 Usa "volatility.btc_dvol" y "volatility.eth_dvol".
@@ -342,6 +383,27 @@ Si last_choch.direction contradice last_bos.direction y ambos están dentro del 
 Si last_bos y last_choch apuntan en la misma dirección y ambos están dentro del umbral: estructura confirmada, mayor conviction.
 unmitigated_fvgs[] dentro del umbral táctico y con mitigation_pct < 40: actúan como imanes de precio. FVGs bullish = soporte potencial. FVGs bearish = resistencia potencial.
 Un FVG cerca del precio actual (< 2%) pesa más que uno lejano, siempre que esté dentro del umbral temporal.
+
+BOS POST-RETROCESO — REGLA DE CONFIRMACIÓN:
+
+El campo last_bos.valid indica si el precio actual sostiene el nivel roto o ha retrocedido por debajo de él.
+
+Si last_bos.valid=false (precio retrocedió por debajo del nivel roto — campo invalid_reason="price_retraced_below_broken_level"):
+→ Degradar BOS a status "unconfirmed". Reducir Structure Score en 1.
+→ Exigir un segundo cierre por encima del nivel roto antes de usar esta señal como táctica.
+→ No usar como trigger de entrada.
+
+Si last_bos.retracement_pct indica retroceso > 50% del nivel roto (comparar con el impulso del close):
+→ Degradar a "failed". No usar como señal estructural.
+→ Tratar como trampa de liquidez — el mercado hizo un sweep del nivel y revertió.
+
+SECUENCIA CHoCH → BOS OPUESTO (trampa estructural):
+
+Si last_choch.direction ≠ last_bos.direction Y last_bos.candles_ago < last_choch.candles_ago (BOS más reciente que CHoCH):
+→ El CHoCH previo queda invalidado por el BOS posterior — el intento de reversión falló.
+→ Priorizar la dirección del BOS como señal estructural dominante.
+→ Marcar como "failed reversal" — señal de trampa de liquidez.
+→ Reducir Structure Score en 1 adicional.
 
 F5. Liquidation Clusters:
 
@@ -400,6 +462,22 @@ Derivatives <= -1
 Volume <= -1
 estructura confirma debilidad
 ningún veto de gating activo
+
+PREPARAR
+
+Usar cuando el setup está cargado pero falta el trigger:
+
+Derivatives Score >= +1 Y condición de squeeze identificada (funding negativo extremo o OI expandiendo)
+Structure Score >= 0 (estructura no es adversa)
+No hay trigger de entrada confirmado
+El setup puede activarse en la ventana de validez definida
+
+Output de PREPARAR incluye:
+- Condición exacta de activación (precio de ruptura, cierre de vela, volumen mínimo)
+- Tamaño de posición reducido (50% del tamaño nominal hasta confirmación)
+- Precio de activación condicional (limit order o stop-limit, no market order)
+- Ventana de validez del setup (N velas del TF primario)
+- Condición de cancelación: nivel de precio o evento que invalida el setup antes de que se active
 
 ESPERAR
 
@@ -610,6 +688,7 @@ Opciones permitidas:
 
 Comprar
 Vender
+Preparar
 Esperar
 
 Obligatorio incluir:
@@ -617,6 +696,8 @@ Obligatorio incluir:
 justificación breve
 invalidación principal
 confidence: Alta / Media / Baja
+
+Nota sobre los timeframes en el dataset: Los TFs se nombran "1h", "4h", "1D", "1W" (minúsculas para intradía, mayúsculas para diario/semanal). Usar esa nomenclatura al referenciar campos del dataset (technical["1h"], technical["4h"], technical["1D"], technical["1W"]).
 
 PROHIBIDO
 

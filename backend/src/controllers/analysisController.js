@@ -204,22 +204,24 @@ function computeHistorySummaries(histories) {
   const liqHistory = histories?.liquidations ?? [];
   let liquidationsSummary = null;
   if (liqHistory.length >= 1) {
-    const totalLongs  = liqHistory.reduce((s, e) => s + e.longs_usd, 0);
-    const totalShorts = liqHistory.reduce((s, e) => s + e.shorts_usd, 0);
-    const last24h     = liqHistory.at(-1);
+    const last24h = liqHistory.at(-1);
+    // Los campos 7d solo tienen sentido con al menos 2 días de historial.
+    const has7d = liqHistory.length >= 2;
+    const totalLongs  = has7d ? liqHistory.reduce((s, e) => s + e.longs_usd, 0) : null;
+    const totalShorts = has7d ? liqHistory.reduce((s, e) => s + e.shorts_usd, 0) : null;
     const n = liqHistory.length;
     const recent3Avg = liqHistory.slice(-3).reduce((s, e) => s + e.longs_usd + e.shorts_usd, 0) / Math.min(n, 3);
-    const older3Avg  = liqHistory.slice(0, 3).reduce((s, e)  => s + e.longs_usd + e.shorts_usd, 0) / Math.min(n, 3);
-    const trendRatio = older3Avg > 0 ? recent3Avg / older3Avg : null;
+    const older3Avg  = n >= 2 ? liqHistory.slice(0, 3).reduce((s, e) => s + e.longs_usd + e.shorts_usd, 0) / Math.min(n, 3) : 0;
+    const trendRatio = has7d && older3Avg > 0 ? recent3Avg / older3Avg : null;
     liquidationsSummary = {
       last_24h_longs_usd:         last24h?.longs_usd  ?? null,
       last_24h_shorts_usd:        last24h?.shorts_usd ?? null,
       last_24h_total_usd:         last24h ? last24h.longs_usd + last24h.shorts_usd : null,
-      '7d_total_longs_usd':       parseFloat(totalLongs.toFixed(2)),
-      '7d_total_shorts_usd':      parseFloat(totalShorts.toFixed(2)),
-      '7d_avg_daily_longs_usd':   parseFloat((totalLongs / n).toFixed(2)),
-      '7d_avg_daily_shorts_usd':  parseFloat((totalShorts / n).toFixed(2)),
-      longs_vs_shorts_7d_ratio:   totalShorts > 0 ? parseFloat((totalLongs / totalShorts).toFixed(2)) : null,
+      '7d_total_longs_usd':       has7d ? parseFloat(totalLongs.toFixed(2)) : null,
+      '7d_total_shorts_usd':      has7d ? parseFloat(totalShorts.toFixed(2)) : null,
+      '7d_avg_daily_longs_usd':   has7d ? parseFloat((totalLongs / n).toFixed(2)) : null,
+      '7d_avg_daily_shorts_usd':  has7d ? parseFloat((totalShorts / n).toFixed(2)) : null,
+      longs_vs_shorts_7d_ratio:   has7d && totalShorts > 0 ? parseFloat((totalLongs / totalShorts).toFixed(2)) : null,
       trend_7d: trendRatio === null ? null : trendRatio > 1.3 ? 'escalating' : trendRatio < 0.7 ? 'decreasing' : 'stable',
     };
   }
@@ -227,11 +229,11 @@ function computeHistorySummaries(histories) {
   // ── CVD summary (30d) ───────────────────────────────────────────────────
   const cvdHistory = histories?.cvd ?? [];
   let cvdSummary = null;
-  if (cvdHistory.length >= 1) {
+  // Mínimo 2 puntos para calcular cambios; con 1 solo punto los porcentajes serían 0 espurios.
+  if (cvdHistory.length >= 2) {
     const values = cvdHistory.map(e => e.value);
     const current = cvdHistory.at(-1);
     const first = cvdHistory.at(0);
-    // Use 7d ago if available, else use first available data point
     const refPoint = cvdHistory.length >= 7 ? cvdHistory[cvdHistory.length - 7] : first;
     const change7dPct = (refPoint?.value != null && current.value != null && refPoint.value !== 0)
       ? parseFloat(((current.value - refPoint.value) / Math.abs(refPoint.value) * 100).toFixed(2))
@@ -239,14 +241,24 @@ function computeHistorySummaries(histories) {
     const change30dPct = (first?.value != null && first.value !== 0)
       ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
       : null;
+    // change_pct_24h: comparar con el punto de hace 1 día (índice -2 en historial diario).
+    const prev24h = cvdHistory.length >= 2 ? cvdHistory[cvdHistory.length - 2] : null;
+    const change24hPct = (prev24h?.value != null && prev24h.value !== 0)
+      ? parseFloat(((current.value - prev24h.value) / Math.abs(prev24h.value) * 100).toFixed(2))
+      : null;
+    const periodMin = Math.min(...values);
+    const periodMax = Math.max(...values);
     cvdSummary = {
       current_value:      current.value,
       current_trend:      current.trend,
       current_divergence: current.divergence,
+      change_pct_24h:     change24hPct,
       change_pct_7d:      change7dPct,
       change_pct_30d:     change30dPct,
-      period_min:         Math.min(...values),
-      period_max:         Math.max(...values),
+      high_7d:            periodMax,
+      low_7d:             periodMin,
+      period_min:         periodMin,
+      period_max:         periodMax,
       trend_30d:          computeLinearTrend(values),
     };
   }
@@ -376,11 +388,38 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const liq = derivatives?.liquidations    ?? null;
   const tfConflicts = analyzeTimeframeConflicts(technical, primaryTf);
 
+  // D22: fuente del precio de referencia
+  const priceSource = 'binance_spot';
+  const priceTimestampUtc = new Date().toISOString();
+
+  // D8: calcular lag de ETF flows desde as_of hasta hoy
+  let etfFlowsEnriched = etfFlows;
+  if (etfFlows?.as_of) {
+    const asOfMs = new Date(etfFlows.as_of).getTime();
+    const lagDays = Math.round((Date.now() - asOfMs) / 86400000);
+    etfFlowsEnriched = {
+      ...etfFlows,
+      data_lag_days: lagDays,
+      data_freshness: lagDays > 2 ? 'stale' : 'fresh',
+      freshness_warning: lagDays > 2
+        ? `ETF flow data is ${lagDays} days old. Use for structural context only, not short-term signal.`
+        : null,
+    };
+  }
+
+  // D9: motivo de ausencia de exchange netflow
+  const onchainEnriched = onchain ? {
+    ...onchain,
+    exchange_netflow_unavailable_reason: onchain.exchange_netflow_24h_btc == null ? 'not_in_free_tier' : null,
+  } : null;
+
   return {
     coin,
     primary_tf: primaryTf,
     price_current:        currentPrice != null ? parseFloat(currentPrice.toFixed(2)) : null,
     price_change_24h_pct: price?.change_24h_pct != null ? parseFloat(price.change_24h_pct.toFixed(2)) : null,
+    price_source: priceSource,
+    price_timestamp_utc: priceTimestampUtc,
 
     global_market: globalMarket ? {
       total_market_cap_usd:      globalMarket.total_market_cap_usd != null ? Math.round(globalMarket.total_market_cap_usd) : null,
@@ -417,6 +456,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
         rate_pct:           fr.rate_pct,
         annualized_pct:     fr.annualized_pct,
         severity:           fr.severity,
+        severity_negative:  fr.severity_negative ?? null,
         trend:              fr.trend,
         signal:             fr.signal,
         predicted_rate_pct: fr.predicted_rate_pct,
@@ -434,6 +474,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
         long_pct:  lsr.long_pct,
         short_pct: lsr.short_pct,
         signal:    lsr.signal,
+        source:    lsr.source ?? 'coinalyze',
         history:   longShortSummary,
       } : null,
 
@@ -448,9 +489,9 @@ async function buildAnalyzeContext(coin, primaryTf) {
       liquidation_clusters: liquidationClusters,
     },
 
-    onchain,
+    onchain: onchainEnriched,
 
-    etf_flows: etfFlows,
+    etf_flows: etfFlowsEnriched,
 
     macro,
 
