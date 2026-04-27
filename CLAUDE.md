@@ -442,6 +442,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **RSI guard**: caso `avgGain===0 && avgLoss===0` (precio totalmente flat) devuelve `50` (antes `NaN` por `0/0`).
   - **`calcMitigationPct` SMC**: comentario corregido (mide overlap individual máximo, no acumulado — semántica SMC clásica). Función muerta `isMitigated` eliminada.
   - **Cache armonizado**: `deribitService` usa el mismo patrón `cached.__empty ? null : cached` que el resto.
+  - **`onchainService` catch path (2026-04-27)**: `cacheSet(cacheKey, null, ...)` → `cacheSet(cacheKey, { __empty: true }, ...)`. El armonizado anterior solo había llegado a `deribitService`; aquí el `null` se interpretaba como cache miss y cada request post-fallo re-pegaba bitcoin-data.com, agotando la cuota free (15 req/día) en minutos. Ahora el sentinel bloquea reintentos durante `onchainNegativeTtl` (30 min) como pretendía el diseño original.
   - **12 tests nuevos** cubriendo: RSI flat market, BB stdDev=0, ADX ranging, SuperTrend UP↔DOWN transitions, CVD con `taker_buy_base` corrupto (NaN/negativo/>volume), Volume Profile single-bin, computeTrend con ADX en ranging vs trending. **111/111 tests pasan**.
 
 ---

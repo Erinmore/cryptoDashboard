@@ -88,7 +88,7 @@ export async function fetchOnchainMetrics(coin) {
     return result;
   } catch (err) {
     logger.warn({ coin, err: err.message }, 'Onchain fetch failed, caching negative');
-    cacheSet(cacheKey, null, env.cache.onchainNegativeTtl);
+    cacheSet(cacheKey, { __empty: true }, env.cache.onchainNegativeTtl);
     return null;
   }
 }
