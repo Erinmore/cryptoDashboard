@@ -1,0 +1,46 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptex-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_PATH: /app/data/cryptex.db
+    volumes:
+      - cryptex-db:/app/data
+    expose:
+      - "3000"
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cryptex-frontend
+    restart: unless-stopped
+    expose:
+      - "3001"
+    networks:
+      - proxy
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  cryptex-db:
+    driver: local
+
+networks:
+  proxy:
+    external: true
