@@ -548,8 +548,16 @@ export function calculateCVD(candles) {
   if (priceChange > priceThreshold && trend === 'falling') divergence = 'bearish';
   if (priceChange < -priceThreshold && trend === 'rising') divergence = 'bullish';
 
-  const cvdChange = prev !== 0 ? (current - prev) / Math.abs(prev) * 100 : 0;
   const priceChangePct = prevClose !== 0 ? priceChange / prevClose * 100 : 0;
+
+  // CVD es una serie acumulativa con signo: un % sobre Math.abs(prev) explota
+  // cuando prev pasó cerca de cero (artefacto de base pequeña, no señal real).
+  // Reportamos el delta absoluto de la ventana y su magnitud normalizada por el
+  // volumen total de la ventana — interpretable y comparable entre activos.
+  const cvdDelta = current - prev;
+  let windowVolume = 0;
+  for (let i = windowIdx; i < candles.length; i++) windowVolume += candles[i].volume;
+  const cvdDeltaVsVolumePct = windowVolume > 0 ? (cvdDelta / windowVolume) * 100 : 0;
 
   return {
     value: parseFloat(current.toFixed(2)),
@@ -557,7 +565,8 @@ export function calculateCVD(candles) {
     divergence,
     divergence_window_candles: Math.min(DIVERGENCE_WINDOW, series.length - 1),
     price_change_pct_window: parseFloat(priceChangePct.toFixed(2)),
-    cvd_change_pct_window: parseFloat(cvdChange.toFixed(2)),
+    cvd_delta_window: parseFloat(cvdDelta.toFixed(2)),
+    cvd_delta_vs_volume_pct: parseFloat(cvdDeltaVsVolumePct.toFixed(2)),
     source: hasRealTaker ? 'taker_real' : 'heuristic',
   };
 }

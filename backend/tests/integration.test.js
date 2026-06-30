@@ -400,14 +400,20 @@ describe('GET /api/analyze/payload', () => {
     expect(vol.btc_dvol).toHaveProperty('regime');
   });
 
-  test('payload.onchain is null for ETH (mocked null)', async () => {
+  test('payload.onchain reports unavailable_reason for ETH (not BTC)', async () => {
     const res = await request.get('/api/analyze/payload?coin=ETH&primary_tf=4h');
-    expect(res.body.payload.onchain).toBeNull();
+    expect(res.body.payload.onchain).toEqual({
+      available: false,
+      unavailable_reason: 'not_supported_for_asset',
+    });
   });
 
-  test('payload.etf_flows is null when service returns null (mocked)', async () => {
+  test('payload.etf_flows reports unavailable_reason for SOL (no spot ETF)', async () => {
     const res = await request.get('/api/analyze/payload?coin=SOL&primary_tf=4h');
-    expect(res.body.payload.etf_flows).toBeNull();
+    expect(res.body.payload.etf_flows).toEqual({
+      available: false,
+      unavailable_reason: 'not_supported_for_asset',
+    });
   });
 
   test('payload.timeframe_analysis has conflict field', async () => {

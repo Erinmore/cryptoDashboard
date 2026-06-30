@@ -1149,13 +1149,15 @@ describe('calculateCVD — divergencia explícita', () => {
     expect(result.divergence_window_candles).toBeGreaterThan(0);
   });
 
-  test('output includes price_change_pct_window and cvd_change_pct_window', () => {
+  test('output includes price_change_pct_window and cvd_delta_window/cvd_delta_vs_volume_pct', () => {
     const candles = makeCandles(50);
     const result = calculateCVD(candles);
     expect(result).toHaveProperty('price_change_pct_window');
-    expect(result).toHaveProperty('cvd_change_pct_window');
+    expect(result).toHaveProperty('cvd_delta_window');
+    expect(result).toHaveProperty('cvd_delta_vs_volume_pct');
     expect(typeof result.price_change_pct_window).toBe('number');
-    expect(typeof result.cvd_change_pct_window).toBe('number');
+    expect(typeof result.cvd_delta_window).toBe('number');
+    expect(typeof result.cvd_delta_vs_volume_pct).toBe('number');
   });
 
   test('with 50 flat candles, divergence_window_candles = 20 (min of WINDOW, series-1)', () => {

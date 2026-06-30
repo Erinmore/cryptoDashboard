@@ -421,7 +421,10 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const priceTimestampUtc = new Date().toISOString();
 
   // D8: calcular lag de ETF flows desde as_of hasta hoy
-  let etfFlowsEnriched = etfFlows;
+  // #9: cuando etf_flows es null distinguimos "no aplica al activo" (SOL no
+  // tiene spot ETF) de "fallo de fetch" en un activo que sí lo soporta (BTC/ETH).
+  const ETF_SUPPORTED = new Set(['BTC', 'ETH']);
+  let etfFlowsEnriched;
   if (etfFlows?.as_of) {
     const asOfMs = new Date(etfFlows.as_of).getTime();
     const lagDays = Math.round((Date.now() - asOfMs) / 86400000);
@@ -433,13 +436,23 @@ async function buildAnalyzeContext(coin, primaryTf) {
         ? `ETF flow data is ${lagDays} days old. Use for structural context only, not short-term signal.`
         : null,
     };
+  } else {
+    etfFlowsEnriched = {
+      available: false,
+      unavailable_reason: ETF_SUPPORTED.has(coin) ? 'fetch_failed' : 'not_supported_for_asset',
+    };
   }
 
-  // D9: motivo de ausencia de exchange netflow
+  // D9 + #9: on-chain solo existe para BTC; ETH/SOL no lo soportan. Cuando es
+  // null exponemos el motivo en lugar de un null pelado.
+  const ONCHAIN_SUPPORTED = new Set(['BTC']);
   const onchainEnriched = onchain ? {
     ...onchain,
     exchange_netflow_unavailable_reason: onchain.exchange_netflow_24h_btc == null ? 'not_in_free_tier' : null,
-  } : null;
+  } : {
+    available: false,
+    unavailable_reason: ONCHAIN_SUPPORTED.has(coin) ? 'fetch_failed' : 'not_supported_for_asset',
+  };
 
   return {
     coin,
