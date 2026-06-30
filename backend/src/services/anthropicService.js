@@ -1,7 +1,7 @@
 import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 
-export const PROMPT_VERSION = 'v5_1_data_quality_signals';
+export const PROMPT_VERSION = 'v5_2_orderbook_ratio_fix';
 
 const SYSTEM_PROMPT = `ROLE
 
@@ -202,11 +202,15 @@ No interpretes este campo como un porcentaje de cambio de precio ni de volumen t
 
 B2. Order Book Imbalance (ajuste al Volume Flow Score)
 
-Usa order_book.imbalance_ratio (top 20 niveles) e imbalance_top5_ratio (top 5):
+Usa order_book.imbalance_ratio (top 20 niveles) e imbalance_top5_ratio (top 5).
 
-Si imbalance_signal = "buy_pressure" (ratio > 1.2): sumar +0.5 al Volume Flow Score.
-Si imbalance_signal = "sell_pressure" (ratio < 0.8): restar -0.5 al Volume Flow Score.
-Si imbalance_signal = "balanced": sin ajuste.
+CONVENCIÓN DEL RATIO: imbalance_ratio NO es un ratio bid/ask. Es la FRACCIÓN del volumen total de profundidad que está en el lado comprador: imbalance_ratio = volumen_bids / (volumen_bids + volumen_asks). Por tanto su rango es 0.0–1.0 y 0.5 = perfectamente equilibrado. Un valor de 0.41 NO significa "sesgo vendedor fuerte"; significa que el lado comprador concentra el 41% de la profundidad (ligero sesgo vendedor, dentro de la banda neutral). imbalance_top5_ratio sigue la misma convención sobre los 5 mejores niveles.
+
+Usa el campo categórico imbalance_signal (ya calculado con los umbrales correctos), no interpretes el ratio crudo a ojo:
+
+Si imbalance_signal = "buy_pressure" (imbalance_ratio > 0.60): sumar +0.5 al Volume Flow Score.
+Si imbalance_signal = "sell_pressure" (imbalance_ratio < 0.40): restar -0.5 al Volume Flow Score.
+Si imbalance_signal = "balanced" (imbalance_ratio entre 0.40 y 0.60): sin ajuste, aunque el ratio se aleje algo de 0.50.
 
 El spread (spread_pct) indica liquidez: spread > 0.05% en BTC = mercado ilíquido, mayor riesgo de slippage.
 
