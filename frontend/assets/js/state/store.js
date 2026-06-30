@@ -15,7 +15,7 @@ const _state = {
   candles:      null,   // Array<{t, open, high, low, close, volume}>
   technical:    null,   // { '1h': {...}, '4h': {...}, '1D': {...}, '1W': {...} }
   sentiment:    null,   // { score, bullish_votes, bearish_votes, ... }
-  fearGreed:    null,   // { value, classification, trend, ... }
+  fearGreed:    null,   // { value, classification, trend_1d, ... }
   derivatives:  null,   // { funding_rate, open_interest, long_short_ratio }
   btcDominance: null,   // number
   lastAnalysis: null,   // { timestamp, action, confidence } | null

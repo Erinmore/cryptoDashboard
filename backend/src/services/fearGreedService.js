@@ -30,7 +30,7 @@ export async function fetchFearGreed() {
       classification: current.value_classification,
       previous_value: previousVal,
       previous_classification: previous?.value_classification ?? null,
-      trend: previousVal != null
+      trend_1d: previousVal != null
         ? currentVal > previousVal ? 'improving' : 'worsening'
         : null,
       trend_7d_change: weekAgoVal != null ? currentVal - weekAgoVal : null,

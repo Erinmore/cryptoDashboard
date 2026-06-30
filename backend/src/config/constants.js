@@ -1,6 +1,16 @@
 export const COINS = ['BTC', 'ETH', 'SOL'];
 export const TIMEFRAMES = ['1h', '4h', '1D', '1W'];
 
+// Duración de una vela por TF, en minutos — usado para convertir ventanas
+// expresadas en nº de velas (p. ej. divergence_window_candles) a unidades de
+// tiempo comparables entre TFs.
+export const TIMEFRAME_MINUTES = {
+  '1h': 60,
+  '4h': 240,
+  '1D': 1440,
+  '1W': 10080,
+};
+
 export const COINGECKO_IDS = {
   BTC: 'bitcoin',
   ETH: 'ethereum',
@@ -66,6 +76,17 @@ export const SR_TOLERANCE_PCT = 0.005; // 0.5%
 
 // ─── Fibonacci ────────────────────────────────────────────────
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+
+// ─── Volume Profile ───────────────────────────────────────────
+// Umbral de validez del POC (poc_distance_pct) calibrado por TF: el rango de
+// precio cubierto por el Volume Profile crece con la TF (1h ≈ 7 días, 1W ≈ 1
+// año), así que un único 5% fijo invalidaba casi siempre las TFs altas.
+export const VOLUME_PROFILE_VALID_THRESHOLD_PCT = {
+  '1h': 5,
+  '4h': 8,
+  '1D': 12,
+  '1W': 20,
+};
 
 // ─── Market Regime ────────────────────────────────────────────
 export const REGIME_BB_WIDTH_PERCENTILE_HIGH = 70;

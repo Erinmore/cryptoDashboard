@@ -156,7 +156,9 @@ function computeHistorySummaries(histories) {
       low_48h:              has48h ? Math.min(...frHistory.map(e => e.l)) : null,
       trend_48h:            has48h ? (frHistory.at(-1)?.trend ?? null) : null,
       pct_candles_positive: Math.round((positiveCount / closes.length) * 100),
-      severity_current:     latestClose > 0.5 ? 'extreme' : latestClose > 0.2 ? 'high' : latestClose > 0.05 ? 'elevated' : 'normal',
+      // Severidad del último candle de histórico (hasta 6h de lag) — puede diferir de
+      // `funding_rate.severity` (top-level), que se calcula sobre el valor live.
+      severity_last_candle: latestClose > 0.5 ? 'extreme' : latestClose > 0.2 ? 'high' : latestClose > 0.05 ? 'elevated' : 'normal',
     };
   }
 
@@ -295,8 +297,8 @@ function computeHistorySummaries(histories) {
       current_divergence: current.divergence,
       change_pct_7d:      change7dPct,
       change_pct_30d:     change30dPct,
-      period_min:         Math.min(...values),
-      period_max:         Math.max(...values),
+      period_min:         hasTrend ? Math.min(...values) : null,
+      period_max:         hasTrend ? Math.max(...values) : null,
       trend_30d:          hasTrend ? computeLinearTrend(values) : null,
     };
   }
@@ -396,6 +398,24 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const liq = derivatives?.liquidations    ?? null;
   const tfConflicts = analyzeTimeframeConflicts(technical, primaryTf);
 
+  // Crowded trade: funding extremo en una dirección sin que el Open Interest
+  // expanda en esa misma dirección — posicionamiento sobrecargado sin convicción
+  // de nuevo capital entrando (squeeze risk / late-cycle trap). Mismo patrón que ya
+  // aplica el FUNDING PERSISTENCE FILTER del SYSTEM_PROMPT, expuesto aquí como campo
+  // explícito para consumidores fuera del LLM (frontend, futuro backtesting).
+  const oiNotExpanding = openInterestSummary?.trend_7d == null || openInterestSummary.trend_7d !== 'increasing';
+  const crowdedLong  = ['high', 'extreme'].includes(fr?.severity) && oiNotExpanding;
+  const crowdedShort = ['high_short_overload', 'extreme_short_overload'].includes(fr?.severity_negative) && oiNotExpanding;
+  const crowdedTradeFlag = {
+    active: crowdedLong || crowdedShort,
+    side: crowdedLong ? 'long' : crowdedShort ? 'short' : null,
+    reason: crowdedLong
+      ? `funding_severity=${fr.severity} sin expansión de OI (trend_7d=${openInterestSummary?.trend_7d ?? 'unknown'})`
+      : crowdedShort
+        ? `funding_severity_negative=${fr.severity_negative} sin expansión de OI (trend_7d=${openInterestSummary?.trend_7d ?? 'unknown'})`
+        : null,
+  };
+
   // D22: fuente del precio de referencia
   const priceSource = 'binance_spot';
   const priceTimestampUtc = new Date().toISOString();
@@ -449,7 +469,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
       fear_greed: fearGreed ? {
         value:           fearGreed.value,
         classification:  fearGreed.classification,
-        trend:           fearGreed.trend,
+        trend_1d:        fearGreed.trend_1d,
         trend_7d_change: fearGreed.trend_7d_change,
       } : null,
       fear_greed_history: fearGreedSummary,
@@ -469,6 +489,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
         signal:             fr.signal,
         predicted_rate_pct: fr.predicted_rate_pct,
         history:            fundingRateSummary,
+        data_timestamp_utc: fr.data_timestamp_utc ?? null,
       } : null,
 
       open_interest: oi ? {
@@ -476,6 +497,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
         change_24h_pct: oi.change_24h_pct,
         signal:         oi.signal,
         history:        openInterestSummary,
+        data_timestamp_utc: oi.data_timestamp_utc ?? null,
       } : null,
 
       long_short_ratio: lsr ? {
@@ -484,6 +506,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
         signal:    lsr.signal,
         source:    lsr.source ?? 'coinalyze',
         history:   longShortSummary,
+        data_timestamp_utc: lsr.data_timestamp_utc ?? null,
       } : null,
 
       liquidations_24h: liq ? {
@@ -492,9 +515,12 @@ async function buildAnalyzeContext(coin, primaryTf) {
         total_usd:  liq.total_usd,
         signal:     liq.signal,
         history:    liquidationsSummary,
+        data_timestamp_utc: liq.data_timestamp_utc ?? null,
       } : null,
 
       liquidation_clusters: liquidationClusters,
+
+      crowded_trade_flag: crowdedTradeFlag,
     },
 
     onchain: onchainEnriched,

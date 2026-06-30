@@ -17,7 +17,7 @@ import {
 
 import { calculateVolumeProfile } from '../utils/volumeProfile.js';
 import { calculateSMC } from '../utils/smc.js';
-import { RSI_OVERBOUGHT, RSI_OVERSOLD } from '../config/constants.js';
+import { RSI_OVERBOUGHT, RSI_OVERSOLD, VOLUME_PROFILE_VALID_THRESHOLD_PCT, TIMEFRAME_MINUTES } from '../config/constants.js';
 
 /**
  * Calcula todos los indicadores técnicos para un conjunto de candles.
@@ -65,7 +65,13 @@ export function computeIndicators(candles, timeframe) {
   const volumeDelta = calculateVolumeDelta(candles);
 
   // ── CVD ──────────────────────────────────────────────────────
-  const cvd = calculateCVD(candles);
+  // divergence_window_candles no es comparable directamente entre TFs (20 velas
+  // de 1h ≈ 20h, 20 velas de 1W ≈ 140 días) — se añade el equivalente en minutos.
+  const cvdRaw = calculateCVD(candles);
+  const cvd = cvdRaw ? {
+    ...cvdRaw,
+    divergence_window_minutes: cvdRaw.divergence_window_candles * TIMEFRAME_MINUTES[timeframe],
+  } : null;
 
   // ── VWAP ─────────────────────────────────────────────────────
   const vwap = calculateVWAP(candles);
@@ -94,7 +100,7 @@ export function computeIndicators(candles, timeframe) {
   let volumeProfile = vpRaw;
   if (vpRaw && currentPrice) {
     const pocDistPct = Math.abs((vpRaw.poc - currentPrice) / currentPrice * 100);
-    const vpValid = pocDistPct <= 5;
+    const vpValid = pocDistPct <= VOLUME_PROFILE_VALID_THRESHOLD_PCT[timeframe];
     volumeProfile = {
       ...vpRaw,
       poc_distance_pct: parseFloat(pocDistPct.toFixed(2)),

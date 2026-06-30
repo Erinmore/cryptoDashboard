@@ -351,16 +351,16 @@ export function updateSentiment(state) {
 
   // Fear & Greed
   if (fearGreed) {
-    const trendArrow = fearGreed.trend === 'improving' ? ' ↑' : fearGreed.trend === 'worsening' ? ' ↓' : '';
+    const trendArrow = fearGreed.trend_1d === 'improving' ? ' ↑' : fearGreed.trend_1d === 'worsening' ? ' ↓' : '';
     setText('fear-greed-value', `${fearGreed.value}${trendArrow}`);
 
     const fgEl = $('fear-greed-label');
     if (fgEl) {
       const signalClass = fgSignalClass(fearGreed.value);
       let arrow = '→';
-      if (fearGreed.trend === 'improving') {
+      if (fearGreed.trend_1d === 'improving') {
         arrow = fearGreed.value > 50 ? '↑↑' : '↑';
-      } else if (fearGreed.trend === 'worsening') {
+      } else if (fearGreed.trend_1d === 'worsening') {
         arrow = fearGreed.value < 50 ? '↓↓' : '↓';
       } else {
         arrow = fearGreed.value > 50 ? '↑' : fearGreed.value < 50 ? '↓' : '→';

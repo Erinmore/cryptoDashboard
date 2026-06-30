@@ -91,6 +91,9 @@ export async function fetchFundingRate(coin) {
       next_funding_time: entry.next_funding_time ?? null,
       predicted_rate:     predictedRate !== null ? parseFloat(predictedRate.toFixed(6)) : null,
       predicted_rate_pct: predictedRate !== null ? parseFloat((predictedRate * 100).toFixed(4)) : null,
+      // Timestamp del propio dato de Coinalyze (`entry.update`, epoch ms) — distinto
+      // del momento del fetch. Permite detectar desync con el precio spot (cache TTL 30min).
+      data_timestamp_utc: entry.update ? new Date(entry.update).toISOString() : null,
     };
 
     cacheSet(cacheKey, result, env.cache.fundingRateTtl);
@@ -175,7 +178,13 @@ export async function fetchOpenInterest(coin) {
       }
     }
 
-    const result = { value_usd: current, change_24h_pct, signal };
+    const result = {
+      value_usd: current,
+      change_24h_pct,
+      signal,
+      // Timestamp del propio dato de Coinalyze (`entry.update`, epoch ms) — cache TTL 5min.
+      data_timestamp_utc: entry.update ? new Date(entry.update).toISOString() : null,
+    };
 
     cacheSet(cacheKey, result, env.cache.openInterestTtl);
 
@@ -245,7 +254,14 @@ export async function fetchLongShortRatio(coin) {
       : longPct < 40 ? 'shorts_dominant_contrarian_bull'
       : 'balanced';
 
-    const result = { long_pct: longPct, short_pct: shortPct, signal, source: 'coinalyze' };
+    const result = {
+      long_pct: longPct,
+      short_pct: shortPct,
+      signal,
+      source: 'coinalyze',
+      // Timestamp del último candle horario usado (`latest.t`, epoch seconds).
+      data_timestamp_utc: latest.t ? new Date(latest.t * 1000).toISOString() : null,
+    };
 
     cacheSet(cacheKey, result, env.cache.longShortTtl);
 
@@ -307,7 +323,14 @@ export async function fetchLiquidations(coin) {
       : ratio < 0.35 ? 'shorts_dominant'               // más shorts liquidados = short squeeze
       : 'balanced';
 
-    const result = { longs_usd, shorts_usd, total_usd: total, signal };
+    const result = {
+      longs_usd,
+      shorts_usd,
+      total_usd: total,
+      signal,
+      // Timestamp del último candle horario de la ventana rolling 24h usada arriba.
+      data_timestamp_utc: last24h.length ? new Date(last24h.at(-1).t * 1000).toISOString() : null,
+    };
 
     cacheSet(cacheKey, result, env.cache.liquidationsTtl);
 
