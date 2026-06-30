@@ -147,12 +147,14 @@ function computeHistorySummaries(histories) {
     const closes = frHistory.map(e => e.c);
     const positiveCount = closes.filter(v => v > 0).length;
     const latestClose = frHistory.at(-1)?.c ?? 0;
+    // Los campos 48h solo tienen sentido con al menos 2 candles de historial.
+    const has48h = frHistory.length >= 2;
     fundingRateSummary = {
-      open_48h:             frHistory.at(0)?.o ?? null,
+      open_48h:             has48h ? frHistory.at(0)?.o ?? null : null,
       close_current:        frHistory.at(-1)?.c ?? null,
-      high_48h:             Math.max(...frHistory.map(e => e.h)),
-      low_48h:              Math.min(...frHistory.map(e => e.l)),
-      trend_48h:            frHistory.at(-1)?.trend ?? null,
+      high_48h:             has48h ? Math.max(...frHistory.map(e => e.h)) : null,
+      low_48h:              has48h ? Math.min(...frHistory.map(e => e.l)) : null,
+      trend_48h:            has48h ? (frHistory.at(-1)?.trend ?? null) : null,
       pct_candles_positive: Math.round((positiveCount / closes.length) * 100),
       severity_current:     latestClose > 0.5 ? 'extreme' : latestClose > 0.2 ? 'high' : latestClose > 0.05 ? 'elevated' : 'normal',
     };
@@ -162,18 +164,22 @@ function computeHistorySummaries(histories) {
   const oiHistory = histories?.open_interest ?? [];
   let openInterestSummary = null;
   if (oiHistory.length >= 1) {
-    const open7d  = oiHistory.at(0)?.o ?? null;
+    // Los campos 7d solo tienen sentido con al menos 2 candles de historial (4h c/u).
+    const has7d = oiHistory.length >= 2;
+    const open7d  = has7d ? oiHistory.at(0)?.o ?? null : null;
     const close7d = oiHistory.at(-1)?.c ?? null;
-    const change7dPct = open7d ? ((close7d - open7d) / open7d) * 100 : null;
-    const last6 = oiHistory.slice(-6); // ~24h en candles de 4h
-    const last6Open  = last6.at(0)?.o ?? null;
+    const change7dPct = has7d && open7d ? ((close7d - open7d) / open7d) * 100 : null;
+    // Los campos 24h necesitan ~6 candles de 4h (24h reales), no solo el punto actual.
+    const has24h = oiHistory.length >= 6;
+    const last6 = oiHistory.slice(-6);
+    const last6Open  = has24h ? last6.at(0)?.o ?? null : null;
     const last6Close = last6.at(-1)?.c ?? null;
-    const change24hPct = last6Open ? ((last6Close - last6Open) / last6Open) * 100 : null;
+    const change24hPct = has24h && last6Open ? ((last6Close - last6Open) / last6Open) * 100 : null;
     openInterestSummary = {
       open_7d_usd:    open7d,
       current_usd:    close7d,
-      high_7d_usd:    Math.max(...oiHistory.map(e => e.h)),
-      low_7d_usd:     Math.min(...oiHistory.map(e => e.l)),
+      high_7d_usd:    has7d ? Math.max(...oiHistory.map(e => e.h)) : null,
+      low_7d_usd:     has7d ? Math.min(...oiHistory.map(e => e.l)) : null,
       change_7d_pct:  change7dPct  !== null ? parseFloat(change7dPct.toFixed(2))  : null,
       change_24h_pct: change24hPct !== null ? parseFloat(change24hPct.toFixed(2)) : null,
       trend_7d:       change7dPct === null ? null : change7dPct > 5 ? 'increasing' : change7dPct < -5 ? 'decreasing' : 'stable',
@@ -273,12 +279,14 @@ function computeHistorySummaries(histories) {
     const values = vwapHistory.map(e => e.value);
     const current = vwapHistory.at(-1);
     const first = vwapHistory.at(0);
+    // Con un único punto histórico, deltas y trend serían 0/espurios — requerir al menos 2.
+    const hasTrend = vwapHistory.length >= 2;
     // Use 7d ago if available, else use first available data point
     const refPoint = vwapHistory.length >= 7 ? vwapHistory[vwapHistory.length - 7] : first;
-    const change7dPct = (refPoint?.value != null && current.value != null && refPoint.value !== 0)
+    const change7dPct = (hasTrend && refPoint?.value != null && current.value != null && refPoint.value !== 0)
       ? parseFloat(((current.value - refPoint.value) / Math.abs(refPoint.value) * 100).toFixed(2))
       : null;
-    const change30dPct = (first?.value != null && first.value !== 0)
+    const change30dPct = (hasTrend && first?.value != null && first.value !== 0)
       ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
       : null;
     vwapSummary = {
@@ -289,7 +297,7 @@ function computeHistorySummaries(histories) {
       change_pct_30d:     change30dPct,
       period_min:         Math.min(...values),
       period_max:         Math.max(...values),
-      trend_30d:          computeLinearTrend(values),
+      trend_30d:          hasTrend ? computeLinearTrend(values) : null,
     };
   }
 
@@ -378,7 +386,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
     }
   }
 
-  const histories = getHistories();
+  const histories = getHistories(coin);
   const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, vwapSummary } =
     computeHistorySummaries(histories);
 

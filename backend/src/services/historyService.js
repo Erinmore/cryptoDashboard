@@ -5,15 +5,18 @@
  * temporal al análisis de mercado. Los datos se mantienen en memoria y se
  * limpian automáticamente cuando superan los límites.
  *
+ * Todas las series son por-coin (BTC/ETH/SOL tienen históricos independientes),
+ * excepto Fear & Greed que es un índice de mercado global compartido.
+ *
  * Exportadas:
  *   addFearGreedEntry(value, classification, trend, date?)
- *   addFundingRateEntry(candle)                          — {t, o, h, l, c, trend}
- *   addOpenInterestEntry(candle)                         — {t, o, h, l, c}
- *   addLongShortRatioEntry(entry)                        — {t, long_pct, short_pct}
- *   addLiquidationsEntry(date, longs_usd, shorts_usd)
- *   addCVDEntry(date, value, trend, divergence)
- *   addVWAPEntry(date, value, trend, divergence)
- *   getHistories()                                       — retorna todos los históricos
+ *   addFundingRateEntry(coin, candle)                          — {t, o, h, l, c, trend}
+ *   addOpenInterestEntry(coin, candle)                         — {t, o, h, l, c}
+ *   addLongShortRatioEntry(coin, entry)                        — {t, long_pct, short_pct}
+ *   addLiquidationsEntry(coin, date, longs_usd, shorts_usd)
+ *   addCVDEntry(coin, date, value, trend, divergence)
+ *   addVWAPEntry(coin, date, value, trend, divergence)
+ *   getHistories(coin)                                         — retorna los históricos del coin + fear_greed global
  */
 
 import logger from '../middleware/logger.js';
@@ -29,17 +32,27 @@ const LIMITS = {
   vwap:           30,    // 30 días (1 entry/día)
 };
 
-const histories = {
-  fearGreed:      [],
-  fundingRate:    [],
-  openInterest:   [],
-  longShortRatio: [],
-  liquidations:   [],
-  cvd:            [],
-  vwap:           [],
-};
+// Fear & Greed es un índice de mercado global — una sola serie compartida.
+const fearGreedHistory = [];
 
-// ─── Fear & Greed ─────────────────────────────────────────────────────────
+// El resto de series son por coin: { BTC: {fundingRate: [], ...}, ETH: {...}, SOL: {...} }
+const coinHistories = {};
+
+function getCoinHistory(coin) {
+  if (!coinHistories[coin]) {
+    coinHistories[coin] = {
+      fundingRate:    [],
+      openInterest:   [],
+      longShortRatio: [],
+      liquidations:   [],
+      cvd:            [],
+      vwap:           [],
+    };
+  }
+  return coinHistories[coin];
+}
+
+// ─── Fear & Greed (global, no por coin) ────────────────────────────────────
 
 export function addFearGreedEntry(value, classification, trend, date = null) {
   if (value == null || classification == null) return;
@@ -52,90 +65,94 @@ export function addFearGreedEntry(value, classification, trend, date = null) {
   };
 
   // Evitar duplicados del mismo día
-  if (histories.fearGreed.length > 0) {
-    const last = histories.fearGreed[histories.fearGreed.length - 1];
+  if (fearGreedHistory.length > 0) {
+    const last = fearGreedHistory[fearGreedHistory.length - 1];
     if (last.date === entry.date) {
-      histories.fearGreed[histories.fearGreed.length - 1] = entry;
+      fearGreedHistory[fearGreedHistory.length - 1] = entry;
       return;
     }
   }
 
-  histories.fearGreed.push(entry);
-  if (histories.fearGreed.length > LIMITS.fearGreed) {
-    histories.fearGreed.shift();
+  fearGreedHistory.push(entry);
+  if (fearGreedHistory.length > LIMITS.fearGreed) {
+    fearGreedHistory.shift();
   }
 }
 
 // ─── Funding Rate ────────────────────────────────────────────────────────
 
-export function addFundingRateEntry(candle) {
-  if (!candle || candle.t == null) return;
+export function addFundingRateEntry(coin, candle) {
+  if (!coin || !candle || candle.t == null) return;
+  const history = getCoinHistory(coin).fundingRate;
 
   const entry = { ...candle }; // { t, o, h, l, c, trend }
 
   // Evitar duplicados del mismo timestamp
-  if (histories.fundingRate.length > 0) {
-    const last = histories.fundingRate[histories.fundingRate.length - 1];
+  if (history.length > 0) {
+    const last = history[history.length - 1];
     if (last.t === entry.t) {
-      histories.fundingRate[histories.fundingRate.length - 1] = entry;
+      history[history.length - 1] = entry;
       return;
     }
   }
 
-  histories.fundingRate.push(entry);
-  if (histories.fundingRate.length > LIMITS.fundingRate) {
-    histories.fundingRate.shift();
+  history.push(entry);
+  if (history.length > LIMITS.fundingRate) {
+    history.shift();
   }
 }
 
 // ─── Open Interest ────────────────────────────────────────────────────────
 
-export function addOpenInterestEntry(candle) {
-  if (!candle || candle.t == null) return;
+export function addOpenInterestEntry(coin, candle) {
+  if (!coin || !candle || candle.t == null) return;
+  const history = getCoinHistory(coin).openInterest;
 
   const entry = { ...candle }; // { t, o, h, l, c }
 
   // Evitar duplicados
-  if (histories.openInterest.length > 0) {
-    const last = histories.openInterest[histories.openInterest.length - 1];
+  if (history.length > 0) {
+    const last = history[history.length - 1];
     if (last.t === entry.t) {
-      histories.openInterest[histories.openInterest.length - 1] = entry;
+      history[history.length - 1] = entry;
       return;
     }
   }
 
-  histories.openInterest.push(entry);
-  if (histories.openInterest.length > LIMITS.openInterest) {
-    histories.openInterest.shift();
+  history.push(entry);
+  if (history.length > LIMITS.openInterest) {
+    history.shift();
   }
 }
 
 // ─── Long/Short Ratio ────────────────────────────────────────────────────
 
-export function addLongShortRatioEntry(entry) {
-  if (!entry || entry.t == null) return;
+export function addLongShortRatioEntry(coin, entry) {
+  if (!coin || !entry || entry.t == null) return;
+  const history = getCoinHistory(coin).longShortRatio;
 
   const data = { ...entry }; // { t, long_pct, short_pct }
 
   // Evitar duplicados
-  if (histories.longShortRatio.length > 0) {
-    const last = histories.longShortRatio[histories.longShortRatio.length - 1];
+  if (history.length > 0) {
+    const last = history[history.length - 1];
     if (last.t === entry.t) {
-      histories.longShortRatio[histories.longShortRatio.length - 1] = data;
+      history[history.length - 1] = data;
       return;
     }
   }
 
-  histories.longShortRatio.push(data);
-  if (histories.longShortRatio.length > LIMITS.longShortRatio) {
-    histories.longShortRatio.shift();
+  history.push(data);
+  if (history.length > LIMITS.longShortRatio) {
+    history.shift();
   }
 }
 
 // ─── Liquidaciones ────────────────────────────────────────────────────────
 
-export function addLiquidationsEntry(date, longs_usd, shorts_usd) {
-  if (date == null || longs_usd == null || shorts_usd == null) return;
+export function addLiquidationsEntry(coin, date, longs_usd, shorts_usd) {
+  if (!coin || date == null || longs_usd == null || shorts_usd == null) return;
+  const history = getCoinHistory(coin).liquidations;
 
   const entry = {
     date,  // YYYY-MM-DD format
@@ -144,24 +161,25 @@ export function addLiquidationsEntry(date, longs_usd, shorts_usd) {
   };
 
   // Evitar duplicados del mismo día
-  if (histories.liquidations.length > 0) {
-    const last = histories.liquidations[histories.liquidations.length - 1];
+  if (history.length > 0) {
+    const last = history[history.length - 1];
     if (last.date === entry.date) {
-      histories.liquidations[histories.liquidations.length - 1] = entry;
+      history[history.length - 1] = entry;
       return;
     }
   }
 
-  histories.liquidations.push(entry);
-  if (histories.liquidations.length > LIMITS.liquidations) {
-    histories.liquidations.shift();
+  history.push(entry);
+  if (history.length > LIMITS.liquidations) {
+    history.shift();
   }
 }
 
 // ─── CVD ──────────────────────────────────────────────────────────────────
 
-export function addCVDEntry(date, value, trend, divergence) {
-  if (value == null) return;
+export function addCVDEntry(coin, date, value, trend, divergence) {
+  if (!coin || value == null) return;
+  const history = getCoinHistory(coin).cvd;
 
   const entry = {
     date: date || new Date().toISOString().split('T')[0], // YYYY-MM-DD
@@ -171,24 +189,25 @@ export function addCVDEntry(date, value, trend, divergence) {
   };
 
   // Evitar duplicados del mismo día
-  if (histories.cvd.length > 0) {
-    const last = histories.cvd[histories.cvd.length - 1];
+  if (history.length > 0) {
+    const last = history[history.length - 1];
     if (last.date === entry.date) {
-      histories.cvd[histories.cvd.length - 1] = entry;
+      history[history.length - 1] = entry;
       return;
     }
   }
 
-  histories.cvd.push(entry);
-  if (histories.cvd.length > LIMITS.cvd) {
-    histories.cvd.shift();
+  history.push(entry);
+  if (history.length > LIMITS.cvd) {
+    history.shift();
   }
 }
 
 // ─── VWAP ─────────────────────────────────────────────────────────────────
 
-export function addVWAPEntry(date, value, trend, divergence) {
-  if (value == null) return;
+export function addVWAPEntry(coin, date, value, trend, divergence) {
+  if (!coin || value == null) return;
+  const history = getCoinHistory(coin).vwap;
 
   const entry = {
     date: date || new Date().toISOString().split('T')[0], // YYYY-MM-DD
@@ -198,48 +217,55 @@ export function addVWAPEntry(date, value, trend, divergence) {
   };
 
   // Evitar duplicados del mismo día
-  if (histories.vwap.length > 0) {
-    const last = histories.vwap[histories.vwap.length - 1];
+  if (history.length > 0) {
+    const last = history[history.length - 1];
     if (last.date === entry.date) {
-      histories.vwap[histories.vwap.length - 1] = entry;
+      history[history.length - 1] = entry;
       return;
     }
   }
 
-  histories.vwap.push(entry);
-  if (histories.vwap.length > LIMITS.vwap) {
-    histories.vwap.shift();
+  history.push(entry);
+  if (history.length > LIMITS.vwap) {
+    history.shift();
   }
 }
 
 // ─── Getter ───────────────────────────────────────────────────────────────
 
 /**
- * Retorna todos los históricos actuales (lectura).
+ * Retorna los históricos de un coin (lectura) + Fear & Greed global.
  * Los datos se pasan tal cual al response JSON para el LLM.
  */
-export function getHistories() {
+export function getHistories(coin) {
+  const history = getCoinHistory(coin);
   return {
-    fear_greed: [...histories.fearGreed],        // copia para evitar mutaciones
-    funding_rate: [...histories.fundingRate],
-    open_interest: [...histories.openInterest],
-    long_short_ratio: [...histories.longShortRatio],
-    liquidations: [...histories.liquidations],
-    cvd: [...histories.cvd],
-    vwap: [...histories.vwap],
+    fear_greed: [...fearGreedHistory],          // copia para evitar mutaciones, global
+    funding_rate: [...history.fundingRate],
+    open_interest: [...history.openInterest],
+    long_short_ratio: [...history.longShortRatio],
+    liquidations: [...history.liquidations],
+    cvd: [...history.cvd],
+    vwap: [...history.vwap],
   };
 }
 
 // ─── Debug ────────────────────────────────────────────────────────────────
 
 export function logHistoriesSummary() {
+  const perCoin = Object.fromEntries(
+    Object.entries(coinHistories).map(([coin, h]) => [coin, {
+      fundingRateEntries: h.fundingRate.length,
+      openInterestEntries: h.openInterest.length,
+      longShortRatioEntries: h.longShortRatio.length,
+      liquidationsEntries: h.liquidations.length,
+      cvdEntries: h.cvd.length,
+      vwapEntries: h.vwap.length,
+    }]),
+  );
+
   logger.info({
-    fearGreedEntries: histories.fearGreed.length,
-    fundingRateEntries: histories.fundingRate.length,
-    openInterestEntries: histories.openInterest.length,
-    longShortRatioEntries: histories.longShortRatio.length,
-    liquidationsEntries: histories.liquidations.length,
-    cvdEntries: histories.cvd.length,
-    vwapEntries: histories.vwap.length,
+    fearGreedEntries: fearGreedHistory.length,
+    ...perCoin,
   }, 'Historical data summary');
 }

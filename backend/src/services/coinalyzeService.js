@@ -95,21 +95,25 @@ export async function fetchFundingRate(coin) {
 
     cacheSet(cacheKey, result, env.cache.fundingRateTtl);
 
-    // Alimentar histórico con el último candle del history si disponible
+    // Alimentar histórico con TODO el rango devuelto por Coinalyze (no solo el
+    // último candle) — la API ya trae 48h completas en cada llamada, así que
+    // el histórico en memoria se rellena de golpe en vez de esperar 8 polls
+    // espaciados. addFundingRateEntry hace upsert por timestamp, así que
+    // reenviar candles ya conocidos es inofensivo.
     try {
       if (historyRes.status === 'fulfilled') {
         const hist = historyRes.value.data?.[0]?.history ?? [];
-        if (hist.length > 0) {
-          const lastCandle = hist[hist.length - 1];
-          addFundingRateEntry({
-            t: lastCandle.t,
-            o: lastCandle.o,
-            h: lastCandle.h,
-            l: lastCandle.l,
-            c: lastCandle.c,
-            trend: result.trend,
+        hist.forEach((candle, idx) => {
+          addFundingRateEntry(coin, {
+            t: candle.t,
+            o: candle.o,
+            h: candle.h,
+            l: candle.l,
+            c: candle.c,
+            // trend_48h solo tiene sentido en el candle más reciente.
+            trend: idx === hist.length - 1 ? result.trend : null,
           });
-        }
+        });
       }
     } catch (e) {
       logger.warn({ coin, err: e.message }, 'Failed to add Funding Rate to history');
@@ -136,7 +140,9 @@ export async function fetchOpenInterest(coin) {
 
   try {
     const now  = Math.floor(Date.now() / 1000);
-    const from = now - 26 * 3600; // ~26h para asegurar que tenemos el punto de 24h atrás
+    // 7d completos: el histórico de 7d necesita 42 candles de 4h, no solo el
+    // tramo de 24h que usa el cálculo de change_24h_pct.
+    const from = now - 7 * 24 * 3600;
 
     const [currentRes, historyRes] = await Promise.allSettled([
       getClient().get('/open-interest', { params: { symbols: symbol } }),
@@ -150,13 +156,14 @@ export async function fetchOpenInterest(coin) {
 
     const current = entry.value ?? 0;
 
-    // Cambio 24h: comparar cierre actual vs open del punto más antiguo del histórico (~24h atrás)
+    // Cambio 24h: comparar cierre actual vs open de hace ~24h (últimos 6 candles de 4h)
     let change_24h_pct = null;
     let signal = 'stable';
     if (historyRes.status === 'fulfilled') {
       const hist = historyRes.value.data?.[0]?.history ?? [];
-      if (hist.length >= 2) {
-        const oldest = hist[0].o;
+      const last24h = hist.slice(-6);
+      if (last24h.length >= 2) {
+        const oldest = last24h[0].o;
         if (oldest && oldest !== 0) {
           change_24h_pct = parseFloat(((current - oldest) / Math.abs(oldest) * 100).toFixed(2));
           signal = change_24h_pct > 5 ? 'increasing_fast'
@@ -172,18 +179,18 @@ export async function fetchOpenInterest(coin) {
 
     cacheSet(cacheKey, result, env.cache.openInterestTtl);
 
-    // Alimentar histórico con el último candle del history
+    // Alimentar histórico con TODO el rango devuelto (ver razonamiento en
+    // fetchFundingRate) — Coinalyze ya trae hasta 7d de candles de 4h por llamada.
     try {
       if (historyRes.status === 'fulfilled') {
         const hist = historyRes.value.data?.[0]?.history ?? [];
-        if (hist.length > 0) {
-          const lastCandle = hist[hist.length - 1];
-          addOpenInterestEntry({
-            t: lastCandle.t,
-            o: lastCandle.o,
-            h: lastCandle.h,
-            l: lastCandle.l,
-            c: lastCandle.c,
+        for (const candle of hist) {
+          addOpenInterestEntry(coin, {
+            t: candle.t,
+            o: candle.o,
+            h: candle.h,
+            l: candle.l,
+            c: candle.c,
           });
         }
       }
@@ -245,7 +252,7 @@ export async function fetchLongShortRatio(coin) {
     // Alimentar histórico con todos los entries disponibles
     try {
       for (const entry of history) {
-        addLongShortRatioEntry({
+        addLongShortRatioEntry(coin, {
           t: entry.t,
           long_pct: parseFloat((entry.l ?? 50).toFixed(1)),
           short_pct: parseFloat((entry.s ?? 50).toFixed(1)),
@@ -276,7 +283,9 @@ export async function fetchLiquidations(coin) {
 
   try {
     const now  = Math.floor(Date.now() / 1000);
-    const from = now - 24 * 3600;
+    // 7d completos para poder rellenar de golpe el histórico de 7d (antes solo
+    // se pedían 24h y el histórico tardaba una semana real en llenarse).
+    const from = now - 7 * 24 * 3600;
 
     const { data } = await getClient().get('/liquidation-history', {
       params: { symbols: symbol, interval: '1hour', from, to: now },
@@ -285,9 +294,11 @@ export async function fetchLiquidations(coin) {
     const hist = data?.[0]?.history ?? [];
     if (!hist.length) return null;
 
-    // l = longs liquidados (precio bajó), s = shorts liquidados (precio subió)
-    const longs_usd  = parseFloat(hist.reduce((acc, h) => acc + (h.l ?? 0), 0).toFixed(2));
-    const shorts_usd = parseFloat(hist.reduce((acc, h) => acc + (h.s ?? 0), 0).toFixed(2));
+    // "current" = ventana rolling de últimas 24h (últimos 24 candles de 1h),
+    // no el día calendario — l = longs liquidados (precio bajó), s = shorts (precio subió)
+    const last24h = hist.slice(-24);
+    const longs_usd  = parseFloat(last24h.reduce((acc, h) => acc + (h.l ?? 0), 0).toFixed(2));
+    const shorts_usd = parseFloat(last24h.reduce((acc, h) => acc + (h.s ?? 0), 0).toFixed(2));
     const total      = longs_usd + shorts_usd;
 
     // Señal: dominancia de un lado indica presión de mercado
@@ -300,10 +311,24 @@ export async function fetchLiquidations(coin) {
 
     cacheSet(cacheKey, result, env.cache.liquidationsTtl);
 
-    // Alimentar histórico con entry de hoy
+    // Backfill histórico: agrupar los candles horarios por día calendario UTC
+    // para rellenar hasta 7 días de golpe. El día de hoy se sobreescribe
+    // después con la ventana rolling de 24h calculada arriba, para que quede
+    // coherente con `result`.
     try {
+      const byDate = new Map();
+      for (const candle of hist) {
+        const date = new Date(candle.t * 1000).toISOString().split('T')[0];
+        const bucket = byDate.get(date) ?? { longs: 0, shorts: 0 };
+        bucket.longs  += candle.l ?? 0;
+        bucket.shorts += candle.s ?? 0;
+        byDate.set(date, bucket);
+      }
+      for (const [date, { longs, shorts }] of byDate) {
+        addLiquidationsEntry(coin, date, longs, shorts);
+      }
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-      addLiquidationsEntry(today, longs_usd, shorts_usd);
+      addLiquidationsEntry(coin, today, longs_usd, shorts_usd);
     } catch (e) {
       logger.warn({ coin, err: e.message }, 'Failed to add Liquidations to history');
     }

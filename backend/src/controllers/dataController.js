@@ -81,25 +81,22 @@ export async function getData(req, res, next) {
       }
     }
 
-    // Leer histórico previo ANTES de agregar nuevas entradas (para calcular change_pct_7d)
-    const prevHistories = getHistories();
-
     // Poblar históricos CVD/VWAP desde indicadores 1D
     const today = new Date().toISOString().split('T')[0];
     const cvdIndicator = technical['1D']?.cvd;
     const vwapIndicator = technical['1D']?.vwap;
 
     if (cvdIndicator) {
-      addCVDEntry(today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence);
+      addCVDEntry(coin, today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence);
     }
 
     if (vwapIndicator) {
-      addVWAPEntry(today, vwapIndicator.value, vwapIndicator.trend, vwapIndicator.divergence);
+      addVWAPEntry(coin, today, vwapIndicator.value, vwapIndicator.trend, vwapIndicator.divergence);
     }
 
     // Una sola llamada final a getHistories() — incluye las entradas recién añadidas
     const processingMs = Date.now() - start;
-    const histories = getHistories();
+    const histories = getHistories(coin);
 
     res.json({
       meta: {
