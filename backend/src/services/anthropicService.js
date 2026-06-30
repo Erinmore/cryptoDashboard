@@ -1,7 +1,7 @@
 import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 
-export const PROMPT_VERSION = 'v4_2_briefing_fixes';
+export const PROMPT_VERSION = 'v5_0_structured_output';
 
 const SYSTEM_PROMPT = `ROLE
 
@@ -648,54 +648,57 @@ trade ejecutable
 
 OUTPUT FORMAT
 
-1. Executive Summary
+IMPORTANTE: Tu respuesta debe ser EXCLUSIVAMENTE un objeto JSON válido. Sin texto antes ni después. Sin markdown. Sin bloques de código. Solo el JSON.
 
-Máximo 2 frases.
+El JSON debe tener exactamente esta estructura:
 
-2. Smart Money Read
+{
+  "structured": {
+    "action": "<Comprar|Vender|Preparar|Esperar>",
+    "confidence": "<Alta|Media|Baja>",
+    "risk_score": <1-10>,
+    "conviction": <0.0-1.0>,
+    "primary_driver": "<derivatives|structure|macro|volume|onchain>",
+    "has_executable_setup": <true|false>,
+    "gating_active": <true|false>,
+    "gating_reason": "<string o null>",
+    "contradictions_found": <true|false>,
+    "scores": {
+      "derivatives": <-2|-1|0|1|2>,
+      "structure": <-2|-1|0|1|2>,
+      "volume": <-2|-1|0|1|2>,
+      "onchain": <-2|-1|0|1|2>,
+      "total": <número decimal>
+    },
+    "setup": <null o {
+      "entry_price": <número>,
+      "stop_price": <número>,
+      "tp1_price": <número>,
+      "tp2_price": <número>,
+      "validity_candles": <entero>,
+      "tf_execution": "<1h|4h|1D|1W>"
+    }>,
+    "executive_summary": "<máximo 2 frases>"
+  },
+  "narrative": {
+    "smart_money_read": "<string>",
+    "divergences_anomalies": "<string>",
+    "tactical_setup": "<string>",
+    "risk_analysis": "<string>",
+    "recommendation_detail": "<string>",
+    "invalidation": "<string>"
+  }
+}
 
-Qué parece hacer la liquidez profesional.
-
-3. Divergences & Anomalies
-
-Lista concreta. Incluir explícitamente si hay vetos de gating activos y cuáles.
-
-4. Tactical Trade Setup
-
-Escenario principal
-Entrada
-Stop
-TP1
-TP2
-Validity window: "Este setup es válido por las próximas [N] velas del TF de ejecución [TF]. Si en ese plazo no se activa la entrada o el precio viola [nivel de invalidación], el setup caduca."
-
-Si no hay setup ejecutable:
-
-Decirlo explícitamente. Indicar qué veto o condición lo impide. Incluir igualmente un validity_window indicando cuándo reevaluar y qué condición concreta debe cambiar para levantar el bloqueo.
-
-5. Risk Score (1-10)
-
-Explicar:
-
-probabilidad
-squeeze risk
-fake move risk
-si hay excursión de precio activa sobre el VAH/VAL del TF primario
-
-6. Neutral Recommendation
-
-Opciones permitidas:
-
-Comprar
-Vender
-Preparar
-Esperar
-
-Obligatorio incluir:
-
-justificación breve
-invalidación principal
-confidence: Alta / Media / Baja
+Reglas de validación del JSON:
+- action debe ser exactamente uno de: Comprar, Vender, Preparar, Esperar
+- confidence debe ser exactamente uno de: Alta, Media, Baja
+- risk_score debe ser un entero entre 1 y 10
+- conviction debe ser un número entre 0.0 y 1.0
+- Todos los campos de scores deben ser enteros entre -2 y +2
+- setup es null si no hay setup ejecutable (has_executable_setup=false)
+- executive_summary máximo 2 frases, sin saltos de línea
+- Los campos de narrative son strings con el análisis completo (pueden ser párrafos largos)
 
 Nota sobre los timeframes en el dataset: Los TFs se nombran "1h", "4h", "1D", "1W" (minúsculas para intradía, mayúsculas para diario/semanal). Usar esa nomenclatura al referenciar campos del dataset (technical["1h"], technical["4h"], technical["1D"], technical["1W"]).
 
@@ -723,10 +726,10 @@ function buildPrompt(ctx) {
 }
 
 /**
- * Envía el contexto de mercado a Anthropic Claude y retorna una recomendación estructurada.
+ * Envía el contexto de mercado a Anthropic Claude y retorna { structured, narrative, ai_metadata }.
  *
  * @param {object} context - Contexto completo con technical, sentiment, derivatives, etc.
- * @returns {Promise<{ recommendation: object, ai_metadata: object }>}
+ * @returns {Promise<{ structured: object, narrative: object, ai_metadata: object }>}
  * @throws {AppError} 503 si ANTHROPIC_API_KEY no está configurada
  */
 export async function analyzeMarket(context) {
@@ -738,36 +741,47 @@ export async function analyzeMarket(context) {
     );
   }
 
-  // ── TODO: implementar cuando esté disponible ANTHROPIC_API_KEY ──────────────
-  //
-  // import Anthropic from '@anthropic-ai/sdk';
-  // const client = new Anthropic({ apiKey: env.anthropicApiKey });
-  //
-  // const response = await client.messages.create({
-  //   model: 'claude-opus-4-5-20251101',
-  //   max_tokens: 2048,
-  //   system: SYSTEM_PROMPT,
-  //   messages: [{ role: 'user', content: buildPrompt(context) }],
-  // });
-  //
-  // const raw = response.content[0].text;
-  // const recommendation = JSON.parse(raw);
-  //
-  // return {
-  //   recommendation,
-  //   ai_metadata: {
-  //     model: response.model,
-  //     prompt_version: PROMPT_VERSION,
-  //     input_tokens: response.usage.input_tokens,
-  //     output_tokens: response.usage.output_tokens,
-  //   },
-  // };
+  const Anthropic = (await import('@anthropic-ai/sdk')).default;
+  const client = new Anthropic({ apiKey: env.anthropicApiKey });
 
-  throw new AppError(
-    'Anthropic service pending implementation — add ANTHROPIC_API_KEY to activate',
-    501,
-    'NOT_IMPLEMENTED',
-  );
+  const response = await client.messages.create({
+    model: 'claude-opus-4-7',
+    max_tokens: 4096,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: buildPrompt(context) }],
+  });
+
+  const raw = response.content[0].text.trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new AppError(
+      `Anthropic returned non-JSON response: ${raw.slice(0, 200)}`,
+      502,
+      'UPSTREAM_PARSE_ERROR',
+    );
+  }
+
+  if (!parsed.structured || !parsed.narrative) {
+    throw new AppError(
+      'Anthropic response missing structured or narrative block',
+      502,
+      'UPSTREAM_PARSE_ERROR',
+    );
+  }
+
+  return {
+    structured: parsed.structured,
+    narrative: parsed.narrative,
+    ai_metadata: {
+      model: response.model,
+      prompt_version: PROMPT_VERSION,
+      input_tokens: response.usage.input_tokens,
+      output_tokens: response.usage.output_tokens,
+    },
+  };
 }
 
 export { buildPrompt };

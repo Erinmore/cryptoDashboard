@@ -123,13 +123,40 @@ jest.unstable_mockModule('../src/services/deribitService.js', () => ({
   })),
 }));
 
-// anthropicService stub — analyzeMarket still disabled; mock returns fixed recommendation
+// anthropicService stub — mock returns new {structured, narrative, ai_metadata} format
 jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
   analyzeMarket: jest.fn(async () => ({
-    recommendation: { action: 'hold', confidence: 'medium', reasoning: 'stub' },
-    ai_metadata:    { model: 'stub', tokens: 0 },
+    structured: {
+      action:               'Esperar',
+      confidence:           'Media',
+      risk_score:           6,
+      conviction:           0.4,
+      primary_driver:       'derivatives',
+      has_executable_setup: false,
+      gating_active:        false,
+      gating_reason:        null,
+      contradictions_found: true,
+      scores: { derivatives: 0, structure: -1, volume: 0, onchain: 0, total: -0.2 },
+      setup:            null,
+      executive_summary: 'Señales contradictorias entre derivados y estructura. Sin setup ejecutable en este momento.',
+    },
+    narrative: {
+      smart_money_read:      'Liquidez profesional en modo observación.',
+      divergences_anomalies: 'CVD 1D divergente con precio.',
+      tactical_setup:        'Sin setup ejecutable.',
+      risk_analysis:         'Risk score 6/10 por conflicto de timeframes.',
+      recommendation_detail: 'Esperar confirmación estructural antes de entrar.',
+      invalidation:          'Cierre por debajo del soporte en 4h invalida el sesgo alcista.',
+    },
+    ai_metadata: {
+      model:          'stub',
+      prompt_version: 'v5_0_structured_output',
+      input_tokens:   0,
+      output_tokens:  0,
+    },
   })),
   buildPrompt: jest.fn(() => 'stub prompt'),
+  PROMPT_VERSION: 'v5_0_structured_output',
 }));
 
 // ─── Import app AND mocked modules AFTER mocks are in place ──────────────────
@@ -487,7 +514,7 @@ describe('GET /api/history/:coin', () => {
 // ─── POST /api/analyze ────────────────────────────────────────────────────────
 
 describe('POST /api/analyze', () => {
-  test('returns 200 with recommendation shape (stub LLM)', async () => {
+  test('returns 200 with structured + narrative shape (stub LLM)', async () => {
     const res = await request
       .post('/api/analyze')
       .send({ coin: 'BTC', primary_tf: '4h' });
@@ -496,9 +523,24 @@ describe('POST /api/analyze', () => {
     expectMeta(res.body);
     expect(res.body.coin).toBe('BTC');
     expect(res.body.primary_tf).toBe('4h');
-    expect(res.body.recommendation).toBeDefined();
-    expect(res.body.recommendation.action).toBe('hold');
+
+    // structured block
+    expect(res.body.structured).toBeDefined();
+    expect(res.body.structured.action).toBe('Esperar');
+    expect(res.body.structured.confidence).toBe('Media');
+    expect(typeof res.body.structured.risk_score).toBe('number');
+    expect(typeof res.body.structured.conviction).toBe('number');
+    expect(res.body.structured.scores).toBeDefined();
+    expect(typeof res.body.structured.scores.derivatives).toBe('number');
+
+    // narrative block
+    expect(res.body.narrative).toBeDefined();
+    expect(typeof res.body.narrative.smart_money_read).toBe('string');
+    expect(typeof res.body.narrative.recommendation_detail).toBe('string');
+
+    // ai_metadata
     expect(res.body.ai_metadata).toBeDefined();
+    expect(res.body.ai_metadata.prompt_version).toBe('v5_0_structured_output');
   });
 
   test('defaults coin=BTC primary_tf=4h when body omitted', async () => {
@@ -530,6 +572,26 @@ describe('POST /api/analyze', () => {
       .send({ coin: 'BTC', primary_tf: '15m' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/primary_tf/i);
+  });
+
+  test('analysis is persisted — history returns it after POST', async () => {
+    // POST an analysis for SOL (unique coin to avoid cache conflicts)
+    const postRes = await request
+      .post('/api/analyze')
+      .send({ coin: 'SOL', primary_tf: '4h' });
+    expect(postRes.status).toBe(200);
+
+    // History should now have at least 1 entry for SOL
+    const histRes = await request.get('/api/history/SOL?limit=1');
+    expect(histRes.status).toBe(200);
+    expect(histRes.body.total).toBeGreaterThanOrEqual(1);
+
+    const entry = histRes.body.analyses[0];
+    expect(entry).toHaveProperty('id');
+    expect(entry).toHaveProperty('action');
+    expect(entry).toHaveProperty('confidence');
+    expect(entry).toHaveProperty('executive_summary');
+    expect(entry.action).toBe('Esperar');
   });
 });
 

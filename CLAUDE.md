@@ -15,7 +15,7 @@ Instrucciones para Claude Code en este proyecto.
 - Backend Node.js 18 / Express / SQLite (better-sqlite3)
 - Single-user, hosted en VPS propio
 
-El documento de referencia arquitectónica es [BLUEPRINT.md](./BLUEPRINT.md). Consultarlo siempre antes de proponer cambios estructurales.
+El documento de referencia arquitectónica es [BLUEPRINT.md](./doc/BLUEPRINT.md). Consultarlo siempre antes de proponer cambios estructurales.
 
 ---
 
@@ -30,7 +30,8 @@ El documento de referencia arquitectónica es [BLUEPRINT.md](./BLUEPRINT.md). Co
 | Bundler frontend | Vite 4.x |
 | Tests | Jest 29 con `--experimental-vm-modules` (ES modules) |
 | Logging | Pino + pino-pretty en development |
-| Process manager | PM2 (producción) |
+| Deploy | Docker + Docker Compose (Raspberry Pi 5) |
+| Reverse proxy | Nginx Proxy Manager (contenedor infra compartida) |
 
 ---
 
@@ -106,8 +107,8 @@ src/controllers/             ← Orquestación, validación de params, formato r
   analysisController.js      ← POST /api/analyze — fetcha datos, llama Anthropic, guarda en DB
   historyController.js       ← GET /api/history/:coin — paginación, valida coin
 src/services/                ← Lógica de negocio, I/O externo, cache
-  anthropicService.js        ← Stub: buildPrompt() completo, analyzeMarket() pendiente API key
-  dbService.js               ← saveAnalysis(), getAnalysisHistory(), getLastAnalysis()
+  anthropicService.js        ← PROMPT_VERSION v5_0_structured_output; analyzeMarket() implementado con SDK real (import dinámico); OUTPUT FORMAT JSON puro {structured, narrative}; parse + validación de estructura; AppError 502 si respuesta no es JSON válido
+  dbService.js               ← saveAnalysis({ header, tfSnapshots, clusters }) — transacción 4 tablas; getAnalysisHistory() devuelve action/confidence/risk_score/executive_summary/score_total; pruning en cascada
   indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores + Volume Profile + computeTrend ponderado
   coingeckoService.js        ← fetchOHLC (Binance klines: 1h/4h/1D/1W con taker_buy_base real), fetchCurrentPrice, fetchBTCDominance, fetchGlobalMarketData, fetchCoinMarketData
   fearGreedService.js        ← fetchFearGreed (alternative.me, gratis) + alimenta históricos
@@ -302,8 +303,13 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 Las migraciones se ejecutan inline en `config/db.js` al arrancar. No hay ficheros de migración externos.
 
 **Tablas:**
-- `analyses` — histórico de análisis IA (máx 1000 por coin, pruning automático)
+- `analyses` — cabecera de cada análisis IA: precio, mercado, sentimiento, macro, volatilidad, on-chain, derivados, ETF flows, order book, decisión LLM, scores internos, setup táctico, texto narrative. Máx 1000 por coin, pruning automático en cascada.
+- `analysis_tf_snapshot` — 4 filas por análisis (una por TF 1h/4h/1D/1W): indicadores clave, SMC, S/R, Volume Profile, WaveTrend.
+- `analysis_outcome` — resultado real a posteriori: precios 1h/4h/24h/7d después, outcome, PnL. Se rellena con un job separado (pendiente).
+- `analysis_liquidation_snapshot` — hasta 10 filas por análisis (5 long + 5 short): clusters de liquidación persistidos en el momento del análisis.
 - `candles_cache` — reservada para futuro (no se usa actualmente)
+
+**`saveAnalysis()` es una transacción** que inserta en las 4 tablas atómicamente. El pruning borra en cascada manual (better-sqlite3 no garantiza FK enforcement sin triggers).
 
 **No guardar** datos OHLC ni indicadores técnicos en DB — son efímeros y se recalculan en cada request.
 
@@ -333,7 +339,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **168 tests totales**: 121 unitarios (`indicators.test.js`) + 47 integración (`integration.test.js`)
+- **169 tests totales**: 121 unitarios (`indicators.test.js`) + 48 integración (`integration.test.js`)
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
 - Los tests de integración usan supertest + `jest.unstable_mockModule` para mockear todos los servicios externos — offline, deterministas, ~1.5s
 
@@ -389,7 +395,8 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Sprint Audit | Auditoría técnica + fixes correctitud (SuperTrend, ADX naming, S/R clustering, RSI divergence, computeTrend ranging, payload semántica) | ✅ Completo |
 | Fase 15 | Tests de integración de endpoints (47 tests, supertest) | ✅ Completo |
 | Sprint Briefing | Deficiencias de dataset + prompt auditadas (briefing 2026-04-27): D1-D22, P1-P7 | ✅ Completo |
-| Bloque 5 | Tests integración ✅, deploy VPS ⏳, panel historial IA ⏳ | ⏳ Parcial |
+| Sprint Schema | Rediseño persistencia IA: 4 tablas, OUTPUT FORMAT JSON, analyzeMarket() implementado | ✅ Completo |
+| Bloque 5 | Schema ✅, deploy VPS ⏳, panel historial IA ⏳, analysis_outcome job ⏳ | ⏳ Parcial |
 
 ### Detalle Bloque 4
 
@@ -496,6 +503,15 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **P7** (prompt): Nomenclatura de TFs estandarizada (`"1h"`, `"4h"`, `"1D"`, `"1W"`). Versión: `v4_2_briefing_fixes`.
   - **10 tests nuevos** cubriendo: CVD divergencia explícita (4 tests), VolumeProfile metadata (3), Bollinger Bands metadata (3). **168/168 tests pasan** (121 unitarios + 47 integración).
 
+- **Sprint Schema (2026-04-27) — rediseño persistencia IA**:
+  - **`config/db.js`**: DROP de la tabla `analyses` antigua + CREATE de 4 tablas nuevas con índices: `analyses` (~70 campos), `analysis_tf_snapshot` (4 filas/análisis, una por TF), `analysis_outcome` (vacía, rellena con job futuro), `analysis_liquidation_snapshot` (hasta 10 filas/análisis).
+  - **Campos añadidos respecto al diseño inicial**: `funding_severity TEXT` (severidad positiva, junto a `funding_severity_negative`), `ob_imbalance_top5_ratio REAL` (junto a `ob_imbalance_ratio`), `wave_trend_signal TEXT` en `analysis_tf_snapshot`.
+  - **`services/dbService.js`**: `saveAnalysis({ header, tfSnapshots, clusters })` — transacción atómica. `pruneOldAnalyses()` borra en cascada en las 4 tablas. `getAnalysisHistory()` expone `action`, `confidence`, `risk_score`, `executive_summary`, `primary_driver`, `score_total`.
+  - **`services/anthropicService.js`**: OUTPUT FORMAT actualizado a JSON puro `{structured, narrative}` — sin markdown, sin bloques de código. `analyzeMarket()` implementado con import dinámico del SDK, parse + validación de estructura, `AppError 502` si el JSON es inválido. `PROMPT_VERSION = 'v5_0_structured_output'`.
+  - **`controllers/analysisController.js`**: Tres helpers nuevos: `buildAnalysisHeader()` (mapea ~70 campos del contexto + LLM output), `buildTfSnapshots()` (4 filas, una por TF, incluyendo `wave_trend_signal` y `fvg_bullish/bearish_count` desde `smc.unmitigated_fvgs.bullish/bearish`), `buildClusterRows()` (hasta 10 filas de clusters). Respuesta de `POST /api/analyze` actualizada a `{structured, narrative, ai_metadata}`.
+  - **`tests/integration.test.js`**: mock de `analyzeMarket` actualizado al nuevo formato. Test nuevo `analysis is persisted — history returns it after POST` verifica que un análisis queda en BD y `GET /api/history/SOL` lo devuelve con los campos correctos. **169/169 tests pasan** (121 unitarios + 48 integración).
+  - **Deuda técnica anotada**: FVGs detallados (tabla separada), S/R strength del nivel más cercano, SuperTrend level numérico, `volume_history.vwap` top-level, job `analysis_outcome`. Ver SESSION_STATE.md §6.
+
 ---
 
 ## Sistema de Históricos para Análisis LLM
@@ -559,20 +575,142 @@ Estos resúmenes proporcionan contexto consolidado para decisiones más informad
 
 ---
 
+## Deploy — Raspberry Pi 5
+
+**Hardware:** Raspberry Pi 5 8GB · Raspberry Pi OS Bookworm 64-bit (modo terminal) · IP fija `192.168.1.250`
+
+**Acceso:** SSH desde red local únicamente. Sin acceso externo desde WAN. Sin SSL/TLS (red de confianza).
+
+**DNS local:** Router Zyxel con entradas DNS estáticas (sufijo `.lan`):
+- `cryptex.lan` → `192.168.1.250`
+- Añadir una entrada por proyecto adicional que se despliegue
+
+### Arquitectura de contenedores
+
+```
+Pi (192.168.1.250)
+│
+├── ~/infra/docker-compose.yml        ← infraestructura compartida
+│   └── nginx-proxy-manager           ← :80 (HTTP) + :81 (panel UI NPM)
+│                                        gestiona proxy hacia todos los proyectos
+│
+├── ~/cryptex/docker-compose.yml      ← este proyecto
+│   ├── cryptex-frontend              ← serve@14 sirviendo dist/ de Vite en :3001
+│   │                                    (sin puerto expuesto al host)
+│   └── cryptex-backend               ← Node.js :3000 (interno)
+│       └── volumen: cryptex-db       ← SQLite persistente
+│
+└── ~/otroapp/docker-compose.yml      ← otros proyectos (mismo patrón)
+    ├── otroapp-frontend
+    └── otroapp-backend
+        └── volumen: otroapp-db
+```
+
+**Principios:**
+- NPM es el único servicio que expone el puerto 80 al host — punto de entrada único
+- Cada proyecto tiene su propio `docker-compose.yml`, frontend y backend independientes
+- SQLite por proyecto en su propio volumen — nunca compartido entre proyectos
+- NPM enruta por hostname (`cryptex.lan`) hacia el frontend de cada proyecto
+- El frontend de cada proyecto hace proxy interno `/api/*` → su backend
+
+### Red Docker compartida
+
+Para que NPM pueda alcanzar los contenedores de cada proyecto se usa una red externa compartida:
+
+```bash
+# Crear una vez en la Pi
+docker network create proxy
+```
+
+En `~/infra/docker-compose.yml` NPM se une a la red `proxy`.
+En `~/cryptex/docker-compose.yml` los servicios también se unen a `proxy`.
+
+### Ficheros Docker creados (en este repo)
+
+| Fichero | Descripción |
+|---------|-------------|
+| `backend/Dockerfile` | Build multistage Node 18: compila `better-sqlite3` arm64 + runtime mínimo |
+| `backend/.dockerignore` | Excluye `node_modules`, `data/`, `tests/` |
+| `frontend/Dockerfile` | Build Vite → imagen Node 18 slim con `serve@14` sirviendo `dist/` en :3001 |
+| `frontend/.dockerignore` | Excluye `node_modules`, `dist/` |
+| `docker-compose.yml` | Orquesta backend (:3000) + frontend (:3001); volumen `cryptex-db`; red externa `proxy` |
+
+**Sin Nginx en el proyecto.** NPM gestiona el proxy y el enrutamiento. El frontend usa `serve` (paquete npm) para servir los ficheros estáticos del `dist/`.
+
+### Configuración NPM para CRYPTEX
+
+En la UI de NPM (`:81`) configurar **dos** Proxy Hosts bajo el mismo dominio `cryptex.lan`:
+
+| Path | Forward Hostname | Forward Port |
+|------|-----------------|--------------|
+| `/` | `cryptex-frontend` | `3001` |
+| `/api/` | `cryptex-backend` | `3000` |
+| `/health` | `cryptex-backend` | `3000` |
+
+NPM enruta por path al contenedor correcto — frontend y backend visibles en `cryptex.lan` sin exponer puertos al host.
+
+### Variables de entorno en la Pi
+
+El fichero `.env` en la raíz del repo (no commiteado) contiene las API keys:
+
+```env
+COINGECKO_API_KEY=...
+COINALYZE_API_KEY=...
+ANTHROPIC_API_KEY=...
+NODE_ENV=production
+```
+
+`env.js` carga el `.env` con dotenv; en Docker las variables llegan via `env_file` directamente a `process.env` — si el fichero no existe dotenv falla silenciosamente sin crash.
+
+### Comandos de deploy en la Pi
+
+```bash
+# Primera vez
+git clone <repo> ~/cryptex
+cd ~/cryptex
+cp .env.example .env && nano .env   # rellenar API keys
+docker compose up -d --build
+
+# Actualizar
+cd ~/cryptex
+git pull
+docker compose up -d --build
+
+# Logs
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# Estado
+docker compose ps
+```
+
+### Desarrollo local con Docker
+
+En local la red `proxy` debe existir antes de `docker compose up`:
+
+```bash
+docker network create proxy   # solo la primera vez
+docker compose up -d --build
+```
+
+Frontend accesible en `http://localhost:3001`, backend en `http://localhost:3000` (ambos solo internos vía red Docker — en local acceder ejecutando curl desde dentro del contenedor o exponiendo temporalmente un puerto para depuración).
+
+---
+
 ## Próximo paso
 
 **Bloque 5 (en curso):**
-1. ~~Tests de integración de endpoints (Fase 15)~~ ✅ — 47 tests, `bc1f10a`
-2. Panel frontend de histórico análisis IA (Fase 12 — backend ya operativo)
-3. Deploy VPS: Nginx + SSL/TLS (certbot) + PM2 (Fase 14)
-
-**Pendiente de API key:**
-`src/services/anthropicService.js` — rellenar el cuerpo de `analyzeMarket()`.
-El stub ya tiene `buildPrompt()` completo y el código de integración SDK en comentarios.
+1. ~~Tests de integración de endpoints (Fase 15)~~ ✅ — 48 tests
+2. ~~Docker + arquitectura deploy Pi~~ ✅ — Fase 14 parcial (falta setup infra NPM en Pi)
+3. ~~Rediseño schema persistencia IA (Sprint Schema)~~ ✅ — 4 tablas, analyzeMarket() implementado
+4. Panel frontend de histórico análisis IA (Fase 12 — backend ya operativo)
+5. Job `analysis_outcome` — rellena precios 1h/4h/24h/7d post-análisis para backtesting
+6. Setup infra Pi: instalar Docker, crear red `proxy`, levantar NPM, configurar proxy host en UI
 
 **API keys configuradas en `.env`:**
 - `COINGECKO_API_KEY` — demo key
 - `COINALYZE_API_KEY` — key gratuita, operativa
+- `ANTHROPIC_API_KEY` — necesaria para activar `analyzeMarket()` (implementado, listo para producción)
 
 ---
 
@@ -583,6 +721,7 @@ El stub ya tiene `buildPrompt()` completo y el código de integración SDK en co
 - No usar `require()` — solo ES modules
 - No guardar OHLC en SQLite — es efímero, se recalcula
 - No llamar a Anthropic en el timer de 60s — solo en POST /api/analyze (botón manual)
+- No cambiar el OUTPUT FORMAT del SYSTEM_PROMPT sin actualizar `buildAnalysisHeader()` en `analysisController.js` — los campos del `structured` mapean 1:1 a columnas de la tabla `analyses`
 - No exponer API keys al frontend — todas las keys son exclusivamente backend
 - No lanzar errores en servicios externos que rompan `/api/data` — usar degraded mode
 - No usar `last_funding_rate`, `open_interest` ni `long_ratio` en Coinalyze — los campos reales son `value` (FR/OI) y `l`/`s` (LSR)

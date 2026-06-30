@@ -514,6 +514,203 @@ async function buildAnalyzeContext(coin, primaryTf) {
   };
 }
 
+/**
+ * Builds the header object for the `analyses` table from context + LLM output.
+ */
+function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs) {
+  const fg    = context.sentiment?.fear_greed ?? null;
+  const fgH   = context.sentiment?.fear_greed_history ?? null;
+  const macro = context.macro ?? null;
+  const vol   = context.volatility ?? null;
+  const oc    = context.onchain ?? null;
+  const fr    = context.derivatives?.funding_rate ?? null;
+  const oi    = context.derivatives?.open_interest ?? null;
+  const lsr   = context.derivatives?.long_short_ratio ?? null;
+  const liq   = context.derivatives?.liquidations_24h ?? null;
+  const etf   = context.etf_flows ?? null;
+  const ob    = context.order_book ?? null;
+  const setup = structured.setup ?? null;
+
+  return {
+    id,
+    coin,
+    primary_tf: primaryTf,
+    timestamp: new Date().toISOString(),
+    prompt_version: ai_metadata.prompt_version,
+
+    price_current:            context.price_current ?? null,
+    price_change_24h_pct:     context.price_change_24h_pct ?? null,
+    btc_dominance_pct:        context.global_market?.btc_dominance_pct ?? null,
+    market_cap_change_24h_pct: context.global_market?.market_cap_change_24h_pct ?? null,
+
+    fear_greed_value:    fg?.value ?? null,
+    fear_greed_class:    fg?.classification ?? null,
+    fear_greed_trend_30d: fgH?.trend_30d ?? null,
+    fear_greed_30d_avg:  fgH?.period_avg ?? null,
+
+    macro_regime:  macro?.macro_regime ?? null,
+    dxy_value:     macro?.dxy?.value ?? null,
+    dxy_trend_5d:  macro?.dxy?.trend_5d ?? null,
+    spx_trend_5d:  macro?.spx?.trend_5d ?? null,
+    gold_trend_5d: macro?.gold?.trend_5d ?? null,
+
+    btc_dvol_value:  vol?.btc_dvol?.value ?? null,
+    btc_dvol_regime: vol?.btc_dvol?.regime ?? null,
+    eth_dvol_value:  vol?.eth_dvol?.value ?? null,
+
+    mvrv:        oc?.mvrv ?? null,
+    mvrv_zscore: oc?.mvrv_zscore ?? null,
+    mvrv_signal: oc?.mvrv_signal ?? null,
+    nupl:        oc?.nupl ?? null,
+    nupl_signal: oc?.nupl_signal ?? null,
+    sopr:        oc?.sopr ?? null,
+    sopr_signal: oc?.sopr_signal ?? null,
+
+    funding_rate_pct:          fr?.rate_pct ?? null,
+    funding_severity:          fr?.severity ?? null,
+    funding_severity_negative: fr?.severity_negative ?? null,
+    funding_trend:             fr?.trend ?? null,
+    predicted_rate_pct:        fr?.predicted_rate_pct ?? null,
+    oi_value_usd:              oi?.value_usd ?? null,
+    oi_change_24h_pct:         oi?.change_24h_pct ?? null,
+    oi_trend_7d:               oi?.history?.trend_7d ?? null,
+    long_pct:                  lsr?.long_pct ?? null,
+    short_pct:                 lsr?.short_pct ?? null,
+    liq_longs_24h_usd:         liq?.longs_usd ?? null,
+    liq_shorts_24h_usd:        liq?.shorts_usd ?? null,
+
+    etf_trend_7d:          etf?.trend_7d ?? null,
+    etf_net_inflow_7d_usd: etf?.net_inflow_usd_7d_sum ?? null,
+    etf_data_freshness:    etf?.data_freshness ?? null,
+
+    ob_imbalance_ratio:       ob?.imbalance_ratio ?? null,
+    ob_imbalance_top5_ratio:  ob?.imbalance_top5_ratio ?? null,
+    ob_imbalance_signal:      ob?.imbalance_signal ?? null,
+
+    tf_conflict: context.timeframe_analysis?.conflict ?? null,
+
+    action:               structured.action ?? null,
+    confidence:           structured.confidence ?? null,
+    risk_score:           structured.risk_score ?? null,
+    conviction:           structured.conviction ?? null,
+    primary_driver:       structured.primary_driver ?? null,
+    has_executable_setup: structured.has_executable_setup ? 1 : 0,
+    gating_active:        structured.gating_active ? 1 : 0,
+    gating_reason:        structured.gating_reason ?? null,
+    contradictions_found: structured.contradictions_found ? 1 : 0,
+
+    score_derivatives: structured.scores?.derivatives ?? null,
+    score_structure:   structured.scores?.structure ?? null,
+    score_volume:      structured.scores?.volume ?? null,
+    score_onchain:     structured.scores?.onchain ?? null,
+    score_total:       structured.scores?.total ?? null,
+
+    setup_entry_price:      setup?.entry_price ?? null,
+    setup_stop_price:       setup?.stop_price ?? null,
+    setup_tp1_price:        setup?.tp1_price ?? null,
+    setup_tp2_price:        setup?.tp2_price ?? null,
+    setup_validity_candles: setup?.validity_candles ?? null,
+    setup_tf_execution:     setup?.tf_execution ?? null,
+
+    executive_summary: structured.executive_summary ?? null,
+    ai_response_full:  JSON.stringify({ structured, narrative: structured._narrative }),
+
+    processing_time_ms: processingMs,
+    input_tokens:       ai_metadata.input_tokens ?? null,
+    output_tokens:      ai_metadata.output_tokens ?? null,
+    model_used:         ai_metadata.model ?? null,
+  };
+}
+
+/**
+ * Builds the array of TF snapshot rows from context.technical.
+ */
+function buildTfSnapshots(analysisId, technical) {
+  const snapshots = [];
+  for (const [tf, data] of Object.entries(technical ?? {})) {
+    if (!data) continue;
+    const rsi   = data.rsi ?? null;
+    const macd  = data.macd ?? null;
+    const adx   = data.adx ?? null;
+    const st    = data.super_trend ?? null;
+    const bb    = data.bollinger_bands ?? null;
+    const vd    = data.volume_delta ?? null;
+    const cvd   = data.cvd ?? null;
+    const vwap  = data.vwap ?? null;
+    const stoch = data.stoch_rsi ?? null;
+    const wt    = data.wave_trend ?? null;
+    const smc   = data.smc ?? null;
+    const vp    = data.volume_profile ?? null;
+
+    snapshots.push({
+      analysis_id: analysisId,
+      tf,
+
+      trend:               data.trend ?? null,
+      momentum_alignment:  data.momentum_alignment != null ? (data.momentum_alignment ? 1 : 0) : null,
+      regime:              data.regime ?? null,
+
+      rsi_value:           rsi?.value ?? null,
+      rsi_signal:          rsi?.signal ?? null,
+      rsi_divergence:      data.rsi_divergence?.type ?? null,
+      stochrsi_k:          stoch?.k ?? null,
+      stochrsi_d:          stoch?.d ?? null,
+      stochrsi_signal:     stoch?.signal ?? null,
+      macd_histogram:      macd?.histogram ?? null,
+      macd_momentum_state: macd?.momentum_state ?? null,
+      adx_value:           adx?.adx ?? null,
+      adx_trend_direction: adx?.trend_direction ?? null,
+      adx_regime:          adx?.regime ?? null,
+      supertrend_direction: st?.trend ?? null,
+      wave_trend_signal:   wt?.signal ?? null,
+      bb_position:         bb?.position ?? null,
+      bb_width_pct:        bb?.width_pct ?? null,
+
+      volume_delta_buy_pct: vd?.buy_pressure_pct ?? null,
+      cvd_trend:            cvd?.trend ?? null,
+      cvd_divergence:       cvd?.divergence ?? null,
+      vwap_trend:           vwap?.trend ?? null,
+      vwap_divergence:      vwap?.divergence ?? null,
+
+      bos_direction:    smc?.last_bos?.direction ?? null,
+      bos_valid:        smc?.last_bos?.valid != null ? (smc.last_bos.valid ? 1 : 0) : null,
+      choch_direction:  smc?.last_choch?.direction ?? null,
+      fvg_bullish_count: (smc?.unmitigated_fvgs?.bullish ?? []).length,
+      fvg_bearish_count: (smc?.unmitigated_fvgs?.bearish ?? []).length,
+
+      nearest_support_pct:    data.distance_to_nearest_support_pct ?? null,
+      nearest_resistance_pct: data.distance_to_nearest_resistance_pct ?? null,
+
+      vp_poc_distance_pct: vp?.poc_distance_pct ?? null,
+      vp_valid:            vp?.valid != null ? (vp.valid ? 1 : 0) : null,
+    });
+  }
+  return snapshots;
+}
+
+/**
+ * Builds the liquidation cluster rows from context.derivatives.liquidation_clusters.
+ */
+function buildClusterRows(analysisId, liquidationClusters) {
+  const rows = [];
+  if (!liquidationClusters) return rows;
+
+  for (const type of ['long', 'short']) {
+    const clusters = liquidationClusters[`top_${type}_clusters`] ?? [];
+    clusters.slice(0, 5).forEach((c, rank) => {
+      rows.push({
+        analysis_id:  analysisId,
+        cluster_type: type,
+        cluster_rank: rank,
+        price:        c.price ?? null,
+        total_usd:    c.total_usd ?? null,
+        distance_pct: c.distance_pct ?? null,
+      });
+    });
+  }
+  return rows;
+}
+
 export async function analyze(req, res, next) {
   const start = Date.now();
 
@@ -532,36 +729,21 @@ export async function analyze(req, res, next) {
 
     logger.info({ coin, primaryTf }, 'POST /api/analyze — calling Anthropic');
 
-    const { recommendation, ai_metadata } = await analyzeMarket(context);
+    const { structured, narrative, ai_metadata } = await analyzeMarket(context);
 
     const processingMs = Date.now() - start;
     const id = uuidv4();
 
-    const techPrimary = context.technical[primaryTf];
+    const header = buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs);
+    // Store narrative inside ai_response_full
+    header.ai_response_full = JSON.stringify({ structured, narrative });
 
-    saveAnalysis({
-      id,
-      coin,
-      primary_tf: primaryTf,
-      price_current: context.price_current,
-      price_change_24h: context.price_change_24h_pct,
-      rsi: techPrimary?.rsi?.value ?? null,
-      macd_value: techPrimary?.macd?.value ?? null,
-      macd_signal: techPrimary?.macd?.signal ?? null,
-      macd_histogram: techPrimary?.macd?.histogram ?? null,
-      bb_upper: techPrimary?.bollinger_bands?.upper ?? null,
-      bb_middle: techPrimary?.bollinger_bands?.middle ?? null,
-      bb_lower: techPrimary?.bollinger_bands?.lower ?? null,
-      volume_buy_pct: techPrimary?.volume_delta?.buy_pressure_pct ?? null,
-      volume_sell_pct: techPrimary?.volume_delta?.sell_pressure_pct ?? null,
-      recommendation: JSON.stringify(recommendation),
-      recommendation_action: recommendation.action,
-      recommendation_confidence: recommendation.confidence,
-      ai_response: JSON.stringify({ recommendation, ai_metadata }),
-      processing_time_ms: processingMs,
-    });
+    const tfSnapshots = buildTfSnapshots(id, context.technical);
+    const clusters    = buildClusterRows(id, context.derivatives?.liquidation_clusters);
 
-    logger.info({ coin, action: recommendation.action, confidence: recommendation.confidence, ms: processingMs }, 'POST /api/analyze — done');
+    saveAnalysis({ header, tfSnapshots, clusters });
+
+    logger.info({ coin, action: structured.action, confidence: structured.confidence, ms: processingMs }, 'POST /api/analyze — done');
 
     res.json({
       meta: {
@@ -574,7 +756,8 @@ export async function analyze(req, res, next) {
       price_current: context.price_current,
       price_change_24h_pct: context.price_change_24h_pct,
       primary_tf: primaryTf,
-      recommendation,
+      structured,
+      narrative,
       ai_metadata,
     });
 
