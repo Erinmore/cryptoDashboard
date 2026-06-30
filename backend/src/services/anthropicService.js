@@ -1,7 +1,7 @@
 import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 
-export const PROMPT_VERSION = 'v5_0_structured_output';
+export const PROMPT_VERSION = 'v5_1_data_quality_signals';
 
 const SYSTEM_PROMPT = `ROLE
 
@@ -135,6 +135,14 @@ presión estructural persistente
 shorts correctamente posicionados
 ausencia de trigger
 
+FRESCURA DE DATOS DE DERIVADOS — campo data_timestamp_utc:
+
+Cada sub-bloque de derivados (funding_rate, open_interest, long_short_ratio, liquidations) incluye data_timestamp_utc con el momento real del dato según el exchange. Compáralo con price_timestamp_utc (precio casi en vivo):
+
+Si un sub-bloque de derivados tiene más de 30 minutos de desfase respecto a price_timestamp_utc: ese dato puede no reflejar el estado actual del mercado (el precio se ha movido pero el funding/OI cacheado no). Trátalo como contexto, no como confirmación de timing, y señálalo en el Risk Score.
+Si el desfase supera 2 horas: no uses ese sub-bloque para justificar un trigger de entrada; úsalo solo como contexto direccional.
+Un desfase grande entre el funding y el precio puede explicar contradicciones aparentes (p. ej. funding "extremo" que ya se relajó pero aún no se ha refrescado). No lo interpretes como incoherencia del mercado: es lag de captura de dato.
+
 B. Volume Flow Score (-2 a +2)
 
 CVD — REGLAS DE PRECEDENCIA (leer antes de evaluar)
@@ -181,6 +189,16 @@ Precio ↓ + CVD ↑ (divergencia): ABSORCIÓN BAJISTA. Ventas institucionalizad
 Precio ↓ + CVD ↓ (alineación): CAPITULACIÓN / DISTRIBUCIÓN AGRESIVA. Vendedores a mercado dominan. Momentum bajista puro.
 
 El campo source="taker_real" indica datos reales de Binance klines — máxima confianza. source="heuristic" = estimación — reducir convicción un nivel.
+
+MAGNITUD DEL CVD — campo cvd_delta_vs_volume_pct:
+
+El campo trend ("rising"/"falling") da la dirección, pero cvd_delta_vs_volume_pct da la FUERZA: es el delta neto comprador/vendedor de la ventana de divergencia expresado como % del volumen total de esa ventana. Úsalo así:
+
+|cvd_delta_vs_volume_pct| < 2%: presión neta marginal. La dirección del CVD es ruido de fondo, no aporta convicción al Volume Flow Score aunque trend sea "rising"/"falling".
+|cvd_delta_vs_volume_pct| entre 2% y 8%: presión neta moderada. Confirma la dirección del CVD con peso normal.
+|cvd_delta_vs_volume_pct| > 8%: presión neta fuerte (absorción o agresión marcada). Refuerza la lectura de absorción/agresión de arriba en un nivel.
+
+No interpretes este campo como un porcentaje de cambio de precio ni de volumen total del activo — es exclusivamente la magnitud del desequilibrio comprador-vendedor dentro de la ventana.
 
 B2. Order Book Imbalance (ajuste al Volume Flow Score)
 
@@ -272,7 +290,11 @@ Regla
 
 Nunca domina sobre derivados ni estructura.
 
-E. On-Chain Score (-2 a +2) — solo BTC; ETH/SOL = null, ignorar
+E. On-Chain Score (-2 a +2) — solo BTC
+
+DISPONIBILIDAD: el campo "onchain" puede ser un objeto de datos, o bien { "available": false, "unavailable_reason": ... }. Si available=false:
+- unavailable_reason="not_supported_for_asset" (ETH/SOL): el on-chain no aplica a este activo. Omitir el On-Chain Score por completo, no penalizar ni mencionarlo como dato faltante.
+- unavailable_reason="fetch_failed" (BTC con fallo de fuente): el dato existe pero no se pudo obtener. Omitir el score y añadir una nota breve al Risk Score de que falta contexto de ciclo on-chain.
 
 Evalúa (campo "onchain" del dataset):
 
@@ -311,6 +333,8 @@ SPX trend_5d="falling" = reducir conviction alcista incluso si cripto muestra so
 Gold trend_5d="rising" bruscamente = búsqueda de safe haven = contexto de estrés.
 
 F2. ETF Flows (solo BTC y ETH spot ETF):
+
+DISPONIBILIDAD: igual que onchain, etf_flows puede ser { "available": false, "unavailable_reason": ... }. Si available=false con "not_supported_for_asset" (SOL no tiene spot ETF): omitir el ajuste de ETF flows por completo, no es un dato faltante. Con "fetch_failed" (BTC/ETH): omitir el ajuste y notar la ausencia de contexto institucional en el Risk Score.
 
 etf_flows.trend_7d="accumulating" (7d_sum > +100M USD) = demanda institucional real, añadir +0.5 conviction.
 etf_flows.trend_7d="distributing" (7d_sum < -100M USD) = presión vendedora institucional, restar -0.5 conviction.

@@ -150,13 +150,13 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
     },
     ai_metadata: {
       model:          'stub',
-      prompt_version: 'v5_0_structured_output',
+      prompt_version: 'v5_1_data_quality_signals',
       input_tokens:   0,
       output_tokens:  0,
     },
   })),
   buildPrompt: jest.fn(() => 'stub prompt'),
-  PROMPT_VERSION: 'v5_0_structured_output',
+  PROMPT_VERSION: 'v5_1_data_quality_signals',
 }));
 
 // ─── Import app AND mocked modules AFTER mocks are in place ──────────────────
@@ -546,7 +546,7 @@ describe('POST /api/analyze', () => {
 
     // ai_metadata
     expect(res.body.ai_metadata).toBeDefined();
-    expect(res.body.ai_metadata.prompt_version).toBe('v5_0_structured_output');
+    expect(res.body.ai_metadata.prompt_version).toBe('v5_1_data_quality_signals');
   });
 
   test('defaults coin=BTC primary_tf=4h when body omitted', async () => {
