@@ -209,7 +209,8 @@ USUARIO CLICKEA "⚡ Analizar" (costo $0.003):
 ```
 cryptoDashboard/                           # Raíz del proyecto
 │
-├── BLUEPRINT.md                           # ← Este archivo (en raíz, no en docs/)
+├── doc/
+│   └── BLUEPRINT.md                       # ← Este archivo
 ├── CLAUDE.md                              # Instrucciones para Claude Code
 │
 ├── backend/                               # ✅ Implementado
