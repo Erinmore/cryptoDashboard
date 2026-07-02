@@ -25,15 +25,30 @@ export function initDb() {
   return db;
 }
 
-function runMigrations(db) {
-  // Drop old schema (incompatible with new 4-table design)
-  db.exec(`
-    DROP TABLE IF EXISTS analyses;
-    DROP TABLE IF EXISTS analysis_tf_snapshot;
-    DROP TABLE IF EXISTS analysis_outcome;
-    DROP TABLE IF EXISTS analysis_liquidation_snapshot;
-  `);
+function tableExists(db, name) {
+  return !!db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(name);
+}
 
+function columnExists(db, table, column) {
+  // table es siempre una constante interna (sin input de usuario) → seguro interpolar.
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+
+/** Migración aditiva idempotente: añade la columna si aún no existe (no destruye datos). */
+function ensureColumn(db, table, column, definition) {
+  if (tableExists(db, table) && !columnExists(db, table, column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    logger.info({ table, column }, 'Migración: columna añadida');
+  }
+}
+
+function runMigrations(db) {
+  // Schema idempotente: CREATE TABLE IF NOT EXISTS crea las tablas en una BBDD nueva
+  // y no toca las existentes. Los análisis persisten entre reinicios (antes se dropeaban
+  // las 4 tablas en cada arranque). Los cambios de schema van como migraciones aditivas
+  // (ver ensureColumn al final) — nunca se destruyen datos.
   db.exec(`
     -- ── Table 1: analyses (one row per analysis) ──────────────────────────────
     CREATE TABLE IF NOT EXISTS analyses (
@@ -276,6 +291,12 @@ function runMigrations(db) {
     CREATE INDEX IF NOT EXISTS idx_history_series_lookup
       ON history_series(coin, metric, ts_key DESC);
   `);
+
+  // ── Migraciones aditivas idempotentes ──────────────────────────────────────
+  // Para BBDD creadas antes de que existiera una columna: CREATE TABLE IF NOT EXISTS
+  // no la añade a una tabla ya existente, así que la incorporamos con ALTER TABLE.
+  // Las BBDD nuevas ya la traen del CREATE de arriba (el ensureColumn es no-op).
+  ensureColumn(db, 'analyses', 'validation_warnings', 'TEXT');
 }
 
 export function closeDb() {
