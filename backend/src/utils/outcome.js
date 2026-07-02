@@ -35,16 +35,29 @@ export function classifyOutcome(action, priceAtAnalysis, priceLater, thresholdPc
  * cronológico (barrier method). La dirección se infiere de la geometría: long si
  * stop < entry, short si stop > entry.
  *
- * Reglas:
+ * IMPORTANTE (gating de entrada): el `entry_price` es una orden CONDICIONAL
+ * (limit / stop-limit, no market — ver SYSTEM_PROMPT). No se asume la posición
+ * abierta en el instante del análisis: primero hay que esperar a que el precio
+ * TOQUE `entry_price` (la vela lo contiene, low<=entry<=high). Solo desde esa
+ * vela —inclusive— se evalúan TP/stop. Sin esto, un setup cuyo precio se aleja
+ * de la entrada pero llega al TP se contaría como win sin haberse llenado nunca.
+ *
+ * Reglas (una vez llenada la entrada):
  *  - Antes de tocar TP1, si se toca el stop → 'stop' (game over).
  *  - Si TP1 y stop caen en la misma vela, se asume el stop primero (conservador).
  *  - Tras tocar TP1, se ignora el stop (se asume stop movido a break-even) y solo
  *    se busca TP2.
- *  - Si no se resuelve dentro de las velas dadas → outcome 'open'.
+ *
+ * Outcomes:
+ *  - 'not_triggered': el precio nunca tocó `entry_price` en las velas dadas.
+ *  - 'open': entrada llenada pero sin resolver TP/stop todavía.
+ *  - 'tp1' | 'tp2' | 'stop': resueltos.
+ * (El caller — outcomeService — convierte 'open' en 'expired' cuando ya venció el
+ *  horizonte de 7d; 'not_triggered' solo es terminal una vez vencido ese horizonte.)
  *
  * @param {{entry_price:number, stop_price:number, tp1_price?:number, tp2_price?:number}} setup
  * @param {Array<{high:number, low:number}>} candles - En orden cronológico ascendente.
- * @returns {{hit_tp1:boolean, hit_tp2:boolean, hit_stop:boolean, outcome:'open'|'tp1'|'tp2'|'stop'}|null}
+ * @returns {{filled:boolean, hit_tp1:boolean, hit_tp2:boolean, hit_stop:boolean, outcome:'not_triggered'|'open'|'tp1'|'tp2'|'stop'}|null}
  */
 export function evaluateSetupBarrier(setup, candles) {
   const entry = setup?.entry_price;
@@ -54,13 +67,25 @@ export function evaluateSetupBarrier(setup, candles) {
   if (entry == null || stop == null || stop === entry || !candles?.length) return null;
 
   const isLong = stop < entry;
+  let filled = false;
   let hitTp1 = false, hitTp2 = false, hitStop = false;
-  let outcome = 'open';
+  let outcome = 'not_triggered';
 
   for (const c of candles) {
     const hi = c.high, lo = c.low;
     if (hi == null || lo == null) continue;
 
+    // Fase 1 — esperar a que el precio toque la entrada condicional.
+    if (!filled) {
+      if (lo <= entry && entry <= hi) {
+        filled = true;
+        outcome = 'open'; // llenada; se evaluará TP/stop en esta misma vela y siguientes
+      } else {
+        continue;
+      }
+    }
+
+    // Fase 2 — barrier desde la vela de fill (inclusive).
     if (!hitTp1) {
       if (isLong ? lo <= stop : hi >= stop) { hitStop = true; outcome = 'stop'; break; }
       if (tp1 != null && (isLong ? hi >= tp1 : lo <= tp1)) { hitTp1 = true; outcome = 'tp1'; }
@@ -70,5 +95,5 @@ export function evaluateSetupBarrier(setup, candles) {
     }
   }
 
-  return { hit_tp1: hitTp1, hit_tp2: hitTp2, hit_stop: hitStop, outcome };
+  return { filled, hit_tp1: hitTp1, hit_tp2: hitTp2, hit_stop: hitStop, outcome };
 }

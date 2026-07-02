@@ -77,6 +77,7 @@ describe('evaluateSetupBarrier — long (stop < entry)', () => {
 
   test('tras TP1 ignora el stop (break-even) → se queda en tp1', () => {
     const candles = [
+      { high: 101, low: 99 },  // fill (contiene entry 100)
       { high: 106, low: 102 }, // TP1
       { high: 107, low: 93 },  // caería al stop, pero ya se ignora
     ];
@@ -86,9 +87,49 @@ describe('evaluateSetupBarrier — long (stop < entry)', () => {
     expect(r.hit_stop).toBe(false);
   });
 
-  test('sin tocar nada → open', () => {
+  test('entrada llenada pero sin tocar nada → open', () => {
     const candles = [{ high: 103, low: 98 }, { high: 104, low: 99 }];
-    expect(evaluateSetupBarrier(setup, candles).outcome).toBe('open');
+    const r = evaluateSetupBarrier(setup, candles);
+    expect(r.outcome).toBe('open');
+    expect(r.filled).toBe(true);
+  });
+});
+
+describe('evaluateSetupBarrier — gating de entrada (A1)', () => {
+  const longSetup = { entry_price: 100, stop_price: 95, tp1_price: 105, tp2_price: 110 };
+
+  test('long: el precio se aleja al alza sin tocar la entrada y llega a TP → not_triggered (no cuenta como win)', () => {
+    // low siempre > 100: la orden límite en 100 nunca se llena aunque el precio pase por 105/110.
+    const candles = [
+      { high: 108, low: 103 }, // pasa por TP1/TP2 pero sin haber llenado la entrada
+      { high: 112, low: 106 },
+    ];
+    const r = evaluateSetupBarrier(longSetup, candles);
+    expect(r.outcome).toBe('not_triggered');
+    expect(r.filled).toBe(false);
+    expect(r.hit_tp1).toBe(false);
+  });
+
+  test('long: entrada tocada en una vela posterior y luego TP1 → tp1', () => {
+    const candles = [
+      { high: 108, low: 103 }, // aún sin fill (low 103 > entry 100)
+      { high: 101, low: 99 },  // fill (contiene 100)
+      { high: 106, low: 102 }, // TP1
+    ];
+    const r = evaluateSetupBarrier(longSetup, candles);
+    expect(r.outcome).toBe('tp1');
+    expect(r.filled).toBe(true);
+  });
+
+  test('short: el precio se aleja a la baja sin tocar la entrada → not_triggered', () => {
+    const shortSetup = { entry_price: 100, stop_price: 105, tp1_price: 95, tp2_price: 90 };
+    const candles = [
+      { high: 99, low: 94 }, // high 99 < entry 100: nunca se llena
+      { high: 96, low: 89 },
+    ];
+    const r = evaluateSetupBarrier(shortSetup, candles);
+    expect(r.outcome).toBe('not_triggered');
+    expect(r.filled).toBe(false);
   });
 });
 

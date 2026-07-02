@@ -150,7 +150,11 @@ function renderCard(a) {
     if (hasSetupOutcome) {
       const so = a.setup_outcome;
       const cls = (so === 'tp1' || so === 'tp2') ? 'win' : so === 'stop' ? 'loss' : 'muted';
-      row.appendChild(el('span', `hist-outcome-badge ${cls}`, `setup: ${so}`));
+      const SETUP_LABELS = {
+        tp1: 'TP1', tp2: 'TP2', stop: 'Stop',
+        expired: 'expirado', not_triggered: 'sin activar', invalid: 'inválido',
+      };
+      row.appendChild(el('span', `hist-outcome-badge ${cls}`, `setup: ${SETUP_LABELS[so] ?? so}`));
     }
     card.appendChild(row);
   } else {

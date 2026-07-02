@@ -62,8 +62,16 @@ async function processAnalysis(a, now) {
     : null;
 
   // Barrier del setup (solo si hay setup ejecutable y aún no está resuelto).
+  // Terminal = outcome no nulo y distinto de 'open' (tp1/tp2/stop/expired/not_triggered/invalid).
+  const preserveSetup = () => {
+    out.setup_hit_tp1  = a.setup_hit_tp1 ?? null;
+    out.setup_hit_tp2  = a.setup_hit_tp2 ?? null;
+    out.setup_hit_stop = a.setup_hit_stop ?? null;
+    out.setup_outcome  = a.setup_outcome ?? null;
+  };
   const setupResolved = a.setup_outcome && a.setup_outcome !== 'open';
   if (a.has_executable_setup && a.setup_entry_price != null && !setupResolved) {
+    const horizonElapsed = now >= tMs + 7 * 24 * HOUR_MS;
     const toMs = Math.min(now, tMs + 7 * 24 * HOUR_MS);
     try {
       const candles = await fetchHistoricalKlines(a.coin, '1h', tMs, toMs, 1000);
@@ -77,17 +85,29 @@ async function processAnalysis(a, now) {
         out.setup_hit_tp1  = bar.hit_tp1 ? 1 : 0;
         out.setup_hit_tp2  = bar.hit_tp2 ? 1 : 0;
         out.setup_hit_stop = bar.hit_stop ? 1 : 0;
-        out.setup_outcome  = bar.outcome;
+        // Finalizar estados no terminales cuando ya venció el horizonte de 7d
+        // (evita reprocesar el mismo setup indefinidamente — A4).
+        let oc = bar.outcome;
+        if (!horizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
+          oc = 'open';               // aún dentro del horizonte: la entrada puede llenarse/resolverse
+        } else if (horizonElapsed && oc === 'open') {
+          oc = 'expired';            // entrada llenada pero sin tocar TP/stop en 7d
+        }                            // horizonElapsed && 'not_triggered' → terminal (nunca se llenó)
+        out.setup_outcome = oc;
+      } else if (horizonElapsed) {
+        // Geometría inválida (p.ej. entry==stop) tras vencer el horizonte: marcar terminal
+        // para no reintentar el fetch en cada ciclo.
+        out.setup_hit_tp1 = 0; out.setup_hit_tp2 = 0; out.setup_hit_stop = 0;
+        out.setup_outcome = 'invalid';
+      } else {
+        preserveSetup();
       }
     } catch (err) {
       logger.warn({ id: a.id, err: err.message }, 'outcomeJob: fallo barrier del setup');
+      preserveSetup(); // no pisar con null lo ya calculado ante un fallo transitorio de fetch
     }
   } else {
-    // Conservar lo ya guardado.
-    out.setup_hit_tp1  = a.setup_hit_tp1 ?? null;
-    out.setup_hit_tp2  = a.setup_hit_tp2 ?? null;
-    out.setup_hit_stop = a.setup_hit_stop ?? null;
-    out.setup_outcome  = a.setup_outcome ?? null;
+    preserveSetup();
   }
 
   upsertOutcome(out);
