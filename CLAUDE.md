@@ -131,6 +131,7 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   historyService.js          ← Históricos por coin para análisis LLM (7-30 días) — en memoria (ventana LLM) + persistencia SQLite write-through (tabla history_series). CVD/VWAP se hidratan al arrancar (única serie sin backfill externo); el resto se persiste para acumular pero se rellena fresco de su API
   historyPoller.js           ← Poller de fondo (index.js, no app.js): cada HISTORY_POLLER_INTERVAL_SEC (300s) recorre las 3 monedas y persiste su history_series (CVD/VWAP + backfill derivados) + F&G — desacopla la persistencia de la moneda visualizada en el frontend. Flag HISTORY_POLLER_ENABLED
   analysisValidator.js       ← Validador determinista del output LLM (§6.4): validateAnalysis() (reglas duras → warnings) + applyFailSafe() (degrada a Esperar ante violación severa). Funciones puras
+  outcomeService.js          ← Job de backtesting (index.js, cada OUTCOME_JOB_INTERVAL_SEC=900s): runOutcomeJob() rellena analysis_outcome (precios 1h/4h/24h/7d vía klines históricas, outcome direccional, barrier TP/stop). Endpoints POST /api/outcome/run + GET /api/outcome/stats. Lógica pura en utils/outcome.js. Flag OUTCOME_JOB_ENABLED
   cacheService.js            ← Cache en memoria con TTL
 src/utils/
   indicators.js              ← Funciones matemáticas puras (sin I/O)
@@ -317,7 +318,7 @@ Las migraciones se ejecutan inline en `config/db.js` al arrancar. No hay fichero
 **Tablas:**
 - `analyses` — cabecera de cada análisis IA: precio, mercado, sentimiento, macro, volatilidad, on-chain, derivados, ETF flows, order book, decisión LLM, scores internos, setup táctico, texto narrative. Máx 1000 por coin, pruning automático en cascada.
 - `analysis_tf_snapshot` — 4 filas por análisis (una por TF 1h/4h/1D/1W): indicadores clave, SMC, S/R, Volume Profile, WaveTrend.
-- `analysis_outcome` — resultado real a posteriori: precios 1h/4h/24h/7d después, outcome, PnL. Se rellena con un job separado (pendiente).
+- `analysis_outcome` — resultado real a posteriori: precios 1h/4h/24h/7d después, outcome, PnL, barrier de setup (TP1/TP2/stop). Rellenado por el job `outcomeService.js` (cada 15min + `POST /api/outcome/run`).
 - `analysis_liquidation_snapshot` — hasta 10 filas por análisis (5 long + 5 short): clusters de liquidación persistidos en el momento del análisis.
 - `candles_cache` — reservada para futuro (no se usa actualmente)
 - `history_series` — series históricas persistidas (`coin`, `metric`, `ts_key`, `payload` JSON, PK compuesta). Alimentada por `historyService.js` write-through para las 7 métricas (funding/oi/lsr/liq/cvd/vwap/fear_greed; fear_greed bajo coin `GLOBAL`). **No se dropea** en migraciones — sobrevive reinicios. Retención 400 días. Ver excepción a la regla de abajo.

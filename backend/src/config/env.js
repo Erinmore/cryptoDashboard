@@ -38,6 +38,11 @@ const env = {
   historyPollerEnabled: (process.env.HISTORY_POLLER_ENABLED ?? 'true').toLowerCase() !== 'false',
   historyPollerIntervalSec: parseInt(process.env.HISTORY_POLLER_INTERVAL_SEC, 10) || 300,
 
+  // Job de backtesting (analysis_outcome): rellena precios/outcomes a 1h/4h/24h/7d
+  // post-análisis. Activo por defecto; corre cada OUTCOME_JOB_INTERVAL_SEC (15 min).
+  outcomeJobEnabled: (process.env.OUTCOME_JOB_ENABLED ?? 'true').toLowerCase() !== 'false',
+  outcomeJobIntervalSec: parseInt(process.env.OUTCOME_JOB_INTERVAL_SEC, 10) || 900,
+
   // Base de datos
   dbPath: process.env.DB_PATH || './data/cryptex.db',
 

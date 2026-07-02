@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import logger from './middleware/logger.js';
 import env from './config/env.js';
 import { startHistoryPoller, stopHistoryPoller } from './services/historyPoller.js';
+import { startOutcomeJob, stopOutcomeJob } from './services/outcomeService.js';
 
 const app = createApp();
 
@@ -9,11 +10,14 @@ const server = app.listen(env.port, () => {
   logger.info({ port: env.port, env: env.nodeEnv }, 'CRYPTEX backend started');
   // Poller de fondo: persiste history_series de TODAS las monedas (no solo la vista).
   startHistoryPoller();
+  // Job de backtesting: rellena analysis_outcome (precios/outcomes post-análisis).
+  startOutcomeJob();
 });
 
 function shutdown(signal) {
   logger.info({ signal }, 'Shutting down...');
   stopHistoryPoller();
+  stopOutcomeJob();
   server.close(() => {
     logger.info('Server closed');
     process.exit(0);

@@ -15,6 +15,22 @@
  */
 
 import { jest } from '@jest/globals';
+import os from 'os';
+import path from 'path';
+import { existsSync, rmSync } from 'fs';
+
+// Aislar la BBDD del test: usar un fichero temporal en vez de ./data/cryptex.db
+// (app.js llama initDb() al importarse, así que hay que fijar DB_PATH ANTES de ese
+// import dinámico más abajo). Sin esto, los tests escribían en la BBDD real.
+const TEST_DB = path.join(os.tmpdir(), `cryptex-itest-${process.pid}-${Date.now()}.db`);
+process.env.DB_PATH = TEST_DB;
+
+afterAll(() => {
+  for (const suffix of ['', '-wal', '-shm']) {
+    const f = TEST_DB + suffix;
+    if (existsSync(f)) { try { rmSync(f); } catch { /* best-effort */ } }
+  }
+});
 
 // ─── Mock all external services BEFORE importing the app ──────────────────────
 // Jest hoists jest.mock() calls; with ESM we use jest.unstable_mockModule instead.
@@ -80,6 +96,8 @@ jest.unstable_mockModule('../src/services/coingeckoService.js', () => ({
   fetchCurrentPrice:     jest.fn(async () => MOCK_PRICE),
   fetchGlobalMarketData: jest.fn(async () => MOCK_GLOBAL_MARKET),
   fetchCoinMarketData:   jest.fn(async () => MOCK_COIN_MARKET),
+  fetchHistoricalKlines: jest.fn(async () => []),
+  fetchHistoricalClose:  jest.fn(async () => 95000),
 }));
 
 jest.unstable_mockModule('../src/services/fearGreedService.js', () => ({
@@ -650,6 +668,38 @@ describe('POST /api/analyze', () => {
     expect(entry).toHaveProperty('confidence');
     expect(entry).toHaveProperty('executive_summary');
     expect(entry.action).toBe('Esperar');
+  });
+});
+
+// ─── Outcome / backtesting ────────────────────────────────────────────────────
+
+describe('POST /api/outcome/run', () => {
+  test('devuelve processed (0 con análisis recientes <1h)', async () => {
+    const res = await request.post('/api/outcome/run');
+    expect(res.status).toBe(200);
+    expect(typeof res.body.processed).toBe('number');
+  });
+});
+
+describe('GET /api/outcome/stats', () => {
+  test('agregadas (sin coin) → objeto stats', async () => {
+    const res = await request.get('/api/outcome/stats');
+    expect(res.status).toBe(200);
+    expect(res.body.coin).toBe('ALL');
+    expect(res.body.stats).toBeDefined();
+    expect(res.body.stats).toHaveProperty('total_evaluated');
+    expect(res.body.stats).toHaveProperty('win_rate_24h');
+  });
+
+  test('filtra por coin válida', async () => {
+    const res = await request.get('/api/outcome/stats?coin=btc');
+    expect(res.status).toBe(200);
+    expect(res.body.coin).toBe('BTC');
+  });
+
+  test('coin inválida → 400', async () => {
+    const res = await request.get('/api/outcome/stats?coin=LUNA');
+    expect(res.status).toBe(400);
   });
 });
 

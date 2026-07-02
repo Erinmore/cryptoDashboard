@@ -170,6 +170,105 @@ export function getLastAnalysis(coin) {
   `).get(coin.toUpperCase()) ?? null;
 }
 
+// ─── Outcome / backtesting (analysis_outcome) ─────────────────────────────────
+
+/**
+ * Devuelve análisis con outcome incompleto y suficientemente antiguos (>= olderThanMs).
+ * Incluye los campos del análisis + las columnas de outcome ya rellenadas (para no
+ * refetchear lo que ya está). Un análisis "necesita" outcome si no tiene fila, o le
+ * falta el precio a 7d, o su setup sigue sin resolver ('open'/null).
+ * @param {number} olderThanMs - Solo análisis con timestamp <= esta marca (epoch ms).
+ * @param {number} [limit=100]
+ */
+export function getAnalysesNeedingOutcome(olderThanMs, limit = 100) {
+  const db = getDb();
+  const cutoff = new Date(olderThanMs).toISOString();
+  return db.prepare(`
+    SELECT a.id, a.coin, a.timestamp, a.price_current, a.action,
+           a.has_executable_setup, a.setup_entry_price, a.setup_stop_price,
+           a.setup_tp1_price, a.setup_tp2_price,
+           o.price_1h_later, o.price_4h_later, o.price_24h_later, o.price_7d_later,
+           o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop, o.setup_outcome
+    FROM analyses a
+    LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
+    WHERE a.timestamp <= ?
+      AND (o.analysis_id IS NULL
+           OR o.price_7d_later IS NULL
+           OR (a.has_executable_setup = 1 AND (o.setup_outcome IS NULL OR o.setup_outcome = 'open')))
+    ORDER BY a.timestamp ASC
+    LIMIT ?
+  `).all(cutoff, limit);
+}
+
+/** Inserta o actualiza (upsert por analysis_id) una fila de analysis_outcome. */
+export function upsertOutcome(o) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO analysis_outcome (
+      analysis_id, price_at_analysis,
+      price_1h_later, price_4h_later, price_24h_later, price_7d_later,
+      outcome_1h, outcome_24h, outcome_7d,
+      setup_hit_tp1, setup_hit_tp2, setup_hit_stop, setup_outcome, pnl_pct_24h
+    ) VALUES (
+      @analysis_id, @price_at_analysis,
+      @price_1h_later, @price_4h_later, @price_24h_later, @price_7d_later,
+      @outcome_1h, @outcome_24h, @outcome_7d,
+      @setup_hit_tp1, @setup_hit_tp2, @setup_hit_stop, @setup_outcome, @pnl_pct_24h
+    )
+    ON CONFLICT(analysis_id) DO UPDATE SET
+      price_at_analysis = excluded.price_at_analysis,
+      price_1h_later = excluded.price_1h_later, price_4h_later = excluded.price_4h_later,
+      price_24h_later = excluded.price_24h_later, price_7d_later = excluded.price_7d_later,
+      outcome_1h = excluded.outcome_1h, outcome_24h = excluded.outcome_24h, outcome_7d = excluded.outcome_7d,
+      setup_hit_tp1 = excluded.setup_hit_tp1, setup_hit_tp2 = excluded.setup_hit_tp2,
+      setup_hit_stop = excluded.setup_hit_stop, setup_outcome = excluded.setup_outcome,
+      pnl_pct_24h = excluded.pnl_pct_24h
+  `).run({
+    analysis_id:       o.analysis_id,
+    price_at_analysis: o.price_at_analysis ?? null,
+    price_1h_later:    o.price_1h_later ?? null,
+    price_4h_later:    o.price_4h_later ?? null,
+    price_24h_later:   o.price_24h_later ?? null,
+    price_7d_later:    o.price_7d_later ?? null,
+    outcome_1h:        o.outcome_1h ?? null,
+    outcome_24h:       o.outcome_24h ?? null,
+    outcome_7d:        o.outcome_7d ?? null,
+    setup_hit_tp1:     o.setup_hit_tp1 ?? null,
+    setup_hit_tp2:     o.setup_hit_tp2 ?? null,
+    setup_hit_stop:    o.setup_hit_stop ?? null,
+    setup_outcome:     o.setup_outcome ?? null,
+    pnl_pct_24h:       o.pnl_pct_24h ?? null,
+  });
+}
+
+/**
+ * Estadísticas agregadas de backtesting a partir de analysis_outcome.
+ * @param {string|null} coin - Filtra por moneda, o null para todas.
+ */
+export function getOutcomeStats(coin = null) {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT
+      COUNT(*)                                                    AS total_evaluated,
+      SUM(CASE WHEN o.outcome_24h = 'win'  THEN 1 ELSE 0 END)     AS win_24h,
+      SUM(CASE WHEN o.outcome_24h = 'loss' THEN 1 ELSE 0 END)     AS loss_24h,
+      SUM(CASE WHEN o.outcome_24h = 'flat' THEN 1 ELSE 0 END)     AS flat_24h,
+      ROUND(AVG(o.pnl_pct_24h), 2)                                AS avg_pnl_pct_24h,
+      SUM(CASE WHEN o.setup_outcome IN ('tp1','tp2') THEN 1 ELSE 0 END) AS setup_tp,
+      SUM(CASE WHEN o.setup_outcome = 'stop' THEN 1 ELSE 0 END)   AS setup_stop,
+      SUM(CASE WHEN o.setup_outcome = 'open' THEN 1 ELSE 0 END)   AS setup_open
+    FROM analysis_outcome o
+    JOIN analyses a ON a.id = o.analysis_id
+    WHERE (@coin IS NULL OR a.coin = @coin)
+  `).get({ coin: coin ? coin.toUpperCase() : null });
+
+  const directional = (row.win_24h ?? 0) + (row.loss_24h ?? 0);
+  return {
+    ...row,
+    win_rate_24h: directional > 0 ? parseFloat(((row.win_24h / directional) * 100).toFixed(1)) : null,
+  };
+}
+
 // ─── Prune ────────────────────────────────────────────────────────────────────
 
 function pruneOldAnalyses(coin) {

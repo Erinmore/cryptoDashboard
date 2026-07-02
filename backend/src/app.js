@@ -7,6 +7,7 @@ import healthRouter from './routes/health.js';
 import dataRouter from './routes/data.js';
 import analysisRouter from './routes/analysis.js';
 import historyRouter from './routes/history.js';
+import outcomeRouter from './routes/outcome.js';
 
 export function createApp() {
   const app = express();
@@ -17,6 +18,7 @@ export function createApp() {
   app.use('/api/data', dataRouter);
   app.use('/api/analyze', analysisRouter);
   app.use('/api/history', historyRouter);
+  app.use('/api/outcome', outcomeRouter);
 
   app.use(notFound);
   app.use(errorHandler);

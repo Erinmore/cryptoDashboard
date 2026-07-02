@@ -116,6 +116,45 @@ async function fetchBinanceKlines(symbol, interval, limit) {
   }));
 }
 
+/**
+ * Velas OHLC históricas en un rango temporal (para backtesting / analysis_outcome).
+ * @param {string} coin
+ * @param {string} interval - Formato Binance ('1m', '1h', '4h', '1d'…)
+ * @param {number} startTime - epoch ms
+ * @param {number} endTime   - epoch ms
+ * @param {number} [limit=1000]
+ * @returns {Promise<Array<{t:number, open:number, high:number, low:number, close:number, volume:number}>>}
+ */
+export async function fetchHistoricalKlines(coin, interval, startTime, endTime, limit = 1000) {
+  const symbol = BINANCE_SYMBOLS[coin.toUpperCase()];
+  if (!symbol) throw new ExternalApiError('Binance', `Unknown coin: ${coin}`);
+
+  const { data } = await axios.get(`${BINANCE_BASE}/klines`, {
+    params: { symbol, interval, startTime, endTime, limit },
+    timeout: 10000,
+  });
+  return data.map(k => ({
+    t:      k[0],
+    open:   parseFloat(k[1]),
+    high:   parseFloat(k[2]),
+    low:    parseFloat(k[3]),
+    close:  parseFloat(k[4]),
+    volume: parseFloat(k[5]),
+  }));
+}
+
+/**
+ * Precio (close) en un instante concreto — vela de 1 minuto que arranca en/después
+ * de `targetMs`. Devuelve null si Binance no devuelve datos.
+ * @param {string} coin
+ * @param {number} targetMs - epoch ms
+ * @returns {Promise<number|null>}
+ */
+export async function fetchHistoricalClose(coin, targetMs) {
+  const candles = await fetchHistoricalKlines(coin, '1m', targetMs, targetMs + 60000, 1);
+  return candles.length ? candles[0].close : null;
+}
+
 // ─── Precio actual ────────────────────────────────────────────────────────────
 
 export async function fetchCurrentPrice(coin) {
