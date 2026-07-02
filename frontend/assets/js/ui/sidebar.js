@@ -512,6 +512,17 @@ export function hideRecommendationLoading() {
  * Rellena el panel de recomendación IA con los datos recibidos.
  * @param {object} rec — objeto `recommendation` del backend
  */
+// Formatea un score con signo explícito: +2 / 0 / -1 (o '?' si falta).
+function fmtSigned(v) {
+  if (v == null || Number.isNaN(v)) return '?';
+  return v > 0 ? `+${v}` : `${v}`;
+}
+
+/**
+ * Renderiza el panel de Análisis IA a partir del schema nuevo.
+ * @param {{ structured: object, narrative?: object }|object} rec
+ *   Acepta `{ structured, narrative }` o el propio `structured` directo.
+ */
 export function updateRecommendation(rec) {
   $('recommendation-loading')?.classList.add('hidden');
   $('recommendation-empty')?.classList.add('hidden');
@@ -520,36 +531,60 @@ export function updateRecommendation(rec) {
   if (!contentEl) return;
   contentEl.classList.remove('hidden');
 
+  const s = rec?.structured ?? rec ?? {};
+  const n = rec?.narrative ?? null;
+
   // Acción
   const actionEl = $('rec-action');
   if (actionEl) {
-    actionEl.textContent = rec.action ?? '—';
-    actionEl.className   = `rec-action ${rec.action ?? ''}`;
+    actionEl.textContent = s.action ?? '—';
+    actionEl.className   = `rec-action ${s.action ?? ''}`;
   }
 
-  // Confianza
-  const confPct = rec.confidence != null ? `${Math.round(rec.confidence * 100)}%` : '—';
-  setText('rec-confidence', confPct);
+  // Confianza (ahora string: Alta / Media / Baja)
+  setText('rec-confidence', s.confidence ?? '—');
 
-  // Racional
-  setText('rec-rationale', rec.rationale ?? '—');
+  // Racional: resumen ejecutivo (fallback al detalle de la narrativa)
+  setText('rec-rationale', s.executive_summary ?? n?.recommendation_detail ?? '—');
 
-  // Niveles
-  setText('rec-entry', fmtPrice(rec.entry_level));
-  setText('rec-sl',    fmtPrice(rec.exit?.stop_loss));
-  setText('rec-tp1',   fmtPrice(rec.exit?.take_profit_1?.price));
-  setText('rec-tp2',   fmtPrice(rec.exit?.take_profit_2?.price));
+  // Niveles del setup táctico (solo si hay setup ejecutable)
+  const setup = s.setup ?? null;
+  const levelsEl = $('rec-levels');
+  if (levelsEl) levelsEl.style.display = setup ? '' : 'none';
+  setText('rec-entry', fmtPrice(setup?.entry_price));
+  setText('rec-sl',    fmtPrice(setup?.stop_price));
+  setText('rec-tp1',   fmtPrice(setup?.tp1_price));
+  setText('rec-tp2',   fmtPrice(setup?.tp2_price));
 
-  // Alertas
+  // Alertas / metadata (fail-safe, gating, scores, driver, riesgo, convicción)
   const alertsEl = $('rec-alerts');
   if (alertsEl) {
     alertsEl.innerHTML = '';
-    for (const alert of rec.alerts ?? []) {
+    const addAlert = (cls, msg) => {
       const div = document.createElement('div');
-      div.className   = `rec-alert ${alert.type ?? 'info'}`;
-      div.textContent = alert.message ?? '';
+      div.className   = `rec-alert ${cls}`;
+      div.textContent = msg;
       alertsEl.appendChild(div);
+    };
+
+    if (s.fail_safe_applied) {
+      const orig = s.fail_safe_original_action ? ` (original: ${s.fail_safe_original_action})` : '';
+      addAlert('warning', `⚠ Degradado a Esperar por fail-safe${orig}: ${(s.fail_safe_rules ?? []).join(', ')}`);
     }
+    if (s.gating_active && s.gating_reason) {
+      addAlert('watch', `Gating: ${s.gating_reason}`);
+    }
+
+    const sc = s.scores ?? {};
+    const scoreStr = [['D', 'derivatives'], ['E', 'structure'], ['V', 'volume'], ['O', 'onchain']]
+      .map(([lbl, key]) => `${lbl} ${fmtSigned(sc[key])}`).join(' · ');
+    addAlert('info', `Scores: ${scoreStr} · Total ${fmtSigned(sc.total)}`);
+
+    const bits = [];
+    if (s.primary_driver != null) bits.push(`driver: ${s.primary_driver}`);
+    if (s.risk_score != null)     bits.push(`riesgo ${s.risk_score}/10`);
+    if (s.conviction != null)     bits.push(`convicción ${Math.round(s.conviction * 100)}%`);
+    if (bits.length) addAlert('info', bits.join(' · '));
   }
 
   // Timestamp

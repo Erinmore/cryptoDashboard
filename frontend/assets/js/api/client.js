@@ -42,6 +42,24 @@ export async function postAnalyze(coin, tf) {
   return body;
 }
 
+/**
+ * GET /api/history/:coin — historial de análisis IA persistidos.
+ *
+ * @param {string} coin
+ * @param {number} [limit=20]
+ * @param {number} [offset=0]
+ * @returns {Promise<{ coin: string, total: number, limit: number, offset: number, analyses: object[] }>}
+ */
+export async function fetchHistory(coin, limit = 20, offset = 0) {
+  const url = `/api/history/${encodeURIComponent(coin)}?limit=${limit}&offset=${offset}`;
+  const res = await fetch(url);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return body;
+}
+
 export async function fetchAnalyzePayload(coin, tf) {
   const url = `/api/analyze/payload?coin=${encodeURIComponent(coin)}&primary_tf=${encodeURIComponent(tf)}`;
   const res = await fetch(url);

@@ -601,6 +601,11 @@ html, body {
 .rec-action.BUY  { color: var(--bullish); }
 .rec-action.SELL { color: var(--bearish); }
 .rec-action.HOLD { color: var(--neutral); }
+/* Acciones del schema (español) */
+.rec-action.Comprar  { color: var(--bullish); }
+.rec-action.Vender   { color: var(--bearish); }
+.rec-action.Esperar  { color: var(--neutral); }
+.rec-action.Preparar { color: var(--accent); }
 
 .rec-confidence {
   font-size: var(--fs-md);
@@ -881,3 +886,137 @@ html, body {
 
 /* ── Utility ──────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MODAL — Historial de análisis IA (Fase 12)
+   ═══════════════════════════════════════════════════════════════════ */
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-2xl);
+}
+.history-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-hover);
+  border-radius: var(--radius-lg);
+  width: min(720px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.history-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-lg) var(--sp-2xl);
+  border-bottom: 1px solid var(--bg-hover);
+}
+.history-modal-title {
+  font-size: var(--fs-xl);
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+}
+.history-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--fs-2xl);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 var(--sp-sm);
+  transition: color var(--transition-fast);
+}
+.history-close:hover { color: var(--text-primary); }
+.history-modal-body {
+  padding: var(--sp-lg) var(--sp-2xl);
+  overflow-y: auto;
+}
+.history-empty,
+.history-count {
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  text-align: center;
+  padding: var(--sp-lg) 0;
+}
+.history-count { text-align: left; padding: 0 0 var(--sp-lg) 0; }
+
+/* ── Tarjeta de análisis ── */
+.hist-card {
+  border: 1px solid var(--bg-hover);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: var(--sp-lg);
+  margin-bottom: var(--sp-lg);
+}
+.hist-card:last-child { margin-bottom: 0; }
+.hist-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-lg);
+  margin-bottom: var(--sp-md);
+}
+.hist-action {
+  font-size: var(--fs-xl);
+  font-weight: 500;
+}
+.hist-action.buy  { color: var(--bullish); }
+.hist-action.sell { color: var(--bearish); }
+.hist-action.wait { color: var(--neutral); }
+.hist-action.prep { color: var(--accent); }
+.hist-confidence {
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.hist-ts {
+  margin-left: auto;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.hist-scores {
+  font-size: var(--fs-md);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--sp-sm);
+}
+.hist-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-bottom: var(--sp-sm);
+}
+.hist-setup {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--sp-sm);
+}
+.hist-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-sm);
+  margin-bottom: var(--sp-sm);
+}
+.hist-badge {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: var(--sp-xs) var(--sp-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+}
+.hist-badge.warn  { background: var(--alert-danger-bg);  color: var(--alert-danger-text);  border-color: var(--bearish); }
+.hist-badge.watch { background: var(--alert-warning-bg); color: var(--alert-warning-text); border-color: var(--neutral); }
+.hist-summary {
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: var(--sp-sm) 0 0 0;
+}

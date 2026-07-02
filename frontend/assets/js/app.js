@@ -30,6 +30,7 @@ import {
   showRecommendationLoading,
   hideRecommendationLoading,
 } from './ui/sidebar.js';
+import { openHistory, closeHistory, initHistoryModal } from './ui/history.js';
 
 // ── Render del gráfico ─────────────────────────────────────────────
 
@@ -176,7 +177,10 @@ async function runAnalysis() {
   showRecommendationLoading();
   try {
     const data = await postAnalyze(coin, tf);
-    const rec  = data.recommendation ?? null;
+    // Schema nuevo: el endpoint devuelve { structured, narrative, ai_metadata }.
+    const rec = data.structured
+      ? { structured: data.structured, narrative: data.narrative ?? null }
+      : null;
     setState({ recommendation: rec });
 
     if (rec) {
@@ -270,6 +274,10 @@ function init() {
   // ── Botón Download data ──────────────────────────────────────────
   document.getElementById('btn-download')?.addEventListener('click', runDownloadData);
 
+  // ── Botón Historial IA (Fase 12) ─────────────────────────────────
+  initHistoryModal();
+  document.getElementById('btn-history')?.addEventListener('click', () => openHistory(getState().coin));
+
   // ── Botón Analizar ───────────────────────────────────────────────
   document.getElementById('btn-analyze')?.addEventListener('click', runAnalysis);
 
@@ -296,6 +304,9 @@ function init() {
       tf:             getState().tf,
       recommendation: getState().recommendation ?? null,
     });
+
+    // Si el modal de historial está abierto, cerrarlo (mostraba la coin anterior).
+    closeHistory();
 
     // Cargar estado guardado de la nueva coin
     const newCoinState = loadCoinState(newCoin);

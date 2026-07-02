@@ -41,6 +41,7 @@
       <span id="timer-display" class="timer-display">60s</span>
       <button id="btn-refresh" class="btn btn-secondary" title="Actualizar datos">&#x21BB; Actualizar</button>
       <button id="btn-download" class="btn btn-secondary" title="Descargar payload + prompt del LLM">&#x2B07; Download data</button>
+      <button id="btn-history" class="btn btn-secondary" title="Historial de análisis IA">&#x1F551; Historial</button>
       <button id="btn-analyze" class="btn btn-primary" title="Análisis IA">&#x26A1; Analizar</button>
     </div>
   </header>
@@ -381,6 +382,21 @@
 
     </aside>
   </main>
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL — Historial de análisis IA (Fase 12)
+  ═══════════════════════════════════════════════════════ -->
+  <div id="history-overlay" class="history-overlay hidden">
+    <div class="history-modal" role="dialog" aria-modal="true" aria-labelledby="history-title">
+      <div class="history-modal-header">
+        <h2 id="history-title" class="history-modal-title">Historial de análisis IA — <span id="history-coin">—</span></h2>
+        <button id="history-close" class="history-close" title="Cerrar" aria-label="Cerrar">&times;</button>
+      </div>
+      <div id="history-body" class="history-modal-body">
+        <p class="history-empty">Cargando…</p>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/assets/js/app.js"></script>
 </body>

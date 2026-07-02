@@ -159,7 +159,8 @@ frontend/
         store.js             ← Estado global: getState(), setState(), subscribe()
         storage.js           ← Persistencia por coin en localStorage (coin, tf, recommendation)
       ui/
-        sidebar.js           ← updateHeader, updateIndicators, updateSentiment, updateRecommendation
+        sidebar.js           ← updateHeader, updateIndicators, updateSentiment, updateRecommendation (schema {structured,narrative})
+        history.js           ← Modal historial IA (Fase 12): fetchHistory + tarjetas (acción, scores, gating, setup, validation_warnings)
       renderer/
         pixiRenderer.js      ← PIXI.Application + ResizeObserver
         layers.js            ← 4 capas: grid, candle, overlay, ui
