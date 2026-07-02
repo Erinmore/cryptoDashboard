@@ -109,7 +109,8 @@ src/middleware/
 src/routes/                  ← Solo registran handlers, sin lógica
   data.js                    ← GET /api/data
   analysis.js                ← POST /api/analyze
-  history.js                 ← GET /api/history/:coin
+  history.js                 ← GET /api/history/:coin (incluye outcome via JOIN)
+  outcome.js                 ← POST /api/outcome/run + GET /api/outcome/stats (backtesting)
   health.js                  ← GET /health
 src/controllers/             ← Orquestación, validación de params, formato respuesta
   dataController.js          ← GET /api/data — 11 fuentes en paralelo, devuelve candles+technical
@@ -163,7 +164,7 @@ frontend/
         storage.js           ← Persistencia por coin en localStorage (coin, tf, recommendation)
       ui/
         sidebar.js           ← updateHeader, updateIndicators, updateSentiment, updateRecommendation (schema {structured,narrative})
-        history.js           ← Modal historial IA (Fase 12): fetchHistory + tarjetas (acción, scores, gating, setup, validation_warnings)
+        history.js           ← Modal historial IA (Fase 12): fetchHistory + fetchOutcomeStats. Cabecera de backtesting (win-rate/PnL/TP-stop) + tarjetas (acción, scores, gating, setup, validation_warnings, resultado outcome por horizonte)
       renderer/
         pixiRenderer.js      ← PIXI.Application + ResizeObserver
         layers.js            ← 4 capas: grid, candle, overlay, ui
@@ -410,7 +411,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Fase 15 | Tests de integración de endpoints (47 tests, supertest) | ✅ Completo |
 | Sprint Briefing | Deficiencias de dataset + prompt auditadas (briefing 2026-04-27): D1-D22, P1-P7 | ✅ Completo |
 | Sprint Schema | Rediseño persistencia IA: 4 tablas, OUTPUT FORMAT JSON, analyzeMarket() implementado | ✅ Completo |
-| Bloque 5 | Schema ✅, deploy VPS ⏳, panel historial IA ⏳, analysis_outcome job ⏳ | ⏳ Parcial |
+| Bloque 5 | Schema ✅, panel historial IA ✅, panel en vivo ✅, poller multi-coin ✅, validador §6.4 ✅, analysis_outcome job ✅ · deploy Pi ⏳ | ⏳ Parcial |
 
 ### Detalle Bloque 4
 
@@ -714,17 +715,20 @@ Frontend accesible en `http://localhost:3001`, backend en `http://localhost:3000
 ## Próximo paso
 
 **Bloque 5 (en curso):**
-1. ~~Tests de integración de endpoints (Fase 15)~~ ✅ — 48 tests
+1. ~~Tests de integración de endpoints (Fase 15)~~ ✅
 2. ~~Docker + arquitectura deploy Pi~~ ✅ — Fase 14 parcial (falta setup infra NPM en Pi)
-3. ~~Rediseño schema persistencia IA (Sprint Schema)~~ ✅ — 4 tablas, analyzeMarket() implementado
-4. Panel frontend de histórico análisis IA (Fase 12 — backend ya operativo)
-5. Job `analysis_outcome` — rellena precios 1h/4h/24h/7d post-análisis para backtesting
-6. Setup infra Pi: instalar Docker, crear red `proxy`, levantar NPM, configurar proxy host en UI
+3. ~~Rediseño schema persistencia IA (Sprint Schema)~~ ✅
+4. ~~Panel frontend de histórico análisis IA (Fase 12)~~ ✅ — modal con backtesting + outcome
+5. ~~Panel recomendación IA en vivo (fix schema {structured,narrative})~~ ✅
+6. ~~Poller de fondo multi-coin + persistencia BBDD entre reinicios~~ ✅
+7. ~~Validador determinista del output §6.4 (log+flag + fail-safe)~~ ✅
+8. ~~Job `analysis_outcome` + endpoints /api/outcome~~ ✅
+9. **Setup infra Pi**: instalar Docker, crear red `proxy`, levantar NPM, configurar proxy host en UI — ⏳ ÚNICO PENDIENTE MAYOR
+10. Deuda menor §6: FVGs detallados, SuperTrend level numérico, S/R strength, `volume_history.vwap` top-level
 
-**API keys configuradas en `.env`:**
-- `COINGECKO_API_KEY` — demo key
-- `COINALYZE_API_KEY` — key gratuita, operativa
-- `ANTHROPIC_API_KEY` — necesaria para activar `analyzeMarket()` (implementado, listo para producción)
+**API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa y verificada en vivo (`claude-opus-4-7`). `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
+
+**Jobs de fondo (index.js):** `historyPoller` (300s, persiste todas las monedas) + `outcomeService` (900s, rellena backtesting). Flags `HISTORY_POLLER_ENABLED` / `OUTCOME_JOB_ENABLED`.
 
 ---
 
