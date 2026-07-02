@@ -60,6 +60,21 @@ export async function fetchHistory(coin, limit = 20, offset = 0) {
   return body;
 }
 
+/**
+ * GET /api/outcome/stats — métricas agregadas de backtesting.
+ * @param {string} [coin] - Si se omite, agregadas de todas las monedas.
+ * @returns {Promise<{ coin: string, stats: object }>}
+ */
+export async function fetchOutcomeStats(coin) {
+  const url = coin ? `/api/outcome/stats?coin=${encodeURIComponent(coin)}` : '/api/outcome/stats';
+  const res = await fetch(url);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return body;
+}
+
 export async function fetchAnalyzePayload(coin, tf) {
   const url = `/api/analyze/payload?coin=${encodeURIComponent(coin)}&primary_tf=${encodeURIComponent(tf)}`;
   const res = await fetch(url);

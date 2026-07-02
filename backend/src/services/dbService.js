@@ -122,32 +122,38 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
 
   const rows = db.prepare(`
     SELECT
-      id, timestamp, primary_tf,
-      price_current, price_change_24h_pct,
-      btc_dominance_pct,
+      a.id, a.timestamp, a.primary_tf,
+      a.price_current, a.price_change_24h_pct,
+      a.btc_dominance_pct,
 
-      fear_greed_value, fear_greed_class,
+      a.fear_greed_value, a.fear_greed_class,
 
-      btc_dvol_regime,
+      a.btc_dvol_regime,
 
-      funding_rate_pct, predicted_rate_pct,
-      funding_severity, funding_severity_negative,
-      oi_change_24h_pct,
-      etf_trend_7d,
+      a.funding_rate_pct, a.predicted_rate_pct,
+      a.funding_severity, a.funding_severity_negative,
+      a.oi_change_24h_pct,
+      a.etf_trend_7d,
 
-      mvrv_signal,
+      a.mvrv_signal,
 
-      action, confidence, risk_score,
-      score_derivatives, score_structure, score_volume, score_onchain, score_total,
-      primary_driver,
-      has_executable_setup, gating_active, gating_reason,
-      setup_entry_price, setup_stop_price, setup_tp1_price,
+      a.action, a.confidence, a.risk_score,
+      a.score_derivatives, a.score_structure, a.score_volume, a.score_onchain, a.score_total,
+      a.primary_driver,
+      a.has_executable_setup, a.gating_active, a.gating_reason,
+      a.setup_entry_price, a.setup_stop_price, a.setup_tp1_price,
 
-      tf_conflict, macro_regime,
-      executive_summary, validation_warnings
-    FROM analyses
-    WHERE coin = ?
-    ORDER BY timestamp DESC
+      a.tf_conflict, a.macro_regime,
+      a.executive_summary, a.validation_warnings,
+
+      -- Resultado a posteriori (analysis_outcome), null si aún no evaluado
+      o.outcome_1h, o.outcome_24h, o.outcome_7d,
+      o.pnl_pct_24h, o.price_24h_later,
+      o.setup_outcome, o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop
+    FROM analyses a
+    LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
+    WHERE a.coin = ?
+    ORDER BY a.timestamp DESC
     LIMIT ? OFFSET ?
   `).all(coin.toUpperCase(), limit, offset);
 

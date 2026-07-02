@@ -6,7 +6,7 @@
  * del validador determinista). Solo lectura; no dispara análisis.
  */
 
-import { fetchHistory } from '../api/client.js';
+import { fetchHistory, fetchOutcomeStats } from '../api/client.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -53,6 +53,16 @@ function actionClass(action) {
     case 'Preparar': return 'prep';
     default:         return 'wait';
   }
+}
+
+// Clase de color por resultado de outcome.
+function outcomeClass(o) {
+  return o === 'win' ? 'win' : o === 'loss' ? 'loss' : 'muted';
+}
+
+function fmtSignedPct(v) {
+  if (v == null) return '';
+  return `${v > 0 ? '+' : ''}${v}%`;
 }
 
 // ── Render de una tarjeta ──────────────────────────────────────────
@@ -125,6 +135,28 @@ function renderCard(a) {
   }
   if (badges.childNodes.length) card.appendChild(badges);
 
+  // Resultado a posteriori (analysis_outcome)
+  const horizons = [['1h', a.outcome_1h], ['24h', a.outcome_24h], ['7d', a.outcome_7d]]
+    .filter(([, o]) => o != null);
+  const hasSetupOutcome = a.has_executable_setup && a.setup_outcome && a.setup_outcome !== 'open';
+  if (horizons.length || hasSetupOutcome) {
+    const row = el('div', 'hist-outcome');
+    row.appendChild(el('span', 'hist-outcome-label', 'Resultado'));
+    for (const [lbl, o] of horizons) {
+      let txt = `${lbl}: ${o}`;
+      if (lbl === '24h' && a.pnl_pct_24h != null) txt += ` (${fmtSignedPct(a.pnl_pct_24h)})`;
+      row.appendChild(el('span', `hist-outcome-badge ${outcomeClass(o)}`, txt));
+    }
+    if (hasSetupOutcome) {
+      const so = a.setup_outcome;
+      const cls = (so === 'tp1' || so === 'tp2') ? 'win' : so === 'stop' ? 'loss' : 'muted';
+      row.appendChild(el('span', `hist-outcome-badge ${cls}`, `setup: ${so}`));
+    }
+    card.appendChild(row);
+  } else {
+    card.appendChild(el('div', 'hist-outcome pending', 'Resultado pendiente (se evalúa a partir de 1h)'));
+  }
+
   // Resumen ejecutivo
   if (a.executive_summary) {
     card.appendChild(el('p', 'hist-summary', a.executive_summary));
@@ -160,8 +192,16 @@ export async function openHistory(coin) {
   document.addEventListener('keydown', escHandler);
 
   try {
-    const data = await fetchHistory(coin, 30, 0);
+    // Historial + métricas de backtesting en paralelo.
+    const [data, statsRes] = await Promise.all([
+      fetchHistory(coin, 30, 0),
+      fetchOutcomeStats(coin).catch(() => null),
+    ]);
     body.innerHTML = '';
+
+    // Bloque de métricas agregadas (arriba del todo).
+    if (statsRes?.stats) body.appendChild(renderStats(statsRes.stats));
+
     if (!data.analyses?.length) {
       body.appendChild(el('p', 'history-empty', 'Sin análisis para esta moneda. Pulsa Analizar para generar el primero.'));
       return;
@@ -173,6 +213,38 @@ export async function openHistory(coin) {
     body.innerHTML = '';
     body.appendChild(el('p', 'history-empty', `Error cargando el historial: ${err.message}`));
   }
+}
+
+// Bloque de métricas agregadas de backtesting (cabecera del modal).
+function renderStats(s) {
+  const box = el('div', 'hist-stats');
+  box.appendChild(el('span', 'hist-stats-title', 'Backtesting'));
+
+  if (!s.total_evaluated) {
+    box.appendChild(el('span', 'hist-stats-empty', 'aún sin resultados — los análisis se evalúan a partir de 1h'));
+    return box;
+  }
+
+  const grid = el('div', 'hist-stats-grid');
+  const metric = (label, value, cls) => {
+    const m = el('div', 'hist-stat');
+    m.appendChild(el('span', 'hist-stat-label', label));
+    m.appendChild(el('span', `hist-stat-value ${cls ?? ''}`, value));
+    grid.appendChild(m);
+  };
+
+  metric('Evaluados', String(s.total_evaluated));
+  metric('Win-rate 24h',
+    s.win_rate_24h != null ? `${s.win_rate_24h}%` : '—',
+    s.win_rate_24h == null ? '' : s.win_rate_24h >= 50 ? 'win' : 'loss');
+  metric('PnL medio 24h',
+    s.avg_pnl_pct_24h != null ? fmtSignedPct(s.avg_pnl_pct_24h) : '—',
+    s.avg_pnl_pct_24h == null ? '' : s.avg_pnl_pct_24h >= 0 ? 'win' : 'loss');
+  metric('W / L 24h', `${s.win_24h ?? 0} / ${s.loss_24h ?? 0}`);
+  metric('Setups TP / Stop', `${s.setup_tp ?? 0} / ${s.setup_stop ?? 0}`);
+
+  box.appendChild(grid);
+  return box;
 }
 
 /**
