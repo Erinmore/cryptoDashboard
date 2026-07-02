@@ -139,3 +139,43 @@ export function validateAnalysis(structured) {
 
   return { warnings, hasSevere: warnings.some(w => w.severity === 'severe') };
 }
+
+/**
+ * FASE 2 (fail-safe) — degrada el output a "Esperar" ante violación SEVERA.
+ *
+ * Función pura: no muta `structured`, devuelve una copia parcheada. Coherente con el
+ * DEFAULT STATE del prompt ("por defecto ESPERAR"): si el LLM recomendó Comprar/Vender
+ * sin cumplir su puerta, o ignoró un gating activo, o dio un setup en dirección opuesta
+ * a la acción, no ejecutamos ese trade — forzamos Esperar y neutralizamos el setup.
+ * Las violaciones menores NO disparan fail-safe (quedan en log + persistencia).
+ *
+ * @param {object} structured - Output del LLM ya validado.
+ * @param {{ warnings: Array, hasSevere: boolean }} validation - Resultado de validateAnalysis().
+ * @returns {{ structured: object, applied: boolean }}
+ */
+export function applyFailSafe(structured, validation) {
+  if (!validation?.hasSevere || !structured) {
+    return { structured, applied: false };
+  }
+
+  const severeRules = validation.warnings
+    .filter(w => w.severity === 'severe')
+    .map(w => w.rule);
+
+  const note = `[FAIL-SAFE] Acción degradada a Esperar por violación de reglas duras del prompt `
+    + `(${severeRules.join(', ')}). Output original del LLM: action="${structured.action}".`;
+
+  const patched = {
+    ...structured,
+    action: 'Esperar',
+    // Un Esperar forzado no ejecuta: se neutraliza el setup para no dejar niveles activos.
+    has_executable_setup: false,
+    setup: null,
+    fail_safe_applied: true,
+    fail_safe_original_action: structured.action ?? null,
+    fail_safe_rules: severeRules,
+    executive_summary: `${note}${structured.executive_summary ? ' ' + structured.executive_summary : ''}`,
+  };
+
+  return { structured: patched, applied: true };
+}

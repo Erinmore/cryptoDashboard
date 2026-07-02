@@ -11,7 +11,8 @@ import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
 import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js';
-import { validateAnalysis } from '../services/analysisValidator.js';
+import { validateAnalysis, applyFailSafe } from '../services/analysisValidator.js';
+import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap } from '../utils/timeSeries.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
@@ -780,23 +781,36 @@ export async function analyze(req, res, next) {
 
     logger.info({ coin, primaryTf }, 'POST /api/analyze — calling Anthropic');
 
-    const { structured, narrative, ai_metadata } = await analyzeMarket(context);
+    const { structured: rawStructured, narrative, ai_metadata } = await analyzeMarket(context);
 
-    // Validación determinista del output (Fase 1: log + flag). No altera la respuesta;
-    // solo registra y persiste las violaciones de reglas duras del prompt para telemetría.
-    const validation = validateAnalysis(structured);
+    // Validación determinista del output (§6.4). Fase 1: log + persistencia de todas las
+    // violaciones de reglas duras del prompt (telemetría). Se valida SIEMPRE el output crudo.
+    const validation = validateAnalysis(rawStructured);
     if (validation.warnings.length > 0) {
       logger.warn(
-        { coin, action: structured.action, hasSevere: validation.hasSevere, warnings: validation.warnings },
+        { coin, action: rawStructured.action, hasSevere: validation.hasSevere, warnings: validation.warnings },
         'POST /api/analyze — output del LLM viola reglas del prompt',
       );
+    }
+
+    // Fase 2: fail-safe — ante violación SEVERA degradar a Esperar (si está habilitado).
+    let structured = rawStructured;
+    if (env.analysisFailsafeEnabled) {
+      const failSafe = applyFailSafe(rawStructured, validation);
+      structured = failSafe.structured;
+      if (failSafe.applied) {
+        logger.warn(
+          { coin, original_action: rawStructured.action, rules: structured.fail_safe_rules },
+          'POST /api/analyze — FAIL-SAFE aplicado: acción degradada a Esperar',
+        );
+      }
     }
 
     const processingMs = Date.now() - start;
     const id = uuidv4();
 
     const header = buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs);
-    // Store narrative inside ai_response_full
+    // Guardamos el structured final (ya con fail-safe si aplicó) junto al narrative.
     header.ai_response_full = JSON.stringify({ structured, narrative });
     header.validation_warnings = validation.warnings.length > 0 ? JSON.stringify(validation.warnings) : null;
 

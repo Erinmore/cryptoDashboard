@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { validateAnalysis } from '../src/services/analysisValidator.js';
+import { validateAnalysis, applyFailSafe } from '../src/services/analysisValidator.js';
 
 // Baseline totalmente válido: Esperar neutro, sin setup.
 const base = (over = {}) => ({
@@ -154,5 +154,57 @@ describe('validateAnalysis — signo de scores.total', () => {
   test('total coherente no dispara total_sign', () => {
     const ok = base({ scores: { derivatives: 1, structure: 1, volume: 0, onchain: 0, total: 1.1 } });
     expect(rules(ok)).not.toContain('total_sign');
+  });
+});
+
+describe('applyFailSafe — Fase 2 (degradar a Esperar ante violación severa)', () => {
+  test('sin violación severa no altera el structured', () => {
+    const s = base();
+    const { structured, applied } = applyFailSafe(s, validateAnalysis(s));
+    expect(applied).toBe(false);
+    expect(structured).toBe(s);          // misma referencia, sin copia
+    expect(structured.action).toBe('Esperar');
+  });
+
+  test('violación solo-menor NO dispara fail-safe', () => {
+    const s = base({ conviction: 1.5 });  // fuera de rango → minor
+    const v = validateAnalysis(s);
+    expect(v.hasSevere).toBe(false);
+    expect(applyFailSafe(s, v).applied).toBe(false);
+  });
+
+  test('Comprar sin puerta → degrada a Esperar y neutraliza setup', () => {
+    const bad = base({
+      action: 'Comprar',
+      scores: { derivatives: 0, structure: 1, volume: 1, onchain: 0, total: 0.6 },
+      has_executable_setup: true,
+      setup: { entry_price: 100, stop_price: 95, tp1_price: 110, tp2_price: 120, validity_candles: 8, tf_execution: '4h' },
+      executive_summary: 'Tesis alcista.',
+    });
+    const { structured, applied } = applyFailSafe(bad, validateAnalysis(bad));
+    expect(applied).toBe(true);
+    expect(structured.action).toBe('Esperar');
+    expect(structured.has_executable_setup).toBe(false);
+    expect(structured.setup).toBeNull();
+    expect(structured.fail_safe_applied).toBe(true);
+    expect(structured.fail_safe_original_action).toBe('Comprar');
+    expect(structured.fail_safe_rules).toContain('buy_gate');
+    expect(structured.executive_summary).toMatch(/FAIL-SAFE/);
+    expect(structured.executive_summary).toContain('Tesis alcista.');  // conserva el resumen original
+  });
+
+  test('gating ignorado → degrada a Esperar', () => {
+    const bad = base({ gating_active: true, action: 'Vender', scores: { derivatives: -2, structure: -1, volume: -1, onchain: 0, total: -1.3 } });
+    const { structured, applied } = applyFailSafe(bad, validateAnalysis(bad));
+    expect(applied).toBe(true);
+    expect(structured.action).toBe('Esperar');
+    expect(structured.fail_safe_rules).toContain('gating_forces_wait');
+  });
+
+  test('es puro: no muta el structured de entrada', () => {
+    const bad = base({ action: 'Comprar', scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 } });
+    applyFailSafe(bad, validateAnalysis(bad));
+    expect(bad.action).toBe('Comprar');   // el original intacto
+    expect(bad.fail_safe_applied).toBeUndefined();
   });
 });

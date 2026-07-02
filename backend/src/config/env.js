@@ -27,6 +27,11 @@ const env = {
   // On-chain data (bitcoin-data.com / BGeometrics) — flag para apagar si la fuente cae
   onchainEnabled: (process.env.ONCHAIN_DATA_ENABLED ?? 'true').toLowerCase() !== 'false',
 
+  // Fail-safe del validador determinista (§6.4 Fase 2): ante violación SEVERA de las
+  // reglas duras del prompt, degrada la acción a "Esperar". Activo por defecto; se puede
+  // apagar (ANALYSIS_FAILSAFE_ENABLED=false) para observar el output crudo del LLM.
+  analysisFailsafeEnabled: (process.env.ANALYSIS_FAILSAFE_ENABLED ?? 'true').toLowerCase() !== 'false',
+
   // Base de datos
   dbPath: process.env.DB_PATH || './data/cryptex.db',
 

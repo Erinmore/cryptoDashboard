@@ -178,6 +178,8 @@ const { fetchOrderBookWalls: mockFetchOrderBookWalls } =
   await import('../src/services/binanceOrderBookService.js');
 const { fetchFearGreed: mockFetchFearGreed } =
   await import('../src/services/fearGreedService.js');
+const { analyzeMarket: mockAnalyzeMarket } =
+  await import('../src/services/anthropicService.js');
 
 const request = supertest(app);
 
@@ -564,6 +566,39 @@ describe('POST /api/analyze', () => {
     // ai_metadata
     expect(res.body.ai_metadata).toBeDefined();
     expect(res.body.ai_metadata.prompt_version).toBe('v5_3_tf_naming_unified');
+  });
+
+  test('fail-safe: Comprar sin puerta se degrada a Esperar (§6.4 Fase 2)', async () => {
+    // El LLM devuelve un Comprar que no cumple la puerta (derivatives/volume < +1).
+    mockAnalyzeMarket.mockResolvedValueOnce({
+      structured: {
+        action: 'Comprar',
+        confidence: 'Alta',
+        risk_score: 4,
+        conviction: 0.7,
+        primary_driver: 'structure',
+        has_executable_setup: true,
+        gating_active: false,
+        gating_reason: null,
+        contradictions_found: false,
+        scores: { derivatives: 0, structure: 2, volume: 0, onchain: 0, total: 0.8 },
+        setup: { entry_price: 100, stop_price: 95, tp1_price: 110, tp2_price: 120, validity_candles: 8, tf_execution: '4h' },
+        executive_summary: 'Ruptura alcista con estructura fuerte.',
+      },
+      narrative: {
+        smart_money_read: 'x', divergences_anomalies: 'x', tactical_setup: 'x',
+        risk_analysis: 'x', recommendation_detail: 'x', invalidation: 'x',
+      },
+      ai_metadata: { model: 'stub', prompt_version: 'v5_3_tf_naming_unified', input_tokens: 0, output_tokens: 0 },
+    });
+
+    const res = await request.post('/api/analyze').send({ coin: 'BTC', primary_tf: '4h' });
+    expect(res.status).toBe(200);
+    expect(res.body.structured.action).toBe('Esperar');       // degradado
+    expect(res.body.structured.fail_safe_applied).toBe(true);
+    expect(res.body.structured.fail_safe_original_action).toBe('Comprar');
+    expect(res.body.structured.has_executable_setup).toBe(false);
+    expect(res.body.structured.setup).toBeNull();
   });
 
   test('defaults coin=BTC primary_tf=4h when body omitted', async () => {
