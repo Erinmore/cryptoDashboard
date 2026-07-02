@@ -156,6 +156,13 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
     },
   })),
   buildPrompt: jest.fn(() => 'stub prompt'),
+  buildLlmRequest: jest.fn((ctx) => ({
+    model: 'claude-opus-4-7',
+    max_tokens: 4096,
+    prompt_version: 'v5_2_orderbook_ratio_fix',
+    system: 'stub system prompt',
+    messages: [{ role: 'user', content: 'stub prompt' }],
+  })),
   PROMPT_VERSION: 'v5_2_orderbook_ratio_fix',
 }));
 
@@ -345,6 +352,16 @@ describe('GET /api/analyze/payload', () => {
     for (const key of requiredKeys) {
       expect(p).toHaveProperty(key);
     }
+  });
+
+  test('response includes llm_request with system prompt + user message', async () => {
+    const res = await request.get('/api/analyze/payload?coin=BTC&primary_tf=4h');
+    expect(res.status).toBe(200);
+    expect(res.body.llm_request).toBeDefined();
+    expect(res.body.llm_request.system).toEqual(expect.any(String));
+    expect(res.body.llm_request.prompt_version).toBe('v5_2_orderbook_ratio_fix');
+    expect(Array.isArray(res.body.llm_request.messages)).toBe(true);
+    expect(res.body.llm_request.messages[0].role).toBe('user');
   });
 
   test('payload.coin and primary_tf match query params', async () => {

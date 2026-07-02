@@ -143,9 +143,26 @@ function downloadJson(payload, filename) {
 async function downloadAnalyzePayload(coin, tf) {
   try {
     const response = await fetchAnalyzePayload(coin, tf);
-    downloadJson(response.payload, `cryptex-analyze-payload-${coin}-${tf}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    // El JSON descargado incluye el dataset (payload) y el request exacto al LLM
+    // (llm_request: system prompt + user message), tal cual se remitiría a Anthropic.
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadJson(response, `cryptex-analyze-payload-${coin}-${tf}-${stamp}.json`);
   } catch (err) {
     console.warn('[CRYPTEX] analyze payload download failed:', err.message);
+    throw err;
+  }
+}
+
+async function runDownloadData() {
+  const { coin, tf } = getState();
+  const btn = document.getElementById('btn-download');
+  if (btn) btn.disabled = true;
+  try {
+    await downloadAnalyzePayload(coin, tf);
+  } catch (err) {
+    console.error('[CRYPTEX] Download data error:', err.message);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -157,7 +174,6 @@ async function runAnalysis() {
   if (btn) btn.disabled = true;
 
   showRecommendationLoading();
-  await downloadAnalyzePayload(coin, tf);
   try {
     const data = await postAnalyze(coin, tf);
     const rec  = data.recommendation ?? null;
@@ -250,6 +266,9 @@ function init() {
     loadData();
     timer.reset();
   });
+
+  // ── Botón Download data ──────────────────────────────────────────
+  document.getElementById('btn-download')?.addEventListener('click', runDownloadData);
 
   // ── Botón Analizar ───────────────────────────────────────────────
   document.getElementById('btn-analyze')?.addEventListener('click', runAnalysis);

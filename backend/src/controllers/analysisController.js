@@ -10,7 +10,7 @@ import { fetchVolatilityData } from '../services/deribitService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
-import { analyzeMarket } from '../services/anthropicService.js';
+import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js';
 import { findEntryByDaysAgo, seriesHasGap } from '../utils/timeSeries.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
@@ -114,7 +114,7 @@ function analyzeTimeframeConflicts(technical, primaryTf) {
   };
 }
 
-function computeHistorySummaries(histories) {
+export function computeHistorySummaries(histories) {
   // ── Fear & Greed summary (30d) ──────────────────────────────────────────
   const fgHistory = histories?.fear_greed ?? [];
   let fearGreedSummary = null;
@@ -149,21 +149,27 @@ function computeHistorySummaries(histories) {
   const frHistory = histories?.funding_rate ?? [];
   let fundingRateSummary = null;
   if (frHistory.length >= 1) {
-    const closes = frHistory.map(e => e.c);
-    const positiveCount = closes.filter(v => v > 0).length;
-    const latestClose = frHistory.at(-1)?.c ?? 0;
+    // Los candles de Coinalyze guardan el funding en decimal crudo (p.ej. -0.002441),
+    // mientras que el top-level `funding_rate.rate_pct` está en porcentaje (×100). Para
+    // que el LLM vea todo en la MISMA escala que rate_pct/annualized_pct, expresamos el
+    // resumen también en % (misma precisión que coinalyzeService: 4 decimales).
+    const toPct = (v) => (v != null && Number.isFinite(v)) ? parseFloat((v * 100).toFixed(4)) : null;
+    const closesPct = frHistory.map(e => e.c * 100);
+    const positiveCount = closesPct.filter(v => v > 0).length;
+    const latestClosePct = (frHistory.at(-1)?.c ?? 0) * 100;
     // Los campos 48h solo tienen sentido con al menos 2 candles de historial.
     const has48h = frHistory.length >= 2;
     fundingRateSummary = {
-      open_48h:             has48h ? frHistory.at(0)?.o ?? null : null,
-      close_current:        frHistory.at(-1)?.c ?? null,
-      high_48h:             has48h ? Math.max(...frHistory.map(e => e.h)) : null,
-      low_48h:              has48h ? Math.min(...frHistory.map(e => e.l)) : null,
+      open_48h:             has48h ? toPct(frHistory.at(0)?.o) : null,
+      close_current:        toPct(frHistory.at(-1)?.c),
+      high_48h:             has48h ? toPct(Math.max(...frHistory.map(e => e.h))) : null,
+      low_48h:              has48h ? toPct(Math.min(...frHistory.map(e => e.l))) : null,
       trend_48h:            has48h ? (frHistory.at(-1)?.trend ?? null) : null,
-      pct_candles_positive: Math.round((positiveCount / closes.length) * 100),
+      pct_candles_positive: Math.round((positiveCount / closesPct.length) * 100),
       // Severidad del último candle de histórico (hasta 6h de lag) — puede diferir de
-      // `funding_rate.severity` (top-level), que se calcula sobre el valor live.
-      severity_last_candle: latestClose > 0.5 ? 'extreme' : latestClose > 0.2 ? 'high' : latestClose > 0.05 ? 'elevated' : 'normal',
+      // `funding_rate.severity` (top-level), que se calcula sobre el valor live. Misma
+      // lógica de umbrales que el top-level (positivos), ahora sobre la escala % correcta.
+      severity_last_candle: latestClosePct > 0.5 ? 'extreme' : latestClosePct > 0.2 ? 'high' : latestClosePct > 0.05 ? 'elevated' : 'normal',
     };
   }
 
@@ -834,6 +840,9 @@ export async function analyzePayload(req, res, next) {
         version: '1.0',
       },
       payload: context,
+      // Request exacto que se remitiría al LLM (system prompt + user message con el
+      // dataset serializado). Permite descargar desde el frontend el prompt completo.
+      llm_request: buildLlmRequest(context),
     });
   } catch (err) {
     next(err);

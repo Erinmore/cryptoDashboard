@@ -3,6 +3,9 @@ import { AppError } from '../utils/errors.js';
 
 export const PROMPT_VERSION = 'v5_2_orderbook_ratio_fix';
 
+const MODEL = 'claude-opus-4-7';
+const MAX_TOKENS = 4096;
+
 const SYSTEM_PROMPT = `ROLE
 
 Actúa como un Senior Quantitative Crypto Trader, especialista en:
@@ -754,6 +757,25 @@ function buildPrompt(ctx) {
 }
 
 /**
+ * Construye el request EXACTO que se enviaría a Anthropic para un contexto dado.
+ * Fuente única de verdad: `analyzeMarket()` y el endpoint de payload (botón
+ * "Download data" del frontend) consumen esta misma función, de modo que el JSON
+ * descargado refleja fielmente lo que recibiría el LLM.
+ *
+ * @param {object} context - Contexto de mercado completo
+ * @returns {{ model: string, max_tokens: number, prompt_version: string, system: string, messages: Array<{role: string, content: string}> }}
+ */
+function buildLlmRequest(context) {
+  return {
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    prompt_version: PROMPT_VERSION,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: buildPrompt(context) }],
+  };
+}
+
+/**
  * Envía el contexto de mercado a Anthropic Claude y retorna { structured, narrative, ai_metadata }.
  *
  * @param {object} context - Contexto completo con technical, sentiment, derivatives, etc.
@@ -772,12 +794,8 @@ export async function analyzeMarket(context) {
   const Anthropic = (await import('@anthropic-ai/sdk')).default;
   const client = new Anthropic({ apiKey: env.anthropicApiKey });
 
-  const response = await client.messages.create({
-    model: 'claude-opus-4-7',
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildPrompt(context) }],
-  });
+  const { model, max_tokens, system, messages } = buildLlmRequest(context);
+  const response = await client.messages.create({ model, max_tokens, system, messages });
 
   const raw = response.content[0].text.trim();
 
@@ -812,4 +830,4 @@ export async function analyzeMarket(context) {
   };
 }
 
-export { buildPrompt };
+export { buildPrompt, buildLlmRequest };
