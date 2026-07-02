@@ -13,7 +13,7 @@ import { getHistories } from '../services/historyService.js';
 import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js';
 import { validateAnalysis, applyFailSafe } from '../services/analysisValidator.js';
 import env from '../config/env.js';
-import { findEntryByDaysAgo, seriesHasGap } from '../utils/timeSeries.js';
+import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
 // CVD/VWAP se persisten y pueden tener huecos tras un apagado prolongado; un salto mayor
@@ -260,8 +260,13 @@ export function computeHistorySummaries(histories) {
     const pctChange = (from, to) => (from?.value != null && to?.value != null && from.value !== 0)
       ? parseFloat(((to.value - from.value) / Math.abs(from.value) * 100).toFixed(2))
       : null;
-    const periodMin = Math.min(...values);
+    const periodMin = Math.min(...values);   // ventana completa (hasta 30d)
     const periodMax = Math.max(...values);
+    // high_7d/low_7d de verdad sobre los últimos 7 días por fecha (no toda la ventana,
+    // que con 30 puntos diarios mentía al etiquetarse "7d").
+    const vals7d = cvdHistory
+      .filter(e => { const d = daysBetweenDates(e.date, current.date); return d != null && d >= 0 && d <= 7; })
+      .map(e => e.value);
     cvdSummary = {
       current_value:      current.value,
       current_trend:      current.trend,
@@ -269,8 +274,8 @@ export function computeHistorySummaries(histories) {
       change_pct_24h:     pctChange(ref24h, current),
       change_pct_7d:      pctChange(ref7d, current),
       change_pct_30d:     gapped ? null : pctChange(ref30d, current),
-      high_7d:            periodMax,
-      low_7d:             periodMin,
+      high_7d:            vals7d.length ? Math.max(...vals7d) : null,
+      low_7d:             vals7d.length ? Math.min(...vals7d) : null,
       period_min:         periodMin,
       period_max:         periodMax,
       trend_30d:          gapped ? null : computeLinearTrend(values),
