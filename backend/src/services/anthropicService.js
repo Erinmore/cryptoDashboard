@@ -809,7 +809,19 @@ export async function analyzeMarket(context) {
     );
   }
 
-  const raw = response.content[0].text.trim();
+  // Buscar el bloque de texto explícitamente (no asumir content[0]): con extended
+  // thinking activado el primer bloque es de tipo 'thinking' y no trae `.text`.
+  const textBlock = Array.isArray(response.content)
+    ? response.content.find((b) => b?.type === 'text' && typeof b.text === 'string')
+    : null;
+  if (!textBlock) {
+    throw new AppError(
+      'Anthropic response sin bloque de texto',
+      502,
+      'UPSTREAM_PARSE_ERROR',
+    );
+  }
+  const raw = textBlock.text.trim();
 
   let parsed;
   try {
