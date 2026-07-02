@@ -61,6 +61,20 @@ describe('history_series persistence', () => {
     expect(row.n).toBeGreaterThanOrEqual(1);
   });
 
+  test('A7 — backfill desordenado/con duplicados deduplica por clave y queda ordenado', () => {
+    // Reenviar candles fuera de orden y repetidos (simula backfills solapados de Coinalyze).
+    const t0 = 1775000000;
+    const H = 6 * 3600; // funding cada 6h
+    hs.addFundingRateEntry('ETH', { t: t0 + 2 * H, o: 0.03, h: 0, l: 0, c: 0.03 });
+    hs.addFundingRateEntry('ETH', { t: t0,         o: 0.01, h: 0, l: 0, c: 0.01 });
+    hs.addFundingRateEntry('ETH', { t: t0 + 1 * H, o: 0.02, h: 0, l: 0, c: 0.02 });
+    hs.addFundingRateEntry('ETH', { t: t0 + 2 * H, o: 0.99, h: 0, l: 0, c: 0.99 }); // upsert del mismo t
+
+    const fr = hs.getHistories('ETH').funding_rate;
+    expect(fr.map((e) => e.t)).toEqual([t0, t0 + 1 * H, t0 + 2 * H]); // ordenado, sin duplicados
+    expect(fr.at(-1).c).toBe(0.99);                                    // el upsert ganó
+  });
+
   test('CVD/VWAP hydrate into memory after a simulated restart; backfilled metrics do not', async () => {
     hs.addVWAPEntry('BTC', '2026-06-02', 200, 'rising', null);
 

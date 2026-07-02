@@ -102,6 +102,25 @@ function loadSeries(coin, metric, limit) {
   }
 }
 
+/**
+ * Upsert idempotente en una serie en memoria, deduplicando por `key` sobre TODO el
+ * array (no solo el último elemento). Mantiene orden ascendente por `key` y recorta a
+ * los últimos `limit`. Robusto ante backfills reenviados en cualquier tamaño/orden —
+ * antes el dedup comparaba solo el último elemento y solo funcionaba por la coincidencia
+ * frágil de que el nº de candles del backfill == limit exacto (ver A7 en SESSION_STATE).
+ * `key` vale tanto para `t` numérico como para `date` ISO ('YYYY-MM-DD' ordena lexicográfico).
+ */
+function upsertByKey(history, entry, key, limit) {
+  const idx = history.findIndex((e) => e[key] === entry[key]);
+  if (idx !== -1) {
+    history[idx] = entry;
+  } else {
+    history.push(entry);
+  }
+  history.sort((a, b) => (a[key] > b[key] ? 1 : a[key] < b[key] ? -1 : 0));
+  if (history.length > limit) history.splice(0, history.length - limit);
+}
+
 // Fear & Greed es un índice de mercado global — una sola serie compartida.
 const fearGreedHistory = [];
 
@@ -137,20 +156,7 @@ export function addFearGreedEntry(value, classification, trend, date = null) {
 
   // Fear & Greed es global — se persiste bajo coin 'GLOBAL'.
   persist('GLOBAL', METRIC_NAME.fearGreed, dateToTsKey(entry.date), entry);
-
-  // Evitar duplicados del mismo día
-  if (fearGreedHistory.length > 0) {
-    const last = fearGreedHistory[fearGreedHistory.length - 1];
-    if (last.date === entry.date) {
-      fearGreedHistory[fearGreedHistory.length - 1] = entry;
-      return;
-    }
-  }
-
-  fearGreedHistory.push(entry);
-  if (fearGreedHistory.length > LIMITS.fearGreed) {
-    fearGreedHistory.shift();
-  }
+  upsertByKey(fearGreedHistory, entry, 'date', LIMITS.fearGreed);
 }
 
 // ─── Funding Rate ────────────────────────────────────────────────────────
@@ -161,20 +167,7 @@ export function addFundingRateEntry(coin, candle) {
 
   const entry = { ...candle }; // { t, o, h, l, c, trend }
   persist(coin, METRIC_NAME.fundingRate, entry.t, entry);
-
-  // Evitar duplicados del mismo timestamp
-  if (history.length > 0) {
-    const last = history[history.length - 1];
-    if (last.t === entry.t) {
-      history[history.length - 1] = entry;
-      return;
-    }
-  }
-
-  history.push(entry);
-  if (history.length > LIMITS.fundingRate) {
-    history.shift();
-  }
+  upsertByKey(history, entry, 't', LIMITS.fundingRate);
 }
 
 // ─── Open Interest ────────────────────────────────────────────────────────
@@ -185,20 +178,7 @@ export function addOpenInterestEntry(coin, candle) {
 
   const entry = { ...candle }; // { t, o, h, l, c }
   persist(coin, METRIC_NAME.openInterest, entry.t, entry);
-
-  // Evitar duplicados
-  if (history.length > 0) {
-    const last = history[history.length - 1];
-    if (last.t === entry.t) {
-      history[history.length - 1] = entry;
-      return;
-    }
-  }
-
-  history.push(entry);
-  if (history.length > LIMITS.openInterest) {
-    history.shift();
-  }
+  upsertByKey(history, entry, 't', LIMITS.openInterest);
 }
 
 // ─── Long/Short Ratio ────────────────────────────────────────────────────
@@ -209,20 +189,7 @@ export function addLongShortRatioEntry(coin, entry) {
 
   const data = { ...entry }; // { t, long_pct, short_pct }
   persist(coin, METRIC_NAME.longShortRatio, data.t, data);
-
-  // Evitar duplicados
-  if (history.length > 0) {
-    const last = history[history.length - 1];
-    if (last.t === entry.t) {
-      history[history.length - 1] = data;
-      return;
-    }
-  }
-
-  history.push(data);
-  if (history.length > LIMITS.longShortRatio) {
-    history.shift();
-  }
+  upsertByKey(history, data, 't', LIMITS.longShortRatio);
 }
 
 // ─── Liquidaciones ────────────────────────────────────────────────────────
@@ -237,20 +204,7 @@ export function addLiquidationsEntry(coin, date, longs_usd, shorts_usd) {
     shorts_usd: parseFloat(shorts_usd.toFixed(2)),
   };
   persist(coin, METRIC_NAME.liquidations, dateToTsKey(entry.date), entry);
-
-  // Evitar duplicados del mismo día
-  if (history.length > 0) {
-    const last = history[history.length - 1];
-    if (last.date === entry.date) {
-      history[history.length - 1] = entry;
-      return;
-    }
-  }
-
-  history.push(entry);
-  if (history.length > LIMITS.liquidations) {
-    history.shift();
-  }
+  upsertByKey(history, entry, 'date', LIMITS.liquidations);
 }
 
 // ─── CVD ──────────────────────────────────────────────────────────────────
@@ -266,20 +220,7 @@ export function addCVDEntry(coin, date, value, trend, divergence) {
     divergence,
   };
   persist(coin, METRIC_NAME.cvd, dateToTsKey(entry.date), entry);
-
-  // Evitar duplicados del mismo día
-  if (history.length > 0) {
-    const last = history[history.length - 1];
-    if (last.date === entry.date) {
-      history[history.length - 1] = entry;
-      return;
-    }
-  }
-
-  history.push(entry);
-  if (history.length > LIMITS.cvd) {
-    history.shift();
-  }
+  upsertByKey(history, entry, 'date', LIMITS.cvd);
 }
 
 // ─── VWAP ─────────────────────────────────────────────────────────────────
@@ -295,20 +236,7 @@ export function addVWAPEntry(coin, date, value, trend, divergence) {
     divergence,
   };
   persist(coin, METRIC_NAME.vwap, dateToTsKey(entry.date), entry);
-
-  // Evitar duplicados del mismo día
-  if (history.length > 0) {
-    const last = history[history.length - 1];
-    if (last.date === entry.date) {
-      history[history.length - 1] = entry;
-      return;
-    }
-  }
-
-  history.push(entry);
-  if (history.length > LIMITS.vwap) {
-    history.shift();
-  }
+  upsertByKey(history, entry, 'date', LIMITS.vwap);
 }
 
 // ─── Getter ───────────────────────────────────────────────────────────────
