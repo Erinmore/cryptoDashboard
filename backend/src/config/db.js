@@ -133,6 +133,9 @@ function runMigrations(db) {
       executive_summary TEXT,
       ai_response_full TEXT,
 
+      -- Validación determinista del output (Fase 1: log + flag) — JSON array o null
+      validation_warnings TEXT,
+
       -- Technical metadata
       processing_time_ms INTEGER,
       input_tokens INTEGER,

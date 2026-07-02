@@ -11,6 +11,7 @@ import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
 import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js';
+import { validateAnalysis } from '../services/analysisValidator.js';
 import { findEntryByDaysAgo, seriesHasGap } from '../utils/timeSeries.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
@@ -663,6 +664,7 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
 
     executive_summary: structured.executive_summary ?? null,
     ai_response_full:  JSON.stringify({ structured, narrative: structured._narrative }),
+    validation_warnings: null, // se rellena en analyze() tras validar (Fase 1: log + flag)
 
     processing_time_ms: processingMs,
     input_tokens:       ai_metadata.input_tokens ?? null,
@@ -780,12 +782,23 @@ export async function analyze(req, res, next) {
 
     const { structured, narrative, ai_metadata } = await analyzeMarket(context);
 
+    // Validación determinista del output (Fase 1: log + flag). No altera la respuesta;
+    // solo registra y persiste las violaciones de reglas duras del prompt para telemetría.
+    const validation = validateAnalysis(structured);
+    if (validation.warnings.length > 0) {
+      logger.warn(
+        { coin, action: structured.action, hasSevere: validation.hasSevere, warnings: validation.warnings },
+        'POST /api/analyze — output del LLM viola reglas del prompt',
+      );
+    }
+
     const processingMs = Date.now() - start;
     const id = uuidv4();
 
     const header = buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs);
     // Store narrative inside ai_response_full
     header.ai_response_full = JSON.stringify({ structured, narrative });
+    header.validation_warnings = validation.warnings.length > 0 ? JSON.stringify(validation.warnings) : null;
 
     const tfSnapshots = buildTfSnapshots(id, context.technical);
     const clusters    = buildClusterRows(id, context.derivatives?.liquidation_clusters);

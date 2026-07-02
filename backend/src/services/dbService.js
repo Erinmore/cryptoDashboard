@@ -34,7 +34,7 @@ export function saveAnalysis(data) {
       score_derivatives, score_structure, score_volume, score_onchain, score_total,
       setup_entry_price, setup_stop_price, setup_tp1_price, setup_tp2_price,
       setup_validity_candles, setup_tf_execution,
-      executive_summary, ai_response_full,
+      executive_summary, ai_response_full, validation_warnings,
       processing_time_ms, input_tokens, output_tokens, model_used
     ) VALUES (
       @id, @coin, @primary_tf, @timestamp, @prompt_version,
@@ -54,7 +54,7 @@ export function saveAnalysis(data) {
       @score_derivatives, @score_structure, @score_volume, @score_onchain, @score_total,
       @setup_entry_price, @setup_stop_price, @setup_tp1_price, @setup_tp2_price,
       @setup_validity_candles, @setup_tf_execution,
-      @executive_summary, @ai_response_full,
+      @executive_summary, @ai_response_full, @validation_warnings,
       @processing_time_ms, @input_tokens, @output_tokens, @model_used
     )
   `);
@@ -144,7 +144,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       setup_entry_price, setup_stop_price, setup_tp1_price,
 
       tf_conflict, macro_regime,
-      executive_summary
+      executive_summary, validation_warnings
     FROM analyses
     WHERE coin = ?
     ORDER BY timestamp DESC
