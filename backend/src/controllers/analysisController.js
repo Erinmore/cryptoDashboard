@@ -11,7 +11,12 @@ import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
 import { analyzeMarket } from '../services/anthropicService.js';
+import { findEntryByDaysAgo, seriesHasGap } from '../utils/timeSeries.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
+
+// CVD/VWAP se persisten y pueden tener huecos tras un apagado prolongado; un salto mayor
+// que esto entre snapshots diarios invalida las tendencias de 30d (mejor null que engañar).
+const HISTORY_MAX_GAP_DAYS = 3;
 import { ValidationError } from '../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../middleware/logger.js';
@@ -241,18 +246,14 @@ function computeHistorySummaries(histories) {
   if (cvdHistory.length >= 2) {
     const values = cvdHistory.map(e => e.value);
     const current = cvdHistory.at(-1);
-    const first = cvdHistory.at(0);
-    const refPoint = cvdHistory.length >= 7 ? cvdHistory[cvdHistory.length - 7] : first;
-    const change7dPct = (refPoint?.value != null && current.value != null && refPoint.value !== 0)
-      ? parseFloat(((current.value - refPoint.value) / Math.abs(refPoint.value) * 100).toFixed(2))
-      : null;
-    const change30dPct = (first?.value != null && first.value !== 0)
-      ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
-      : null;
-    // change_pct_24h: comparar con el punto de hace 1 día (índice -2 en historial diario).
-    const prev24h = cvdHistory.length >= 2 ? cvdHistory[cvdHistory.length - 2] : null;
-    const change24hPct = (prev24h?.value != null && prev24h.value !== 0)
-      ? parseFloat(((current.value - prev24h.value) / Math.abs(prev24h.value) * 100).toFixed(2))
+    // Gap-aware: lookups por fecha real (no por posición, que con huecos miente) y
+    // deltas/tendencia de 30d a null si la serie persistida tiene agujeros grandes.
+    const gapped = seriesHasGap(cvdHistory, HISTORY_MAX_GAP_DAYS);
+    const ref24h = findEntryByDaysAgo(cvdHistory, 1, 1);
+    const ref7d  = findEntryByDaysAgo(cvdHistory, 7, 2);
+    const ref30d = findEntryByDaysAgo(cvdHistory, 30, 3) ?? cvdHistory.at(0);
+    const pctChange = (from, to) => (from?.value != null && to?.value != null && from.value !== 0)
+      ? parseFloat(((to.value - from.value) / Math.abs(from.value) * 100).toFixed(2))
       : null;
     const periodMin = Math.min(...values);
     const periodMax = Math.max(...values);
@@ -260,14 +261,14 @@ function computeHistorySummaries(histories) {
       current_value:      current.value,
       current_trend:      current.trend,
       current_divergence: current.divergence,
-      change_pct_24h:     change24hPct,
-      change_pct_7d:      change7dPct,
-      change_pct_30d:     change30dPct,
+      change_pct_24h:     pctChange(ref24h, current),
+      change_pct_7d:      pctChange(ref7d, current),
+      change_pct_30d:     gapped ? null : pctChange(ref30d, current),
       high_7d:            periodMax,
       low_7d:             periodMin,
       period_min:         periodMin,
       period_max:         periodMax,
-      trend_30d:          computeLinearTrend(values),
+      trend_30d:          gapped ? null : computeLinearTrend(values),
     };
   }
 
@@ -280,26 +281,24 @@ function computeHistorySummaries(histories) {
   if (vwapHistory.length >= 1) {
     const values = vwapHistory.map(e => e.value);
     const current = vwapHistory.at(-1);
-    const first = vwapHistory.at(0);
     // Con un único punto histórico, deltas y trend serían 0/espurios — requerir al menos 2.
     const hasTrend = vwapHistory.length >= 2;
-    // Use 7d ago if available, else use first available data point
-    const refPoint = vwapHistory.length >= 7 ? vwapHistory[vwapHistory.length - 7] : first;
-    const change7dPct = (hasTrend && refPoint?.value != null && current.value != null && refPoint.value !== 0)
-      ? parseFloat(((current.value - refPoint.value) / Math.abs(refPoint.value) * 100).toFixed(2))
-      : null;
-    const change30dPct = (hasTrend && first?.value != null && first.value !== 0)
-      ? parseFloat(((current.value - first.value) / Math.abs(first.value) * 100).toFixed(2))
+    // Gap-aware: igual que CVD — lookup por fecha y null si la serie tiene agujeros grandes.
+    const gapped = hasTrend && seriesHasGap(vwapHistory, HISTORY_MAX_GAP_DAYS);
+    const ref7d  = findEntryByDaysAgo(vwapHistory, 7, 2);
+    const ref30d = findEntryByDaysAgo(vwapHistory, 30, 3) ?? vwapHistory.at(0);
+    const pctChange = (from, to) => (hasTrend && from?.value != null && to?.value != null && from.value !== 0)
+      ? parseFloat(((to.value - from.value) / Math.abs(from.value) * 100).toFixed(2))
       : null;
     vwapSummary = {
       current_value:      current.value,
       current_trend:      current.trend,
       current_divergence: current.divergence,
-      change_pct_7d:      change7dPct,
-      change_pct_30d:     change30dPct,
+      change_pct_7d:      gapped ? null : pctChange(ref7d, current),
+      change_pct_30d:     gapped ? null : pctChange(ref30d, current),
       period_min:         hasTrend ? Math.min(...values) : null,
       period_max:         hasTrend ? Math.max(...values) : null,
-      trend_30d:          hasTrend ? computeLinearTrend(values) : null,
+      trend_30d:          (hasTrend && !gapped) ? computeLinearTrend(values) : null,
     };
   }
 

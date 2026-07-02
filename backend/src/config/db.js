@@ -257,6 +257,21 @@ function runMigrations(db) {
 
     CREATE INDEX IF NOT EXISTS idx_coin_tf_timestamp
       ON candles_cache(coin, timeframe, timestamp DESC);
+
+    -- ── history_series (persisted time-series for LLM context + backtesting) ──
+    -- No se dropea nunca: acumula históricos entre reinicios. CVD/VWAP viven aquí
+    -- porque no tienen fuente externa de histórico; el resto de métricas se persisten
+    -- para acumular más allá de la ventana que sus APIs re-fetchean en cada poll.
+    CREATE TABLE IF NOT EXISTS history_series (
+      coin TEXT NOT NULL,        -- 'BTC'/'ETH'/'SOL' o 'GLOBAL' (fear_greed)
+      metric TEXT NOT NULL,      -- funding_rate|open_interest|long_short_ratio|liquidations|cvd|vwap|fear_greed
+      ts_key INTEGER NOT NULL,   -- epoch seg; métricas por fecha usan medianoche UTC
+      payload TEXT NOT NULL,     -- JSON del entry original
+      PRIMARY KEY (coin, metric, ts_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_history_series_lookup
+      ON history_series(coin, metric, ts_key DESC);
   `);
 }
 

@@ -122,6 +122,47 @@ follow_logs() {
   esac
 }
 
+# ── Datos consolidados en BBDD ─────────────────────────────────────────────────
+
+db_stats() {
+  ( cd "$ROOT/backend" && node scripts/dbStats.mjs )
+}
+
+db_clear() {
+  local target="$1"   # history | analyses | all
+  ( cd "$ROOT/backend" && node scripts/dbClear.mjs "$target" )
+}
+
+db_clear_menu() {
+  echo -e "${BOLD}  Vaciar datos de la BBDD${RESET}"
+  echo -e "  ${YELLOW}1${RESET})  Solo históricos       (history_series)"
+  echo -e "  ${YELLOW}2${RESET})  Solo análisis IA      (analyses + snapshots)"
+  echo -e "  ${YELLOW}3${RESET})  Todo"
+  echo -e "  ${DIM}c)  Cancelar${RESET}"
+  echo ""
+  echo -n "  Opción: "
+  read -r sub
+
+  local target=""
+  case "$sub" in
+    1) target="history" ;;
+    2) target="analyses" ;;
+    3) target="all" ;;
+    *) echo -e "  ${DIM}Cancelado.${RESET}"; return ;;
+  esac
+
+  if is_running "$PIDFILE_BACKEND"; then
+    echo -e "  ${YELLOW}Aviso:${RESET} el backend está corriendo; mantiene CVD/VWAP en memoria hasta reiniciarlo."
+  fi
+  echo -en "  ${RED}Escribe SI para confirmar el borrado (${target}):${RESET} "
+  read -r confirm
+  if [[ "$confirm" == "SI" ]]; then
+    db_clear "$target"
+  else
+    echo -e "  ${DIM}Cancelado (no se escribió SI).${RESET}"
+  fi
+}
+
 print_header() {
   clear
   echo -e "${BOLD}╔══════════════════════════════════╗${RESET}"
@@ -152,6 +193,10 @@ print_menu() {
   echo -e "  ${CYAN}b${RESET})  Seguir backend en tiempo real"
   echo -e "  ${CYAN}v${RESET})  Seguir frontend en tiempo real"
   echo ""
+  echo -e "${BOLD}  Datos (BBDD)${RESET}"
+  echo -e "  ${YELLOW}d${RESET})  Ver datos consolidados  (registros por tabla/serie, rango histórico)"
+  echo -e "  ${YELLOW}x${RESET})  Vaciar históricos / análisis"
+  echo ""
   echo -e "  ${DIM}q)  Salir (los procesos siguen corriendo)${RESET}"
   echo ""
   echo -n "  Opción: "
@@ -177,8 +222,24 @@ if [[ $# -ge 1 ]]; then
     follow)
       follow_logs "$target"
       ;;
+    db)
+      # Uso: runSystem.sh db [stats|clear] [history|analyses|all]
+      sub="${2:-stats}"
+      case "$sub" in
+        stats) db_stats ;;
+        clear)
+          ctarget="${3:-}"
+          case "$ctarget" in
+            history|analyses|all) db_clear "$ctarget" ;;
+            *) echo "Uso: runSystem.sh db clear [history|analyses|all]"; exit 1 ;;
+          esac
+          ;;
+        *) echo "Uso: runSystem.sh db [stats|clear] [history|analyses|all]"; exit 1 ;;
+      esac
+      ;;
     *)
       echo "Uso: dev.sh [start|stop|logs|follow] [backend|frontend|both]"
+      echo "     dev.sh db [stats|clear] [history|analyses|all]"
       exit 1
       ;;
   esac
@@ -254,6 +315,18 @@ while true; do
     v)
       echo ""
       follow_logs frontend || true
+      ;;
+    d|D)
+      echo ""
+      db_stats || true
+      echo ""
+      read -rp "  Pulsa Enter para volver al menú..." _
+      ;;
+    x|X)
+      echo ""
+      db_clear_menu || true
+      echo ""
+      read -rp "  Pulsa Enter para volver al menú..." _
       ;;
     q|Q)
       echo -e "${DIM}Saliendo del launcher. Los procesos siguen corriendo en background.${RESET}"

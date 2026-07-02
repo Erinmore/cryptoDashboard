@@ -78,9 +78,15 @@ Menú interactivo para gestionar backend y frontend sin abrir dos terminales:
 ./scripts/runSystem.sh stop     [backend|frontend|both]
 ./scripts/runSystem.sh logs     [backend|frontend|both]
 ./scripts/runSystem.sh follow   [backend|frontend|both]
+
+# Datos consolidados en BBDD
+./scripts/runSystem.sh db stats                          # informe: registros por tabla/serie + rango histórico
+./scripts/runSystem.sh db clear [history|analyses|all]   # vaciar (history_series / análisis / ambos)
 ```
 
 PIDs y logs guardados en `.dev/` (ignorado por git). Estado `● running / ○ stopped` visible en cabecera del menú. `q` cierra el launcher sin matar los procesos.
+
+**Opciones de BBDD en el menú:** `d` muestra datos consolidados (nº de registros por tabla de análisis y por serie de `history_series` con rango de fechas + tamaño en disco) y `x` vacía históricos/análisis con confirmación (`SI`). Ambas usan `backend/scripts/dbStats.mjs` y `backend/scripts/dbClear.mjs` (read-only / borrado + VACUUM vía better-sqlite3, sin arrancar la app).
 
 ---
 
@@ -119,7 +125,7 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   etfFlowsService.js         ← Spot ETF flows BTC/ETH (SoSoValue, sin auth) — daily_net_inflow_usd_yesterday, net_inflow_usd_7d_sum, cumulative_net_inflow_usd, trend_7d, by_issuer[]
   macroService.js            ← Macro context DXY/SPX/Gold (Yahoo Finance v8, sin auth) — value, change_24h_pct, trend_5d
   deribitService.js          ← DVOL volatility index BTC/ETH (Deribit public API, sin auth) — value, regime, change_24h_pct; SOL null. Cache 5min
-  historyService.js          ← Gestión de históricos en memoria para análisis LLM (7-30 días)
+  historyService.js          ← Históricos por coin para análisis LLM (7-30 días) — en memoria (ventana LLM) + persistencia SQLite write-through (tabla history_series). CVD/VWAP se hidratan al arrancar (única serie sin backfill externo); el resto se persiste para acumular pero se rellena fresco de su API
   cacheService.js            ← Cache en memoria con TTL
 src/utils/
   indicators.js              ← Funciones matemáticas puras (sin I/O)
@@ -308,10 +314,11 @@ Las migraciones se ejecutan inline en `config/db.js` al arrancar. No hay fichero
 - `analysis_outcome` — resultado real a posteriori: precios 1h/4h/24h/7d después, outcome, PnL. Se rellena con un job separado (pendiente).
 - `analysis_liquidation_snapshot` — hasta 10 filas por análisis (5 long + 5 short): clusters de liquidación persistidos en el momento del análisis.
 - `candles_cache` — reservada para futuro (no se usa actualmente)
+- `history_series` — series históricas persistidas (`coin`, `metric`, `ts_key`, `payload` JSON, PK compuesta). Alimentada por `historyService.js` write-through para las 7 métricas (funding/oi/lsr/liq/cvd/vwap/fear_greed; fear_greed bajo coin `GLOBAL`). **No se dropea** en migraciones — sobrevive reinicios. Retención 400 días. Ver excepción a la regla de abajo.
 
-**`saveAnalysis()` es una transacción** que inserta en las 4 tablas atómicamente. El pruning borra en cascada manual (better-sqlite3 no garantiza FK enforcement sin triggers).
+**`saveAnalysis()` es una transacción** que inserta en las 4 tablas de análisis atómicamente. El pruning borra en cascada manual (better-sqlite3 no garantiza FK enforcement sin triggers).
 
-**No guardar** datos OHLC ni indicadores técnicos en DB — son efímeros y se recalculan en cada request.
+**No guardar** datos OHLC ni indicadores técnicos por-request en DB — son efímeros y se recalculan en cada request. **Excepción:** los *snapshots diarios* de CVD/VWAP sí se persisten en `history_series` porque no tienen fuente externa de histórico y no se pueden reconstruir retroactivamente tras un apagado (ver SESSION_STATE.md §12).
 
 ---
 
@@ -339,7 +346,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **169 tests totales**: 121 unitarios (`indicators.test.js`) + 48 integración (`integration.test.js`)
+- **186 tests totales**: 121 unitarios (`indicators.test.js`) + 48 integración (`integration.test.js`) + 12 helpers de series temporales (`timeSeries.test.js`) + 5 persistencia de históricos (`historyPersistence.test.js`)
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
 - Los tests de integración usan supertest + `jest.unstable_mockModule` para mockear todos los servicios externos — offline, deterministas, ~1.5s
 
