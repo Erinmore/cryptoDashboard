@@ -47,9 +47,14 @@ export async function fetchFundingRate(coin) {
     const entry = currentRes.status === 'fulfilled' ? currentRes.value.data?.[0] : null;
     if (!entry) return null;
 
-    const rate = entry.value ?? 0;
+    // IMPORTANTE: Coinalyze devuelve el funding YA en PORCENTAJE por intervalo
+    // (verificado en vivo 2026-07-02: value=0.01 ⇔ 0.01% de Binance, cuyo
+    // lastFundingRate=0.0001 en fracción). NO multiplicar por 100 — hacerlo inflaba
+    // el funding 100× y producía severity/signal/predicted falsos.
+    const ratePct = entry.value ?? 0; // ya es %
 
-    // Tendencia 48h: comparar último cierre vs primer open del histórico
+    // Tendencia 48h: comparar último cierre vs primer open del histórico. Los candles
+    // o/h/l/c vienen en la misma escala % que el valor live. Umbral 0.02% de cambio.
     let trend = null;
     if (historyRes.status === 'fulfilled') {
       const hist = historyRes.value.data?.[0]?.history ?? [];
@@ -57,24 +62,22 @@ export async function fetchFundingRate(coin) {
         const oldest = hist[0].o;
         const latest = hist[hist.length - 1].c;
         const diff   = latest - oldest;
-        trend = diff >  0.0002 ? 'rising'
-          : diff < -0.0002 ? 'falling'
+        trend = diff >  0.02 ? 'rising'
+          : diff < -0.02 ? 'falling'
           : 'stable';
       }
     }
 
-    // Tasa predicha para el próximo periodo (estimación antes de liquidación)
+    // Tasa predicha para el próximo periodo (estimación antes de liquidación) — también en %.
     const predictedEntry = predictedRes.status === 'fulfilled'
       ? predictedRes.value.data?.[0]
       : null;
-    const predictedRate = predictedEntry?.value ?? null;
-
-    const ratePct = parseFloat((rate * 100).toFixed(4));
+    const predictedRatePct = predictedEntry?.value ?? null;
 
     const result = {
-      rate: parseFloat(rate.toFixed(6)),
-      rate_pct: ratePct,
-      annualized_pct: parseFloat((rate * 3 * 365 * 100).toFixed(2)), // 3 pagos/día × 365
+      rate: parseFloat((ratePct / 100).toFixed(8)), // fracción (0.0001) por si algún consumidor la prefiere
+      rate_pct: parseFloat(ratePct.toFixed(6)),
+      annualized_pct: parseFloat((ratePct * 3 * 365).toFixed(2)), // 3 pagos/día × 365
       trend,
       // severity se calcula aquí para que /api/data y /api/analyze/payload lo
       // expongan idéntico, en vez de duplicar el clasificador en cada controller.
@@ -85,12 +88,13 @@ export async function fetchFundingRate(coin) {
       severity_negative: ratePct < 0
         ? (ratePct < -0.5 ? 'extreme_short_overload' : ratePct < -0.2 ? 'high_short_overload' : ratePct < -0.05 ? 'elevated_short_overload' : null)
         : null,
-      signal: rate > 0.001 ? 'longs_overloaded'
-        : rate < -0.0005 ? 'shorts_overloaded'
+      // Umbrales en %: longs sobrecargados > 0.1%, shorts sobrecargados < -0.05%.
+      signal: ratePct > 0.1 ? 'longs_overloaded'
+        : ratePct < -0.05 ? 'shorts_overloaded'
         : 'balanced',
       next_funding_time: entry.next_funding_time ?? null,
-      predicted_rate:     predictedRate !== null ? parseFloat(predictedRate.toFixed(6)) : null,
-      predicted_rate_pct: predictedRate !== null ? parseFloat((predictedRate * 100).toFixed(4)) : null,
+      predicted_rate:     predictedRatePct !== null ? parseFloat((predictedRatePct / 100).toFixed(8)) : null,
+      predicted_rate_pct: predictedRatePct !== null ? parseFloat(predictedRatePct.toFixed(6)) : null,
       // Timestamp del propio dato de Coinalyze (`entry.update`, epoch ms) — distinto
       // del momento del fetch. Permite detectar desync con el precio spot (cache TTL 30min).
       data_timestamp_utc: entry.update ? new Date(entry.update).toISOString() : null,
