@@ -9,6 +9,8 @@ PIDFILE_BACKEND="$ROOT/.dev/backend.pid"
 PIDFILE_FRONTEND="$ROOT/.dev/frontend.pid"
 LOGFILE_BACKEND="$ROOT/.dev/backend.log"
 LOGFILE_FRONTEND="$ROOT/.dev/frontend.log"
+BACKEND_PORT=3000
+FRONTEND_PORT=5173
 
 # ── Colores ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -33,6 +35,48 @@ is_running() {
   [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
+# Comprueba si un puerto TCP local está en LISTEN (independiente del pidfile —
+# detecta backends huérfanos o procesos ajenos que ocupan el puerto).
+port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP:"$port" -sTCP:LISTEN -n -P >/dev/null 2>&1
+  else
+    return 1  # sin herramienta para comprobar → asumimos libre
+  fi
+}
+
+# Muestra el/los PID que escuchan en un puerto (best-effort, para diagnóstico).
+port_owner() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnpH 2>/dev/null | grep -E "[:.]${port}[[:space:]]" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -tiTCP:"$port" -sTCP:LISTEN -n -P 2>/dev/null || true
+  fi
+}
+
+# Espera (hasta ~4s) a que un puerto quede libre tras un stop.
+wait_port_free() {
+  local port="$1" tries=20
+  while port_in_use "$port" && (( tries-- > 0 )); do sleep 0.2; done
+}
+
+# Mata el árbol completo de un PID vía su process group real (no el PID del
+# subshell). npm → node --watch → server comparten PGID, así que matar el grupo
+# los tumba a todos y no deja huérfanos (el `node --watch` padre incluido).
+kill_tree() {
+  local pid="$1" pgid
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [[ -n "$pgid" ]]; then
+    kill -- -"$pgid" 2>/dev/null || true
+  else
+    kill "$pid" 2>/dev/null || true
+  fi
+}
+
 status_badge() {
   local pidfile="$1"
   if is_running "$pidfile"; then
@@ -44,8 +88,16 @@ status_badge() {
 
 start_backend() {
   if is_running "$PIDFILE_BACKEND"; then
-    echo -e "${YELLOW}Backend ya está corriendo (pid $(cat "$PIDFILE_BACKEND")).${RESET}"
+    echo -e "${YELLOW}Backend ya está corriendo (pid $(cat "$PIDFILE_BACKEND")). Usa 'restart' para reiniciarlo.${RESET}"
     return
+  fi
+  # El pidfile puede estar muerto pero otro proceso (backend huérfano o ajeno)
+  # seguir ocupando el puerto → arrancar aquí daría EADDRINUSE. Comprobarlo antes.
+  if port_in_use "$BACKEND_PORT"; then
+    echo -e "${RED}El puerto :$BACKEND_PORT ya está ocupado (proceso no gestionado por este launcher).${RESET}"
+    echo -e "${DIM}Ocupado por: $(port_owner "$BACKEND_PORT" | paste -sd' ' -)${RESET}"
+    echo -e "${DIM}Usa 'stop backend' si es un backend huérfano, o libera el puerto antes de arrancar.${RESET}"
+    return 1
   fi
   echo -e "${CYAN}[CRYPTEX]${RESET} Arrancando backend → http://localhost:3000"
   (cd "$ROOT/backend" && npm run dev >> "$LOGFILE_BACKEND" 2>&1) &
@@ -55,8 +107,14 @@ start_backend() {
 
 start_frontend() {
   if is_running "$PIDFILE_FRONTEND"; then
-    echo -e "${YELLOW}Frontend ya está corriendo (pid $(cat "$PIDFILE_FRONTEND")).${RESET}"
+    echo -e "${YELLOW}Frontend ya está corriendo (pid $(cat "$PIDFILE_FRONTEND")). Usa 'restart' para reiniciarlo.${RESET}"
     return
+  fi
+  if port_in_use "$FRONTEND_PORT"; then
+    echo -e "${RED}El puerto :$FRONTEND_PORT ya está ocupado (proceso no gestionado por este launcher).${RESET}"
+    echo -e "${DIM}Ocupado por: $(port_owner "$FRONTEND_PORT" | paste -sd' ' -)${RESET}"
+    echo -e "${DIM}Usa 'stop frontend' si es un frontend huérfano, o libera el puerto antes de arrancar.${RESET}"
+    return 1
   fi
   echo -e "${CYAN}[CRYPTEX]${RESET} Arrancando frontend → http://localhost:5173"
   (cd "$ROOT/frontend" && npm run dev >> "$LOGFILE_FRONTEND" 2>&1) &
@@ -65,17 +123,28 @@ start_frontend() {
 }
 
 stop_process() {
-  local name="$1" pidfile="$2"
+  local name="$1" pidfile="$2" port="${3:-}"
   if is_running "$pidfile"; then
     local pid
     pid=$(cat "$pidfile")
-    # Matar el grupo de procesos para capturar hijos (node --watch, vite, etc.)
-    kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    kill_tree "$pid"   # mata el grupo entero (npm, node --watch, server)
     rm -f "$pidfile"
     echo -e "${RED}$name parado (pid $pid).${RESET}"
   else
     echo -e "${DIM}$name no estaba corriendo.${RESET}"
     rm -f "$pidfile"
+  fi
+  # Limpieza de huérfanos: si el puerto sigue ocupado (proceso no trackeado por el
+  # pidfile, p.ej. un arranque previo que quedó colgado), matar el árbol de quien
+  # lo tenga — vía su process group, para arrastrar también al `node --watch` padre.
+  if [[ -n "$port" ]] && port_in_use "$port"; then
+    local owners opid
+    owners=$(port_owner "$port")
+    if [[ -n "$owners" ]]; then
+      echo -e "${YELLOW}  Liberando :$port ocupado por proceso huérfano (pid $(echo "$owners" | paste -sd' ' -))...${RESET}"
+      for opid in $owners; do kill_tree "$opid"; done
+      wait_port_free "$port"
+    fi
   fi
 }
 
@@ -185,6 +254,9 @@ print_menu() {
   echo -e "  ${RED}5${RESET})  Solo backend"
   echo -e "  ${RED}6${RESET})  Solo frontend"
   echo ""
+  echo -e "${BOLD}  Reiniciar${RESET} ${DIM}(stop + start, libera puertos huérfanos)${RESET}"
+  echo -e "  ${GREEN}r${RESET})  Ambos     ${GREEN}rb${RESET})  Solo backend     ${GREEN}rv${RESET})  Solo frontend"
+  echo ""
   echo -e "${BOLD}  Logs${RESET}"
   echo -e "  ${CYAN}7${RESET})  Ver últimas líneas  (ambos)"
   echo -e "  ${CYAN}8${RESET})  Ver últimas líneas  (backend)"
@@ -213,8 +285,16 @@ if [[ $# -ge 1 ]]; then
       [[ "$target" == "both" || "$target" == "frontend" ]] && start_frontend
       ;;
     stop)
-      [[ "$target" == "both" || "$target" == "backend"  ]] && stop_process "Backend"  "$PIDFILE_BACKEND"
-      [[ "$target" == "both" || "$target" == "frontend" ]] && stop_process "Frontend" "$PIDFILE_FRONTEND"
+      [[ "$target" == "both" || "$target" == "backend"  ]] && stop_process "Backend"  "$PIDFILE_BACKEND"  "$BACKEND_PORT"
+      [[ "$target" == "both" || "$target" == "frontend" ]] && stop_process "Frontend" "$PIDFILE_FRONTEND" "$FRONTEND_PORT"
+      ;;
+    restart)
+      if [[ "$target" == "both" || "$target" == "backend" ]]; then
+        stop_process "Backend" "$PIDFILE_BACKEND" "$BACKEND_PORT"; start_backend
+      fi
+      if [[ "$target" == "both" || "$target" == "frontend" ]]; then
+        stop_process "Frontend" "$PIDFILE_FRONTEND" "$FRONTEND_PORT"; start_frontend
+      fi
       ;;
     logs)
       show_logs "$target"
@@ -238,7 +318,7 @@ if [[ $# -ge 1 ]]; then
       esac
       ;;
     *)
-      echo "Uso: dev.sh [start|stop|logs|follow] [backend|frontend|both]"
+      echo "Uso: dev.sh [start|stop|restart|logs|follow] [backend|frontend|both]"
       echo "     dev.sh db [stats|clear] [history|analyses|all]"
       exit 1
       ;;
@@ -271,18 +351,35 @@ while true; do
       read -rp "  Pulsa Enter para volver al menú..." _
       ;;
     4)
-      stop_process "Backend"  "$PIDFILE_BACKEND"
-      stop_process "Frontend" "$PIDFILE_FRONTEND"
+      stop_process "Backend"  "$PIDFILE_BACKEND"  "$BACKEND_PORT"
+      stop_process "Frontend" "$PIDFILE_FRONTEND" "$FRONTEND_PORT"
       echo ""
       read -rp "  Pulsa Enter para volver al menú..." _
       ;;
     5)
-      stop_process "Backend" "$PIDFILE_BACKEND"
+      stop_process "Backend" "$PIDFILE_BACKEND" "$BACKEND_PORT"
       echo ""
       read -rp "  Pulsa Enter para volver al menú..." _
       ;;
     6)
-      stop_process "Frontend" "$PIDFILE_FRONTEND"
+      stop_process "Frontend" "$PIDFILE_FRONTEND" "$FRONTEND_PORT"
+      echo ""
+      read -rp "  Pulsa Enter para volver al menú..." _
+      ;;
+    r|R)
+      stop_process "Backend"  "$PIDFILE_BACKEND"  "$BACKEND_PORT";  start_backend
+      sleep 0.8
+      stop_process "Frontend" "$PIDFILE_FRONTEND" "$FRONTEND_PORT"; start_frontend
+      echo ""
+      read -rp "  Pulsa Enter para volver al menú..." _
+      ;;
+    rb|RB)
+      stop_process "Backend" "$PIDFILE_BACKEND" "$BACKEND_PORT"; start_backend
+      echo ""
+      read -rp "  Pulsa Enter para volver al menú..." _
+      ;;
+    rv|RV)
+      stop_process "Frontend" "$PIDFILE_FRONTEND" "$FRONTEND_PORT"; start_frontend
       echo ""
       read -rp "  Pulsa Enter para volver al menú..." _
       ;;

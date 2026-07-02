@@ -76,6 +76,7 @@ Menú interactivo para gestionar backend y frontend sin abrir dos terminales:
 ./scripts/runSystem.sh          # menú interactivo
 ./scripts/runSystem.sh start    [backend|frontend|both]
 ./scripts/runSystem.sh stop     [backend|frontend|both]
+./scripts/runSystem.sh restart  [backend|frontend|both]   # stop + start, libera puertos huérfanos
 ./scripts/runSystem.sh logs     [backend|frontend|both]
 ./scripts/runSystem.sh follow   [backend|frontend|both]
 
@@ -85,6 +86,8 @@ Menú interactivo para gestionar backend y frontend sin abrir dos terminales:
 ```
 
 PIDs y logs guardados en `.dev/` (ignorado por git). Estado `● running / ○ stopped` visible en cabecera del menú. `q` cierra el launcher sin matar los procesos.
+
+**Guard de puerto y limpieza de huérfanos:** `start` comprueba si `:3000`/`:5173` ya está ocupado antes de arrancar y **rechaza con mensaje claro** en vez de crashear con `EADDRINUSE` (evita duplicados). `stop`/`restart` matan el **grupo de proceso completo** (`kill_tree` por PGID → arrastra `npm`, `node --watch` y el server) y, si el puerto sigue ocupado por un proceso no trackeado, liberan al huérfano por su PGID. En el menú interactivo: `r` (reiniciar ambos), `rb` (backend), `rv` (frontend).
 
 **Opciones de BBDD en el menú:** `d` muestra datos consolidados (nº de registros por tabla de análisis y por serie de `history_series` con rango de fechas + tamaño en disco) y `x` vacía históricos/análisis con confirmación (`SI`). Ambas usan `backend/scripts/dbStats.mjs` y `backend/scripts/dbClear.mjs` (read-only / borrado + VACUUM vía better-sqlite3, sin arrancar la app).
 
