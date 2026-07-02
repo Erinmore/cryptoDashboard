@@ -1,7 +1,7 @@
 import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 
-export const PROMPT_VERSION = 'v5_2_orderbook_ratio_fix';
+export const PROMPT_VERSION = 'v5_3_tf_naming_unified';
 
 const MODEL = 'claude-opus-4-7';
 const MAX_TOKENS = 4096;
@@ -156,11 +156,11 @@ CVD del TF primario (campo technical[primary_tf].cvd): es la señal táctica. Es
 
 CVD 1D (campo technical["1D"].cvd): es contexto de tendencia. No puntúa directamente en el Volume Flow Score. Sin embargo, si su divergence es "bearish" y el precio sube, activa una bandera de advertencia que reduce la convicción global un nivel. Si su divergence es "bullish" y el precio cae, activa la bandera equivalente bajista.
 
-CVD 1H (campo technical["1H"].cvd): es confirmación de entrada únicamente. No construye tesis. Solo se usa para afinar timing una vez que el bias ya está definido por el TF primario.
+CVD 1h (campo technical["1h"].cvd): es confirmación de entrada únicamente. No construye tesis. Solo se usa para afinar timing una vez que el bias ya está definido por el TF primario.
 
 CVD volume_history (campo volume_history.cvd): refleja el CVD 1D acumulado histórico. Úsalo exclusivamente como contexto de ciclo, no como señal táctica. Si contradice el CVD del TF primario, no invalida la señal táctica pero añade una nota de cautela al Risk Score.
 
-Si el dataset no especifica primary_tf explícitamente, asumir 4H como TF primario por defecto.
+Si el dataset no especifica primary_tf explícitamente, asumir 4h como TF primario por defecto.
 
 Evalúa para el Volume Flow Score:
 
@@ -228,8 +228,8 @@ lvn[] — Low Volume Nodes: zonas de poco interés; el precio las atraviesa ráp
 
 Integración con Structure Score:
 
-Si el precio está por encima del POC del 1D y el 4H, añadir +0.5.
-Si el precio está por debajo del POC del 1D y el 4H, restar -0.5.
+Si el precio está por encima del POC del 1D y el 4h, añadir +0.5.
+Si el precio está por debajo del POC del 1D y el 4h, restar -0.5.
 Usar HVN como niveles de invalidación y LVN como zonas de aceleración.
 
 REGLA DE EXCURSIÓN DE PRECIO (volume profile):
@@ -241,7 +241,7 @@ Si el POC del TF primario está más de un 5% alejado del precio actual (campo p
 FALLBACK DE VOLUME PROFILE:
 
 Si el volume profile del TF primario es inválido (poc_distance_pct > 5 o valid=false):
-1. Usar el VP del TF inmediatamente inferior como sustituto táctico (fallback: 4H → 1H, 1D → 4H).
+1. Usar el VP del TF inmediatamente inferior como sustituto táctico (fallback: 4h → 1h, 1D → 4h).
 2. Indicar explícitamente en el análisis que el VP primario fue descartado y cuál se usa como referencia.
 3. Reducir la convicción de los niveles VP en un grado: de soporte/resistencia fuerte a referencia orientativa.
 4. Si todos los VPs disponibles son inválidos: operar sin referencia de VP y señalarlo en el Risk Score.
@@ -260,8 +260,8 @@ C. Structure Score (-2 a +2)
 Evalúa:
 
 1D
-4H
-1H
+4h
+1h
 
 Interpretación:
 
@@ -273,7 +273,7 @@ Interpretación:
 
 Regla crítica
 
-1D domina sobre 1H salvo squeeze confirmado con trigger real.
+1D domina sobre 1h salvo squeeze confirmado con trigger real.
 
 D. Execution Score (-2 a +2)
 
@@ -380,7 +380,7 @@ NORMALIZACIÓN TEMPORAL DE SEÑALES SMC (aplicar antes de interpretar cualquier 
 
 Las señales SMC tienen vida útil limitada. Aplicar la siguiente tabla de decay según el TF:
 
-Para el TF primario (4H por defecto):
+Para el TF primario (4h por defecto):
 - candles_ago 0-4: señal táctica activa. Peso completo. Puede ser trigger.
 - candles_ago 5-12: señal de contexto. Peso reducido. No es trigger de ejecución.
 - candles_ago > 12: ignorar como señal de ejecución. Solo referencia histórica.
@@ -390,7 +390,7 @@ Para 1D:
 - candles_ago 4-9: señal de contexto. Peso reducido.
 - candles_ago > 9: ignorar como señal de ejecución.
 
-Para 1H:
+Para 1h:
 - candles_ago 0-6: señal táctica activa.
 - candles_ago 7-18: contexto.
 - candles_ago > 18: ignorar.
@@ -546,7 +546,7 @@ REVERSAL TRIGGER RULE
 Un trigger válido requiere al menos una:
 
 ruptura de resistencia intradía relevante
-cierre 4H validando reversión
+cierre 4h validando reversión
 Open Interest vuelve a expandir
 volumen comprador confirma ruptura
 
@@ -624,8 +624,8 @@ agotamiento
 Interpretar:
 
 1D = dirección real
-4H = confirmación
-1H = ejecución
+4h = confirmación
+1h = ejecución
 
 5. Confirmation Layer
 

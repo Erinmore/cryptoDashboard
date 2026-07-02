@@ -150,7 +150,7 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
     },
     ai_metadata: {
       model:          'stub',
-      prompt_version: 'v5_2_orderbook_ratio_fix',
+      prompt_version: 'v5_3_tf_naming_unified',
       input_tokens:   0,
       output_tokens:  0,
     },
@@ -159,11 +159,11 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
   buildLlmRequest: jest.fn((ctx) => ({
     model: 'claude-opus-4-7',
     max_tokens: 4096,
-    prompt_version: 'v5_2_orderbook_ratio_fix',
+    prompt_version: 'v5_3_tf_naming_unified',
     system: 'stub system prompt',
     messages: [{ role: 'user', content: 'stub prompt' }],
   })),
-  PROMPT_VERSION: 'v5_2_orderbook_ratio_fix',
+  PROMPT_VERSION: 'v5_3_tf_naming_unified',
 }));
 
 // ─── Import app AND mocked modules AFTER mocks are in place ──────────────────
@@ -359,7 +359,7 @@ describe('GET /api/analyze/payload', () => {
     expect(res.status).toBe(200);
     expect(res.body.llm_request).toBeDefined();
     expect(res.body.llm_request.system).toEqual(expect.any(String));
-    expect(res.body.llm_request.prompt_version).toBe('v5_2_orderbook_ratio_fix');
+    expect(res.body.llm_request.prompt_version).toBe('v5_3_tf_naming_unified');
     expect(Array.isArray(res.body.llm_request.messages)).toBe(true);
     expect(res.body.llm_request.messages[0].role).toBe('user');
   });
@@ -563,7 +563,7 @@ describe('POST /api/analyze', () => {
 
     // ai_metadata
     expect(res.body.ai_metadata).toBeDefined();
-    expect(res.body.ai_metadata.prompt_version).toBe('v5_2_orderbook_ratio_fix');
+    expect(res.body.ai_metadata.prompt_version).toBe('v5_3_tf_naming_unified');
   });
 
   test('defaults coin=BTC primary_tf=4h when body omitted', async () => {
