@@ -129,6 +129,8 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   macroService.js            ← Macro context DXY/SPX/Gold (Yahoo Finance v8, sin auth) — value, change_24h_pct, trend_5d
   deribitService.js          ← DVOL volatility index BTC/ETH (Deribit public API, sin auth) — value, regime, change_24h_pct; SOL null. Cache 5min
   historyService.js          ← Históricos por coin para análisis LLM (7-30 días) — en memoria (ventana LLM) + persistencia SQLite write-through (tabla history_series). CVD/VWAP se hidratan al arrancar (única serie sin backfill externo); el resto se persiste para acumular pero se rellena fresco de su API
+  historyPoller.js           ← Poller de fondo (index.js, no app.js): cada HISTORY_POLLER_INTERVAL_SEC (300s) recorre las 3 monedas y persiste su history_series (CVD/VWAP + backfill derivados) + F&G — desacopla la persistencia de la moneda visualizada en el frontend. Flag HISTORY_POLLER_ENABLED
+  analysisValidator.js       ← Validador determinista del output LLM (§6.4): validateAnalysis() (reglas duras → warnings) + applyFailSafe() (degrada a Esperar ante violación severa). Funciones puras
   cacheService.js            ← Cache en memoria con TTL
 src/utils/
   indicators.js              ← Funciones matemáticas puras (sin I/O)

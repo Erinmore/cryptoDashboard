@@ -32,6 +32,12 @@ const env = {
   // apagar (ANALYSIS_FAILSAFE_ENABLED=false) para observar el output crudo del LLM.
   analysisFailsafeEnabled: (process.env.ANALYSIS_FAILSAFE_ENABLED ?? 'true').toLowerCase() !== 'false',
 
+  // Poller de fondo de históricos: persiste history_series de TODAS las monedas
+  // (no solo la visualizada en el frontend), clave para CVD/VWAP —sin backfill externo—
+  // y para cobertura continua de backtesting. Activo por defecto.
+  historyPollerEnabled: (process.env.HISTORY_POLLER_ENABLED ?? 'true').toLowerCase() !== 'false',
+  historyPollerIntervalSec: parseInt(process.env.HISTORY_POLLER_INTERVAL_SEC, 10) || 300,
+
   // Base de datos
   dbPath: process.env.DB_PATH || './data/cryptex.db',
 
