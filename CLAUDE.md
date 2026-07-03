@@ -720,7 +720,7 @@ La BD de desarrollo se migró con un snapshot consistente: `VACUUM INTO` (consol
 **Deuda menor pendiente:**
 - Entrada DNS `cryptex.lan → 192.168.1.250` en el router Zyxel (URL bonita, opcional).
 - Integración en el kiosko del asistente (`:8000`) — mostrar CRYPTEX desde el Chromium `--kiosk` (requiere conocer qué sirve el `:8000`).
-- Deuda §6: FVGs detallados, SuperTrend level numérico, S/R strength, `volume_history.vwap` top-level.
+- Deuda §6: **solo queda FVGs detallados** (tabla `analysis_fvg_snapshot`). S/R strength ✅, SuperTrend level ✅ (2026-07-03); `volume_history.vwap` ya resuelto por §12 (nota obsoleta). Todos son de *persistencia* (historial/backtesting), no de contexto al LLM.
 
 **API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa. **Modelo IA seleccionable desde el frontend** (desplegable en el header): Opus 4.8 (~$0.20, default) / Sonnet 5 (~$0.09) / Haiku 4.5 (~$0.04). Whitelist `ANALYSIS_MODELS` en `constants.js`; validado por `resolveModel`; persistido en localStorage; el modelo usado se guarda en `analyses.model_used` y se muestra en cada tarjeta del historial. `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
 
