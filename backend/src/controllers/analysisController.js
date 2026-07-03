@@ -223,17 +223,22 @@ export function computeHistorySummaries(histories) {
   let longShortSummary = null;
   if (lsHistory.length >= 1) {
     const longPcts    = lsHistory.map(e => e.long_pct);
-    const open7dLong  = lsHistory.at(0)?.long_pct ?? null;
+    // Los campos *_7d solo tienen sentido con >=2 puntos — simétrico con funding (has48h)
+    // y OI (has7d). Sin esto, con 1 solo punto (arranque en frío / respuesta parcial de la
+    // API) se etiquetaban como "7d" un change=0/avg/max/min derivados de un único valor,
+    // dato espurio para el LLM. current_* NO se gatea (es el snapshot "ahora", no ventana).
+    const has7d       = lsHistory.length >= 2;
+    const open7dLong  = has7d ? lsHistory.at(0)?.long_pct ?? null : null;
     const close7dLong = lsHistory.at(-1)?.long_pct ?? null;
-    const change7d    = open7dLong !== null ? close7dLong - open7dLong : null;
+    const change7d    = has7d && open7dLong !== null ? close7dLong - open7dLong : null;
     longShortSummary = {
       current_long_pct:   close7dLong,
       current_short_pct:  lsHistory.at(-1)?.short_pct ?? null,
       open_7d_long_pct:   open7dLong,
       change_7d_long_pct: change7d !== null ? parseFloat(change7d.toFixed(2)) : null,
-      avg_7d_long_pct:    parseFloat((longPcts.reduce((s, v) => s + v, 0) / longPcts.length).toFixed(2)),
-      max_7d_long_pct:    Math.max(...longPcts),
-      min_7d_long_pct:    Math.min(...longPcts),
+      avg_7d_long_pct:    has7d ? parseFloat((longPcts.reduce((s, v) => s + v, 0) / longPcts.length).toFixed(2)) : null,
+      max_7d_long_pct:    has7d ? Math.max(...longPcts) : null,
+      min_7d_long_pct:    has7d ? Math.min(...longPcts) : null,
       trend_7d:           change7d === null ? null : change7d > 2 ? 'longs_increasing' : change7d < -2 ? 'longs_decreasing' : 'stable',
     };
   }
