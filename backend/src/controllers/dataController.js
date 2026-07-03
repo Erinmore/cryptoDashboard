@@ -63,6 +63,9 @@ export async function getData(req, res, next) {
 
     // Extraer valores, los fallos devuelven null
     const resolve = r => r.status === 'fulfilled' ? r.value : null;
+    // getLastAnalysis va DENTRO del Promise.allSettled → hay que desenvolverlo con
+    // resolve() como el resto; usarlo crudo dejaba `last_analysis: {}` (campos undefined).
+    const lastAnalysisRow = resolve(lastAnalysis);
 
     const candles = {
       '1h': resolve(ohlc1h),
@@ -118,10 +121,10 @@ export async function getData(req, res, next) {
       coin_market_data: resolve(coinMarketData),
       // Columnas del schema nuevo: `action`/`confidence` (antes recommendation_*,
       // renombradas en el Sprint Schema → por eso "Análisis Previo" salía "—").
-      last_analysis: lastAnalysis ? {
-        timestamp: lastAnalysis.timestamp,
-        action: lastAnalysis.action,
-        confidence: lastAnalysis.confidence,
+      last_analysis: lastAnalysisRow ? {
+        timestamp: lastAnalysisRow.timestamp,
+        action: lastAnalysisRow.action,
+        confidence: lastAnalysisRow.confidence,
       } : null,
       binance_walls: resolve(binanceWalls),
       binance_ticker: resolve(binanceTicker),
