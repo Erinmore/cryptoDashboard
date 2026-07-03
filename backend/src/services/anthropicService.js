@@ -3,7 +3,7 @@ import { AppError } from '../utils/errors.js';
 
 export const PROMPT_VERSION = 'v5_3_tf_naming_unified';
 
-const MODEL = 'claude-opus-4-7';
+const MODEL = 'claude-opus-4-8';
 // El output es JSON puro { structured, narrative }: si se trunca por tope de tokens,
 // JSON.parse falla y se pierde la llamada (de pago). 8192 da margen holgado al narrative.
 const MAX_TOKENS = 8192;

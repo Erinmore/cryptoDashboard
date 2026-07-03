@@ -726,7 +726,7 @@ Frontend accesible en `http://localhost:3001`, backend en `http://localhost:3000
 9. **Setup infra Pi**: instalar Docker, crear red `proxy`, levantar NPM, configurar proxy host en UI — ⏳ ÚNICO PENDIENTE MAYOR
 10. Deuda menor §6: FVGs detallados, SuperTrend level numérico, S/R strength, `volume_history.vwap` top-level
 
-**API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa y verificada en vivo (`claude-opus-4-7`). `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
+**API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa (`claude-opus-4-8` — bump desde 4.7 el 2026-07-03; mismo precio $5/$25, sin breaking changes). `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
 
 **Jobs de fondo (index.js):** `historyPoller` (300s, persiste todas las monedas) + `outcomeService` (900s, rellena backtesting). Flags `HISTORY_POLLER_ENABLED` / `OUTCOME_JOB_ENABLED`.
 
