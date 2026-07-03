@@ -69,42 +69,57 @@ async function processAnalysis(a, now) {
     out.setup_hit_stop = a.setup_hit_stop ?? null;
     out.setup_outcome  = a.setup_outcome ?? null;
   };
+  const markInvalidSetup = () => {
+    out.setup_hit_tp1 = 0; out.setup_hit_tp2 = 0; out.setup_hit_stop = 0;
+    out.setup_outcome = 'invalid';
+  };
   const setupResolved = a.setup_outcome && a.setup_outcome !== 'open';
-  if (a.has_executable_setup && a.setup_entry_price != null && !setupResolved) {
-    const horizonElapsed = now >= tMs + 7 * 24 * HOUR_MS;
-    const toMs = Math.min(now, tMs + 7 * 24 * HOUR_MS);
-    try {
-      const candles = await fetchHistoricalKlines(a.coin, '1h', tMs, toMs, 1000);
-      const bar = evaluateSetupBarrier({
-        entry_price: a.setup_entry_price,
-        stop_price:  a.setup_stop_price,
-        tp1_price:   a.setup_tp1_price,
-        tp2_price:   a.setup_tp2_price,
-      }, candles);
-      if (bar) {
-        out.setup_hit_tp1  = bar.hit_tp1 ? 1 : 0;
-        out.setup_hit_tp2  = bar.hit_tp2 ? 1 : 0;
-        out.setup_hit_stop = bar.hit_stop ? 1 : 0;
-        // Finalizar estados no terminales cuando ya venció el horizonte de 7d
-        // (evita reprocesar el mismo setup indefinidamente — A4).
-        let oc = bar.outcome;
-        if (!horizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
-          oc = 'open';               // aún dentro del horizonte: la entrada puede llenarse/resolverse
-        } else if (horizonElapsed && oc === 'open') {
-          oc = 'expired';            // entrada llenada pero sin tocar TP/stop en 7d
-        }                            // horizonElapsed && 'not_triggered' → terminal (nunca se llenó)
-        out.setup_outcome = oc;
-      } else if (horizonElapsed) {
-        // Geometría inválida (p.ej. entry==stop) tras vencer el horizonte: marcar terminal
-        // para no reintentar el fetch en cada ciclo.
-        out.setup_hit_tp1 = 0; out.setup_hit_tp2 = 0; out.setup_hit_stop = 0;
-        out.setup_outcome = 'invalid';
-      } else {
-        preserveSetup();
+  const horizonElapsed = now >= tMs + 7 * 24 * HOUR_MS;
+  if (a.has_executable_setup && !setupResolved) {
+    if (a.setup_entry_price == null) {
+      // has_executable_setup=1 pero sin entry_price: geometría irreconstruible. Sin esto
+      // el barrier no corre nunca y el análisis se re-seleccionaría en cada ciclo para
+      // siempre (fuga: setup_outcome quedaba NULL indefinidamente). Sólo terminal al vencer.
+      if (horizonElapsed) markInvalidSetup(); else preserveSetup();
+    } else {
+      const toMs = Math.min(now, tMs + 7 * 24 * HOUR_MS);
+      try {
+        const candles = await fetchHistoricalKlines(a.coin, '1h', tMs, toMs, 1000);
+        // Fetch vacío = fallo transitorio (las klines históricas de Binance son permanentes),
+        // NO geometría inválida: preservar y reintentar, no marcar 'invalid' terminal.
+        if (!candles?.length) {
+          preserveSetup();
+        } else {
+          const bar = evaluateSetupBarrier({
+            entry_price: a.setup_entry_price,
+            stop_price:  a.setup_stop_price,
+            tp1_price:   a.setup_tp1_price,
+            tp2_price:   a.setup_tp2_price,
+          }, candles);
+          if (bar) {
+            out.setup_hit_tp1  = bar.hit_tp1 ? 1 : 0;
+            out.setup_hit_tp2  = bar.hit_tp2 ? 1 : 0;
+            out.setup_hit_stop = bar.hit_stop ? 1 : 0;
+            // Finalizar estados no terminales cuando ya venció el horizonte de 7d
+            // (evita reprocesar el mismo setup indefinidamente — A4).
+            let oc = bar.outcome;
+            if (!horizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
+              oc = 'open';               // aún dentro del horizonte: la entrada puede llenarse/resolverse
+            } else if (horizonElapsed && oc === 'open') {
+              oc = 'expired';            // entrada llenada pero sin tocar TP/stop en 7d
+            }                            // horizonElapsed && 'not_triggered' → terminal (nunca se llenó)
+            out.setup_outcome = oc;
+          } else if (horizonElapsed) {
+            // bar null con velas presentes = geometría inválida (p.ej. entry==stop): terminal.
+            markInvalidSetup();
+          } else {
+            preserveSetup();
+          }
+        }
+      } catch (err) {
+        logger.warn({ id: a.id, err: err.message }, 'outcomeJob: fallo barrier del setup');
+        preserveSetup(); // no pisar con null lo ya calculado ante un fallo transitorio de fetch
       }
-    } catch (err) {
-      logger.warn({ id: a.id, err: err.message }, 'outcomeJob: fallo barrier del setup');
-      preserveSetup(); // no pisar con null lo ya calculado ante un fallo transitorio de fetch
     }
   } else {
     preserveSetup();

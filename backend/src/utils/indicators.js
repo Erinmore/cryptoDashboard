@@ -559,8 +559,16 @@ export function calculateCVD(candles) {
   for (let i = windowIdx; i < candles.length; i++) windowVolume += candles[i].volume;
   const cvdDeltaVsVolumePct = windowVolume > 0 ? (cvdDelta / windowVolume) * 100 : 0;
 
+  // Delta neto de la ÚLTIMA vela (cantidad estacionaria, independiente del origen de la
+  // ventana). `value` es acumulativo desde candles[0]; si la serie proviene de una ventana
+  // rodante (p.ej. 90 velas 1D), su base se desplaza cada barra. `last_candle_delta` NO
+  // sufre esa deriva y es la primitiva correcta para persistir snapshots diarios y luego
+  // reconstruir una serie acumulada con base consistente (ver cvdSummary).
+  const lastCandleDelta = series.length >= 2 ? series[series.length - 1] - series[series.length - 2] : series[0];
+
   return {
     value: parseFloat(current.toFixed(2)),
+    last_candle_delta: parseFloat(lastCandleDelta.toFixed(2)),
     trend,
     divergence,
     divergence_window_candles: Math.min(DIVERGENCE_WINDOW, series.length - 1),

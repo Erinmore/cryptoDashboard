@@ -74,7 +74,7 @@ function computeLinearTrend(values) {
  * @param {string} primaryTf - TF principal seleccionado por el usuario
  * @returns {object} Contexto de conflictos y jerarquía recomendada
  */
-function analyzeTimeframeConflicts(technical, primaryTf) {
+export function analyzeTimeframeConflicts(technical, primaryTf) {
   if (!technical || Object.keys(technical).length === 0) return null;
 
   const trends = {};
@@ -86,13 +86,18 @@ function analyzeTimeframeConflicts(technical, primaryTf) {
   const shortTermTrend = trends['1h'] || trends['4h'];
   const longTermTrend = trends['1D'] || trends['1W'];
 
+  // Dirección tri-estado. IMPORTANTE: 'neutral' NO es bajista. Antes se infería la
+  // dirección con !includes('bullish'), que colapsaba neutral→bajista y fabricaba
+  // conflictos falsos (p.ej. corto neutral + largo alcista se reportaba como
+  // "short_term_bearish_long_term_bullish" con su reasoning engañoso, que llega al LLM).
+  const dirOf = (t) => !t ? null : t.includes('bullish') ? 'bull' : t.includes('bearish') ? 'bear' : 'neutral';
+  const shortDir = dirOf(shortTermTrend);
+  const longDir  = dirOf(longTermTrend);
+
   let conflict = null;
-  if (shortTermTrend && longTermTrend) {
-    const shortBullish = shortTermTrend.includes('bullish');
-    const longBullish = longTermTrend.includes('bullish');
-    if (shortBullish !== longBullish) {
-      conflict = shortBullish ? 'short_term_bullish_long_term_bearish' : 'short_term_bearish_long_term_bullish';
-    }
+  // Solo hay conflicto si AMBOS TFs son direccionales y OPUESTOS.
+  if (shortDir && longDir && shortDir !== 'neutral' && longDir !== 'neutral' && shortDir !== longDir) {
+    conflict = shortDir === 'bull' ? 'short_term_bullish_long_term_bearish' : 'short_term_bearish_long_term_bullish';
   }
 
   // Jerarquía: qué TF confiar según situación
@@ -143,7 +148,13 @@ export function computeHistorySummaries(histories) {
       period_min: Math.min(...values),
       period_max: Math.max(...values),
       period_avg: Math.round(values.reduce((s, v) => s + v, 0) / values.length),
-      trend_30d:  (fgHistory.at(-1)?.value ?? 0) > (thirtyDaysEntry?.value ?? 0) ? 'improving' : 'deteriorating',
+      // trend_30d: null si no hay un ancla 30d distinta del valor actual (con 1 punto,
+      // thirtyDaysEntry === at(-1) y la comparación era espuria → 'deteriorating' falso).
+      // Banda 'stable' para no reportar dirección ante igualdad exacta.
+      trend_30d:  (fgHistory.length >= 2 && thirtyDaysEntry && thirtyDaysEntry !== fgHistory.at(-1))
+        ? (fgHistory.at(-1).value > thirtyDaysEntry.value ? 'improving'
+          : fgHistory.at(-1).value < thirtyDaysEntry.value ? 'deteriorating' : 'stable')
+        : null,
     };
   }
 
@@ -167,8 +178,17 @@ export function computeHistorySummaries(histories) {
       trend_48h:            has48h ? (frHistory.at(-1)?.trend ?? null) : null,
       pct_candles_positive: Math.round((positiveCount / closes.length) * 100),
       // Severidad del último candle de histórico (hasta 6h de lag) — puede diferir de
-      // `funding_rate.severity` (top-level), que se calcula sobre el valor live.
-      severity_last_candle: latestClose > 0.5 ? 'extreme' : latestClose > 0.2 ? 'high' : latestClose > 0.05 ? 'elevated' : 'normal',
+      // `funding_rate.severity` (top-level), que se calcula sobre el valor live. Simétrico:
+      // el lado negativo (shorts sobrecargados) también se clasifica — antes un candle muy
+      // negativo (-0.6%) se reportaba como 'normal', dato engañoso para el LLM.
+      severity_last_candle:
+        latestClose >  0.5 ? 'extreme'
+        : latestClose >  0.2 ? 'high'
+        : latestClose >  0.05 ? 'elevated'
+        : latestClose < -0.5 ? 'extreme_short_overload'
+        : latestClose < -0.2 ? 'high_short_overload'
+        : latestClose < -0.05 ? 'elevated_short_overload'
+        : 'normal',
     };
   }
 
@@ -245,7 +265,23 @@ export function computeHistorySummaries(histories) {
   }
 
   // ── CVD summary (30d) ───────────────────────────────────────────────────
-  const cvdHistory = histories?.cvd ?? [];
+  // El `value` persistido es el CVD acumulado sobre una ventana 1D RODANTE (90 velas),
+  // así que su base se desplaza un día por barra: comparar `value`s de días distintos
+  // mezcla el forward-delta real con los días que cayeron por detrás de la ventana. Para
+  // que change/high/low/trend sean honestos, reconstruimos una serie acumulada con base
+  // ÚNICA a partir de `delta` (delta neto diario, estacionario). Si algún entry carece de
+  // `delta` (pre-fix), degradamos al `value` rodante (transitorio, se autocura al vencer
+  // la ventana de 30d una vez todo el histórico es post-fix).
+  const rawCvdHistory = histories?.cvd ?? [];
+  const allHaveDelta = rawCvdHistory.length >= 2 && rawCvdHistory.every(e => Number.isFinite(e.delta));
+  let cvdHistory = rawCvdHistory;
+  let cvdBaseline = 'rolling_window';
+  if (allHaveDelta) {
+    // Serie acumulada con base consistente: cum_k = Σ delta_i (i<=k), anclada al primer día.
+    let acc = 0;
+    cvdHistory = rawCvdHistory.map((e) => { acc += e.delta; return { ...e, value: parseFloat(acc.toFixed(2)) }; });
+    cvdBaseline = 'consistent';
+  }
   let cvdSummary = null;
   // Mínimo 2 puntos para calcular cambios; con 1 solo punto los porcentajes serían 0 espurios.
   if (cvdHistory.length >= 2) {
@@ -264,9 +300,15 @@ export function computeHistorySummaries(histories) {
     const periodMax = Math.max(...values);
     // high_7d/low_7d de verdad sobre los últimos 7 días por fecha (no toda la ventana,
     // que con 30 puntos diarios mentía al etiquetarse "7d").
-    const vals7d = cvdHistory
-      .filter(e => { const d = daysBetweenDates(e.date, current.date); return d != null && d >= 0 && d <= 7; })
-      .map(e => e.value);
+    const inWindow = (days) => cvdHistory.filter(e => {
+      const d = daysBetweenDates(e.date, current.date); return d != null && d >= 0 && d <= days;
+    });
+    const vals7d = inWindow(7).map(e => e.value);
+    // Presión neta acumulada de la ventana (drift-free, sólo con serie consistente): suma de
+    // deltas diarios. Absoluto, interpretable, sin el problema de %-sobre-base-cercana-a-cero.
+    const netDelta = (days) => allHaveDelta
+      ? parseFloat(inWindow(days).reduce((s, e) => s + e.delta, 0).toFixed(2))
+      : null;
     cvdSummary = {
       current_value:      current.value,
       current_trend:      current.trend,
@@ -274,11 +316,14 @@ export function computeHistorySummaries(histories) {
       change_pct_24h:     pctChange(ref24h, current),
       change_pct_7d:      pctChange(ref7d, current),
       change_pct_30d:     gapped ? null : pctChange(ref30d, current),
+      net_delta_7d:       netDelta(7),
+      net_delta_30d:      gapped ? null : netDelta(30),
       high_7d:            vals7d.length ? Math.max(...vals7d) : null,
       low_7d:             vals7d.length ? Math.min(...vals7d) : null,
       period_min:         periodMin,
       period_max:         periodMax,
       trend_30d:          gapped ? null : computeLinearTrend(values),
+      baseline:           cvdBaseline, // 'consistent' (base única) | 'rolling_window' (legacy, con deriva)
     };
   }
 
@@ -669,7 +714,7 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     setup_tf_execution:     setup?.tf_execution ?? null,
 
     executive_summary: structured.executive_summary ?? null,
-    ai_response_full:  JSON.stringify({ structured, narrative: structured._narrative }),
+    ai_response_full:  null, // se rellena en analyze() con {structured, narrative} (narrative no llega aquí)
     validation_warnings: null, // se rellena en analyze() tras validar (Fase 1: log + flag)
 
     processing_time_ms: processingMs,

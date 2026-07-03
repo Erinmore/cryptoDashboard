@@ -87,7 +87,7 @@ export async function getData(req, res, next) {
     const vwapIndicator = technical['1D']?.vwap;
 
     if (cvdIndicator) {
-      addCVDEntry(coin, today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence);
+      addCVDEntry(coin, today, cvdIndicator.value, cvdIndicator.trend, cvdIndicator.divergence, cvdIndicator.last_candle_delta);
     }
 
     if (vwapIndicator) {

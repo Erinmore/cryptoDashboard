@@ -32,7 +32,7 @@ async function pollCoin(coin) {
     if (candles1D?.length) {
       const ind = computeIndicators(candles1D, '1D');
       const today = new Date().toISOString().split('T')[0];
-      if (ind?.cvd)  addCVDEntry(coin,  today, ind.cvd.value,  ind.cvd.trend,  ind.cvd.divergence);
+      if (ind?.cvd)  addCVDEntry(coin,  today, ind.cvd.value,  ind.cvd.trend,  ind.cvd.divergence, ind.cvd.last_candle_delta);
       if (ind?.vwap) addVWAPEntry(coin, today, ind.vwap.value, ind.vwap.trend, ind.vwap.divergence);
     }
     // Derivados: dispara el backfill de funding/oi/lsr/liq en history_series (no-op sin key).

@@ -1171,6 +1171,24 @@ describe('calculateCVD — divergencia explícita', () => {
     const result = calculateCVD(candles);
     expect(result.divergence_window_candles).toBe(9);
   });
+
+  test('last_candle_delta = delta neto de la última vela (estacionario, sin deriva de ventana)', () => {
+    const candles = makeCandles(20);
+    // Última vela con presión compradora conocida: 2*8 - 10 = 6.
+    candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 10, taker_buy_base: 8 };
+    const result = calculateCVD(candles);
+    expect(result).toHaveProperty('last_candle_delta');
+    expect(result.last_candle_delta).toBeCloseTo(6, 5);
+    // Debe coincidir con value(serie) − value(serie sin la última vela): el aporte de esa vela.
+    const prev = calculateCVD(candles.slice(0, -1));
+    expect(result.last_candle_delta).toBeCloseTo(result.value - prev.value, 5);
+  });
+
+  test('single-candle series: last_candle_delta = value (no hay barra previa)', () => {
+    const one = [{ open: 100, high: 101, low: 99, close: 100.5, volume: 10, taker_buy_base: 7 }];
+    const result = calculateCVD(one);
+    expect(result.last_candle_delta).toBeCloseTo(result.value, 5);
+  });
 });
 
 // ─── VolumeProfile — metadata de periodo (D3) ────────────────────────────────

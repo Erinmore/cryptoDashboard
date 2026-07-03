@@ -6,13 +6,12 @@
  * reemplaza) la validación de estructura/JSON que ya hace anthropicService
  * (parse + AppError 502): aquí comprobamos coherencia de reglas de negocio.
  *
- * FASE 1 (log + flag) — implementada aquí: `validateAnalysis()` detecta y
- * clasifica violaciones; el caller (analysisController) las loguea y persiste
- * en `analyses.validation_warnings` SIN alterar la respuesta. Objetivo:
- * telemetría real de con qué frecuencia y qué reglas viola el LLM.
+ * FASE 1 (log + flag): `validateAnalysis()` detecta y clasifica violaciones; el
+ * caller (analysisController) las loguea y persiste en `analyses.validation_warnings`.
+ * Objetivo: telemetría de con qué frecuencia y qué reglas viola el LLM.
  *
- * FASE 2 (fail-safe) — NO implementada: ante violación severa forzaría
- * action="Esperar". Se decidirá según los datos de la Fase 1.
+ * FASE 2 (fail-safe): `applyFailSafe()` degrada a action="Esperar" ante violación
+ * severa (gated por `ANALYSIS_FAILSAFE_ENABLED`, default true). Ver más abajo.
  *
  * Severidad:
  *   - 'severe': contradicción dura (Comprar/Vender sin cumplir su puerta,

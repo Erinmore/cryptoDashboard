@@ -14,7 +14,7 @@
  *   addOpenInterestEntry(coin, candle)                         — {t, o, h, l, c}
  *   addLongShortRatioEntry(coin, entry)                        — {t, long_pct, short_pct}
  *   addLiquidationsEntry(coin, date, longs_usd, shorts_usd)
- *   addCVDEntry(coin, date, value, trend, divergence)
+ *   addCVDEntry(coin, date, value, trend, divergence, delta?)
  *   addVWAPEntry(coin, date, value, trend, divergence)
  *   getHistories(coin)                                         — retorna los históricos del coin + fear_greed global
  */
@@ -209,13 +209,17 @@ export function addLiquidationsEntry(coin, date, longs_usd, shorts_usd) {
 
 // ─── CVD ──────────────────────────────────────────────────────────────────
 
-export function addCVDEntry(coin, date, value, trend, divergence) {
+export function addCVDEntry(coin, date, value, trend, divergence, delta = null) {
   if (!coin || value == null) return;
   const history = getCoinHistory(coin).cvd;
 
   const entry = {
     date: date || new Date().toISOString().split('T')[0], // YYYY-MM-DD
     value,
+    // Delta neto de la vela 1D del día (estacionario). `value` es acumulativo sobre una
+    // ventana rodante → su base deriva entre días; el summary reconstruye una serie
+    // acumulada con base consistente a partir de `delta`. null en entries pre-fix.
+    delta,
     trend,
     divergence,
   };
