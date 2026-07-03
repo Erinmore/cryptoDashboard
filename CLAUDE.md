@@ -30,7 +30,7 @@ El documento de referencia arquitectónica es [BLUEPRINT.md](./doc/BLUEPRINT.md)
 | Bundler frontend | Vite 4.x |
 | Tests | Jest 29 con `--experimental-vm-modules` (ES modules) |
 | Logging | Pino + pino-pretty en development |
-| Deploy | Docker + Docker Compose (Raspberry Pi 5) |
+| Deploy | Nativo + systemd en Raspberry Pi 5 (un proceso Express en :8080) · Docker disponible como alternativa |
 | Reverse proxy | Nginx Proxy Manager (contenedor infra compartida) |
 
 ---
@@ -430,7 +430,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | Fase 15 | Tests de integración de endpoints (47 tests, supertest) | ✅ Completo |
 | Sprint Briefing | Deficiencias de dataset + prompt auditadas (briefing 2026-04-27): D1-D22, P1-P7 | ✅ Completo |
 | Sprint Schema | Rediseño persistencia IA: 4 tablas, OUTPUT FORMAT JSON, analyzeMarket() implementado | ✅ Completo |
-| Bloque 5 | Schema ✅, panel historial IA ✅, panel en vivo ✅, poller multi-coin ✅, validador §6.4 ✅, analysis_outcome job ✅ · deploy Pi ⏳ | ⏳ Parcial |
+| Bloque 5 | Schema ✅, panel historial IA ✅, panel en vivo ✅, poller multi-coin ✅, validador §6.4 ✅, analysis_outcome job ✅, deploy Pi nativo+systemd ✅ (2026-07-03) | ✅ Completo |
 
 ### Detalle Bloque 4
 
@@ -546,6 +546,10 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **`tests/integration.test.js`**: mock de `analyzeMarket` actualizado al nuevo formato. Test nuevo `analysis is persisted — history returns it after POST` verifica que un análisis queda en BD y `GET /api/history/SOL` lo devuelve con los campos correctos. **169/169 tests pasan** (121 unitarios + 48 integración).
   - **Deuda técnica anotada**: FVGs detallados (tabla separada), S/R strength del nivel más cercano, SuperTrend level numérico, `volume_history.vwap` top-level, job `analysis_outcome`. Ver SESSION_STATE.md §6.
 
+- **Deploy nativo en la Pi + fix `last_analysis` (2026-07-03)**:
+  - **Deploy nativo + systemd** (no Docker) — ver §Deploy. Cambio de código habilitante: en `app.js`, con `NODE_ENV=production` y si existe `frontend/dist/index.html`, Express sirve el SPA (`express.static` + fallback `app.get(/^(?!\/api|\/health).*/)`) desde el mismo origen que la API. `security.js`: `helmet({ contentSecurityPolicy: false })` (el SPA usa `style=` inline; app single-user en LAN). Gated a producción → dev (Vite) y los 264 tests intactos. Nuevo `scripts/deploy.sh` (build + rsync + restart systemd).
+  - **Fix `last_analysis` (bug preexistente)**: en `dataController`, `getLastAnalysis()` va dentro del `Promise.allSettled` pero se usaba **sin `resolve()`**, devolviendo el resultado settled crudo → `last_analysis: {}` (campos `undefined`). Rompía el panel "Análisis Previo" del sidebar desde el rename del Sprint Schema. Corregido con `const lastAnalysisRow = resolve(lastAnalysis)`. Commits `31f748d` (deploy) + `c1b5de2` (fix).
+
 ---
 
 ## Sistema de Históricos para Análisis LLM
@@ -609,141 +613,112 @@ Estos resúmenes proporcionan contexto consolidado para decisiones más informad
 
 ---
 
-## Deploy — Raspberry Pi 5
+## Deploy — Raspberry Pi 5 (nativo + systemd)
 
-**Hardware:** Raspberry Pi 5 8GB · Raspberry Pi OS Bookworm 64-bit (modo terminal) · IP fija `192.168.1.250`
+**Hardware:** Raspberry Pi 5 8GB · Raspberry Pi OS Bookworm 64-bit (aarch64, modo terminal) · IP fija `192.168.1.250` · usuario `pi`.
 
-**Acceso:** SSH desde red local únicamente. Sin acceso externo desde WAN. Sin SSL/TLS (red de confianza).
+**Acceso:** SSH desde red local únicamente (clave pública autorizada). Sin acceso externo WAN. Sin SSL/TLS (red de confianza).
 
-**DNS local:** Router Zyxel con entradas DNS estáticas (sufijo `.lan`):
-- `cryptex.lan` → `192.168.1.250`
-- Añadir una entrada por proyecto adicional que se despliegue
+**Modelo de despliegue (elegido 2026-07-03): nativo + systemd, SIN Docker ni reverse-proxy.** La Pi ya corre un asistente en modo kiosko (Chromium `--kiosk` → `http://localhost:8000`), así que CRYPTEX **convive** con él en otro puerto (`:8080`), sin colisión. Para una sola app single-user en LAN de confianza, Docker+NPM añadía overhead sin beneficio real → se descartó. Los `Dockerfile`/`docker-compose.yml` del repo se **conservan como alternativa**, pero **no es lo que corre en la Pi**.
 
-### Arquitectura de contenedores
+### Cómo corre en la Pi
 
 ```
-Pi (192.168.1.250)
+Pi (192.168.1.250, user pi)
 │
-├── ~/infra/docker-compose.yml        ← infraestructura compartida
-│   └── nginx-proxy-manager           ← :80 (HTTP) + :81 (panel UI NPM)
-│                                        gestiona proxy hacia todos los proyectos
+├── ~/  (asistente en modo kiosko — Chromium --kiosk → http://localhost:8000)  ← NO se toca
 │
-├── ~/cryptex/docker-compose.yml      ← este proyecto
-│   ├── cryptex-frontend              ← serve@14 sirviendo dist/ de Vite en :3001
-│   │                                    (sin puerto expuesto al host)
-│   └── cryptex-backend               ← Node.js :3000 (interno)
-│       └── volumen: cryptex-db       ← SQLite persistente
-│
-└── ~/otroapp/docker-compose.yml      ← otros proyectos (mismo patrón)
-    ├── otroapp-frontend
-    └── otroapp-backend
-        └── volumen: otroapp-db
+└── ~/cryptex/                          ← este proyecto (llega por rsync desde dev, no git clone)
+    ├── backend/  (Node 18 vía nvm)     ← UN SOLO proceso Express
+    │   ├── src/index.js                ← escucha en :8080
+    │   └── data/cryptex.db             ← SQLite persistente (WAL)
+    └── frontend/dist/                  ← build de Vite, servido por el propio Express
 ```
 
-**Principios:**
-- NPM es el único servicio que expone el puerto 80 al host — punto de entrada único
-- Cada proyecto tiene su propio `docker-compose.yml`, frontend y backend independientes
-- SQLite por proyecto en su propio volumen — nunca compartido entre proyectos
-- NPM enruta por hostname (`cryptex.lan`) hacia el frontend de cada proyecto
-- El frontend de cada proyecto hace proxy interno `/api/*` → su backend
+**Clave del diseño:** un **único proceso Node**. En producción, Express sirve la API **y** el `frontend/dist/` construido (static + fallback SPA) **desde el mismo origen** → `/api` es same-origin, sin CORS ni reverse-proxy. Todo vive en `:8080`. Esto solo se activa con `NODE_ENV=production` (ver `app.js`: guard `existsSync(dist/index.html)` + `NODE_ENV`); en dev el frontend lo sigue sirviendo Vite (`:5173`) y en tests no hay `dist/`. `security.js` aplica `helmet({ contentSecurityPolicy: false })` porque el SPA usa atributos `style=` inline (app single-user en LAN, sin contenido externo).
 
-### Red Docker compartida
+**URL:** `http://192.168.1.250:8080` desde cualquier equipo de la LAN. (`cryptex.lan` pendiente de entrada DNS en el router Zyxel — daría `http://cryptex.lan:8080`.)
 
-Para que NPM pueda alcanzar los contenedores de cada proyecto se usa una red externa compartida:
+### Servicio systemd
+
+`/etc/systemd/system/cryptex.service` (User=pi, arranque al boot, `Restart=on-failure`):
+
+```ini
+[Unit]
+Description=CRYPTEX Dashboard (backend + frontend en un puerto)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/cryptex/backend
+Environment=NODE_ENV=production
+Environment=PORT=8080
+Environment=DB_PATH=/home/pi/cryptex/backend/data/cryptex.db
+ExecStart=/home/pi/.nvm/versions/node/v18.20.8/bin/node src/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cryptex
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Las `Environment=` del unit tienen **prioridad sobre el `.env`** (dotenv no pisa un `process.env` ya definido) → `NODE_ENV/PORT/DB_PATH` los fija systemd. El resto de claves (API keys, TTLs) vienen del `.env` en la raíz del repo.
 
 ```bash
-# Crear una vez en la Pi
-docker network create proxy
+sudo systemctl {start,stop,restart,status} cryptex
+journalctl -u cryptex -f           # logs en vivo
 ```
 
-En `~/infra/docker-compose.yml` NPM se une a la red `proxy`.
-En `~/cryptex/docker-compose.yml` los servicios también se unen a `proxy`.
+### Actualizar — `scripts/deploy.sh`
 
-### Ficheros Docker creados (en este repo)
-
-| Fichero | Descripción |
-|---------|-------------|
-| `backend/Dockerfile` | Build multistage Node 18: compila `better-sqlite3` arm64 + runtime mínimo |
-| `backend/.dockerignore` | Excluye `node_modules`, `data/`, `tests/` |
-| `frontend/Dockerfile` | Build Vite → imagen Node 18 slim con `serve@14` sirviendo `dist/` en :3001 |
-| `frontend/.dockerignore` | Excluye `node_modules`, `dist/` |
-| `docker-compose.yml` | Orquesta backend (:3000) + frontend (:3001); volumen `cryptex-db`; red externa `proxy` |
-
-**Sin Nginx en el proyecto.** NPM gestiona el proxy y el enrutamiento. El frontend usa `serve` (paquete npm) para servir los ficheros estáticos del `dist/`.
-
-### Configuración NPM para CRYPTEX
-
-En la UI de NPM (`:81`) configurar **dos** Proxy Hosts bajo el mismo dominio `cryptex.lan`:
-
-| Path | Forward Hostname | Forward Port |
-|------|-----------------|--------------|
-| `/` | `cryptex-frontend` | `3001` |
-| `/api/` | `cryptex-backend` | `3000` |
-| `/health` | `cryptex-backend` | `3000` |
-
-NPM enruta por path al contenedor correcto — frontend y backend visibles en `cryptex.lan` sin exponer puertos al host.
-
-### Variables de entorno en la Pi
-
-El fichero `.env` en la raíz del repo (no commiteado) contiene las API keys:
-
-```env
-COINGECKO_API_KEY=...
-COINALYZE_API_KEY=...
-ANTHROPIC_API_KEY=...
-NODE_ENV=production
-```
-
-`env.js` carga el `.env` con dotenv; en Docker las variables llegan via `env_file` directamente a `process.env` — si el fichero no existe dotenv falla silenciosamente sin crash.
-
-### Comandos de deploy en la Pi
+Deploy desde la máquina de desarrollo (build local + rsync + restart remoto):
 
 ```bash
-# Primera vez
-git clone <repo> ~/cryptex
-cd ~/cryptex
-cp .env.example .env && nano .env   # rellenar API keys
-docker compose up -d --build
-
-# Actualizar
-cd ~/cryptex
-git pull
-docker compose up -d --build
-
-# Logs
-docker compose logs -f backend
-docker compose logs -f frontend
-
-# Estado
-docker compose ps
+./scripts/deploy.sh          # build frontend + sync backend/src + frontend/dist + restart
+./scripts/deploy.sh --deps   # además npm ci en la Pi (solo si cambió package-lock — recompila better-sqlite3 arm64)
 ```
 
-### Desarrollo local con Docker
+Overrides por env: `PI_HOST` (`pi@192.168.1.250`), `PI_DIR` (`/home/pi/cryptex`), `SERVICE` (`cryptex.service`), `PORT` (`8080`). **El `.env` NO se sincroniza** (secretos, se gestiona en la Pi).
 
-En local la red `proxy` debe existir antes de `docker compose up`:
+### Primer despliegue (referencia — ya realizado)
 
-```bash
-docker network create proxy   # solo la primera vez
-docker compose up -d --build
-```
+1. Node 18 vía nvm en la Pi (queda en `~/.nvm/versions/node/v18.20.8/bin/node`).
+2. `rsync` del repo a `~/cryptex` (excluye `node_modules`, `.git`, `backend/data`, `.dev`) **incluyendo** `.env` (con las API keys) y `frontend/dist/`.
+3. `cd backend && npm ci --omit=dev` — compila `better-sqlite3` arm64 (build tools `make/gcc/g++/python3` ya presentes en Bookworm).
+4. Crear el unit systemd + `sudo systemctl enable --now cryptex`.
+5. Verificar `curl localhost:8080/health` + UI + `/api/data`.
 
-Frontend accesible en `http://localhost:3001`, backend en `http://localhost:3000` (ambos solo internos vía red Docker — en local acceder ejecutando curl desde dentro del contenedor o exponiendo temporalmente un puerto para depuración).
+### Migración de datos dev → Pi
+
+La BD de desarrollo se migró con un snapshot consistente: `VACUUM INTO` (consolida el WAL en un único fichero sin tocar el original vía better-sqlite3) → transfer → `stop` servicio → reemplazar `cryptex.db` (borrando `-wal`/`-shm`) → `start`. Se migra en vez de empezar de cero porque `history_series` (CVD/VWAP) **no tiene fuente externa y no se puede reconstruir**.
+
+### Ficheros Docker (alternativa, NO en uso)
+
+`backend/Dockerfile`, `frontend/Dockerfile` y `docker-compose.yml` siguen en el repo por si algún día se migra al modelo contenedores + reverse-proxy (p. ej. al añadir más proyectos a la Pi). El diseño single-process actual se contiene en 1 sola imagen trivialmente. El plan original documentado (NPM en `:80` enrutando por hostname, red externa `proxy`, dos contenedores) queda **archivado** — no refleja lo desplegado.
 
 ---
 
 ## Próximo paso
 
-**Bloque 5 (en curso):**
+**Bloque 5 — COMPLETO ✅:**
 1. ~~Tests de integración de endpoints (Fase 15)~~ ✅
-2. ~~Docker + arquitectura deploy Pi~~ ✅ — Fase 14 parcial (falta setup infra NPM en Pi)
-3. ~~Rediseño schema persistencia IA (Sprint Schema)~~ ✅
-4. ~~Panel frontend de histórico análisis IA (Fase 12)~~ ✅ — modal con backtesting + outcome
-5. ~~Panel recomendación IA en vivo (fix schema {structured,narrative})~~ ✅
-6. ~~Poller de fondo multi-coin + persistencia BBDD entre reinicios~~ ✅
-7. ~~Validador determinista del output §6.4 (log+flag + fail-safe)~~ ✅
-8. ~~Job `analysis_outcome` + endpoints /api/outcome~~ ✅
-9. **Setup infra Pi**: instalar Docker, crear red `proxy`, levantar NPM, configurar proxy host en UI — ⏳ ÚNICO PENDIENTE MAYOR
-10. Deuda menor §6: FVGs detallados, SuperTrend level numérico, S/R strength, `volume_history.vwap` top-level
+2. ~~Rediseño schema persistencia IA (Sprint Schema)~~ ✅
+3. ~~Panel frontend de histórico análisis IA (Fase 12)~~ ✅ — modal con backtesting + outcome
+4. ~~Panel recomendación IA en vivo (fix schema {structured,narrative})~~ ✅
+5. ~~Poller de fondo multi-coin + persistencia BBDD entre reinicios~~ ✅
+6. ~~Validador determinista del output §6.4 (log+flag + fail-safe)~~ ✅
+7. ~~Job `analysis_outcome` + endpoints /api/outcome~~ ✅
+8. ~~**Deploy en la Pi**~~ ✅ (2026-07-03) — **nativo + systemd** (no Docker). Un proceso Express en `:8080` sirviendo API + SPA; `cryptex.service`; BD dev migrada; `scripts/deploy.sh` para actualizar. Ver §Deploy.
+
+**Deuda menor pendiente:**
+- Entrada DNS `cryptex.lan → 192.168.1.250` en el router Zyxel (URL bonita, opcional).
+- Integración en el kiosko del asistente (`:8000`) — mostrar CRYPTEX desde el Chromium `--kiosk` (requiere conocer qué sirve el `:8000`).
+- Deuda §6: FVGs detallados, SuperTrend level numérico, S/R strength, `volume_history.vwap` top-level.
 
 **API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa. **Modelo IA seleccionable desde el frontend** (desplegable en el header): Opus 4.8 (~$0.20, default) / Sonnet 5 (~$0.09) / Haiku 4.5 (~$0.04). Whitelist `ANALYSIS_MODELS` en `constants.js`; validado por `resolveModel`; persistido en localStorage; el modelo usado se guarda en `analyses.model_used` y se muestra en cada tarjeta del historial. `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
 
