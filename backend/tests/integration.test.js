@@ -175,7 +175,7 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
   })),
   buildPrompt: jest.fn(() => 'stub prompt'),
   buildLlmRequest: jest.fn((ctx) => ({
-    model: 'claude-opus-4-8',
+    model: 'claude-sonnet-5',
     max_tokens: 4096,
     prompt_version: 'v5_3_tf_naming_unified',
     system: 'stub system prompt',

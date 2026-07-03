@@ -497,15 +497,28 @@ function fgSignalClass(value) {
 
 // ── Recommendation panel ───────────────────────────────────────────
 
+// Los divs del panel se ocultan con `style="display:none"` INLINE en index.html.
+// Togglear solo la clase `.hidden` no anula un estilo inline → hay que fijar
+// `style.display` explícitamente (además de limpiar la clase al mostrar).
+function showEl(id, display = '') {
+  const el = $(id);
+  if (el) { el.classList.remove('hidden'); el.style.display = display; }
+}
+function hideEl(id) {
+  const el = $(id);
+  if (el) el.style.display = 'none';
+}
+
 export function showRecommendationLoading() {
-  $('recommendation-empty')?.classList.add('hidden');
-  $('recommendation-content')?.classList.add('hidden');
-  $('recommendation-loading')?.classList.remove('hidden');
+  hideEl('recommendation-empty');
+  hideEl('recommendation-content');
+  showEl('recommendation-loading');
 }
 
 export function hideRecommendationLoading() {
-  $('recommendation-loading')?.classList.add('hidden');
-  $('recommendation-empty')?.classList.remove('hidden');
+  hideEl('recommendation-loading');
+  hideEl('recommendation-content');
+  showEl('recommendation-empty');
 }
 
 /**
@@ -524,12 +537,13 @@ function fmtSigned(v) {
  *   Acepta `{ structured, narrative }` o el propio `structured` directo.
  */
 export function updateRecommendation(rec) {
-  $('recommendation-loading')?.classList.add('hidden');
-  $('recommendation-empty')?.classList.add('hidden');
+  hideEl('recommendation-loading');
+  hideEl('recommendation-empty');
 
   const contentEl = $('recommendation-content');
   if (!contentEl) return;
   contentEl.classList.remove('hidden');
+  contentEl.style.display = ''; // anula el `display:none` inline del HTML
 
   const s = rec?.structured ?? rec ?? {};
   const n = rec?.narrative ?? null;

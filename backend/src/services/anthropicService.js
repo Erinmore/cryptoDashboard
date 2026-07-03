@@ -3,7 +3,11 @@ import { AppError } from '../utils/errors.js';
 
 export const PROMPT_VERSION = 'v5_3_tf_naming_unified';
 
-const MODEL = 'claude-opus-4-8';
+// TEMPORAL (2026-07-03): bajado a Sonnet 5 ($2/$10 intro, mucho más barato) para
+// verificar el panel en vivo sin gastar en Opus. Revertir a 'claude-opus-4-8' una
+// vez confirmada la UI. Sonnet 5 activa adaptive thinking por defecto si se omite
+// `thinking` → lo desactivamos abajo para evitar truncado con max_tokens y abaratar.
+const MODEL = 'claude-sonnet-5';
 // El output es JSON puro { structured, narrative }: si se trunca por tope de tokens,
 // JSON.parse falla y se pierde la llamada (de pago). 8192 da margen holgado al narrative.
 const MAX_TOKENS = 8192;
@@ -772,6 +776,11 @@ function buildLlmRequest(context) {
     model: MODEL,
     max_tokens: MAX_TOKENS,
     prompt_version: PROMPT_VERSION,
+    // thinking desactivado explícitamente: en Sonnet 5 omitirlo activa adaptive
+    // thinking (gasta tokens + riesgo de truncar el JSON). Válido también en
+    // Opus 4.8/4.7 al revertir. El parse busca el bloque type==='text', así que
+    // sería robusto igualmente, pero sin thinking es más barato y rápido.
+    thinking: { type: 'disabled' },
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: buildPrompt(context) }],
   };
@@ -796,8 +805,8 @@ export async function analyzeMarket(context) {
   const Anthropic = (await import('@anthropic-ai/sdk')).default;
   const client = new Anthropic({ apiKey: env.anthropicApiKey });
 
-  const { model, max_tokens, system, messages } = buildLlmRequest(context);
-  const response = await client.messages.create({ model, max_tokens, system, messages });
+  const { model, max_tokens, thinking, system, messages } = buildLlmRequest(context);
+  const response = await client.messages.create({ model, max_tokens, thinking, system, messages });
 
   // Respuesta truncada por tope de tokens → el JSON está incompleto. Fallar con un
   // mensaje claro en vez de dejar que JSON.parse reporte un "non-JSON" engañoso.
