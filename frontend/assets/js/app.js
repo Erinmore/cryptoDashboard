@@ -172,13 +172,13 @@ async function runDownloadData() {
 async function runAnalysis() {
   const { coin, tf } = getState();
   const btn = document.getElementById('btn-analyze');
-  if (btn) btn.disabled = true;
+  const btnLabel = btn?.innerHTML;
+  // Feedback visible en el propio botón durante la espera (~40s): el análisis
+  // tarda y el usuario clica arriba, así sabe que está en marcha sin depender
+  // del panel de la barra lateral (que queda muy abajo).
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Analizando…'; }
 
   showRecommendationLoading();
-  // Llevar el panel a la vista ya al iniciar: así se ve el spinner durante la
-  // espera (~40s) y el resultado aparece en el mismo sitio, sin quedar a 2000px.
-  document.getElementById('recommendation-panel')
-    ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   try {
     const data = await postAnalyze(coin, tf);
     // Schema nuevo: el endpoint devuelve { structured, narrative, ai_metadata }.
@@ -188,14 +188,11 @@ async function runAnalysis() {
     setState({ recommendation: rec });
 
     if (rec) {
-      updateRecommendation(rec);
-      // El panel "Análisis IA" está al final de una barra lateral larga (a ~2000px):
-      // tras un análisis nuevo lo llevamos a la vista para que el resultado no quede
-      // fuera de pantalla. Solo aquí (análisis on-demand), no al restaurar en el load.
-      document.getElementById('recommendation-panel')
-        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      // Persistir recomendación para esta coin
+      updateRecommendation(rec);              // el dato también queda en la barra lateral
       saveCoinState(coin, { recommendation: rec });
+      // Resultado a la vista en un modal cerrable: reutiliza el Historial, que
+      // muestra este análisis (recién guardado) arriba + los previos debajo.
+      openHistory(coin);
     } else {
       hideRecommendationLoading();
     }
@@ -205,7 +202,7 @@ async function runAnalysis() {
     const panel = document.getElementById('recommendation-empty');
     if (panel) panel.textContent = `Error: ${err.message}`;
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = btnLabel; }
   }
 }
 

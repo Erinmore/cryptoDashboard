@@ -116,10 +116,12 @@ export async function getData(req, res, next) {
       global_market: resolve(globalMarket),
       btc_dominance: resolve(globalMarket)?.btc_dominance ?? null,
       coin_market_data: resolve(coinMarketData),
+      // Columnas del schema nuevo: `action`/`confidence` (antes recommendation_*,
+      // renombradas en el Sprint Schema → por eso "Análisis Previo" salía "—").
       last_analysis: lastAnalysis ? {
         timestamp: lastAnalysis.timestamp,
-        action: lastAnalysis.recommendation_action,
-        confidence: lastAnalysis.recommendation_confidence,
+        action: lastAnalysis.action,
+        confidence: lastAnalysis.confidence,
       } : null,
       binance_walls: resolve(binanceWalls),
       binance_ticker: resolve(binanceTicker),
