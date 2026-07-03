@@ -180,7 +180,8 @@ async function runAnalysis() {
 
   showRecommendationLoading();
   try {
-    const data = await postAnalyze(coin, tf);
+    const model = document.getElementById('model-select')?.value;
+    const data = await postAnalyze(coin, tf, model);
     // Schema nuevo: el endpoint devuelve { structured, narrative, ai_metadata }.
     const rec = data.structured
       ? { structured: data.structured, narrative: data.narrative ?? null }
@@ -286,6 +287,14 @@ function init() {
 
   // ── Botón Analizar ───────────────────────────────────────────────
   document.getElementById('btn-analyze')?.addEventListener('click', runAnalysis);
+
+  // ── Selector de modelo IA (persistido en localStorage) ───────────
+  const modelSel = document.getElementById('model-select');
+  if (modelSel) {
+    const saved = localStorage.getItem('cryptex_model');
+    if (saved && [...modelSel.options].some(o => o.value === saved)) modelSel.value = saved;
+    modelSel.addEventListener('change', () => localStorage.setItem('cryptex_model', modelSel.value));
+  }
 
   // ── Selector de TF ───────────────────────────────────────────────
   document.querySelectorAll('.tf-btn').forEach(btn => {

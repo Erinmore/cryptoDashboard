@@ -29,11 +29,11 @@ export async function fetchData(coin, tf) {
  * @returns {Promise<object>}  { recommendation, ai_metadata, ... }
  * @throws si Anthropic no está configurado (503) o no implementado (501)
  */
-export async function postAnalyze(coin, tf) {
+export async function postAnalyze(coin, tf, model) {
   const res = await fetch('/api/analyze', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ coin, primary_tf: tf }),
+    body:    JSON.stringify({ coin, primary_tf: tf, model }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {

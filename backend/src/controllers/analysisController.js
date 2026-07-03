@@ -822,7 +822,7 @@ export async function analyze(req, res, next) {
   const start = Date.now();
 
   try {
-    const { coin: rawCoin = 'BTC', primary_tf: primaryTf = '4h' } = req.body ?? {};
+    const { coin: rawCoin = 'BTC', primary_tf: primaryTf = '4h', model } = req.body ?? {};
     const coin = String(rawCoin).toUpperCase();
 
     if (!COINS.includes(coin)) {
@@ -834,9 +834,11 @@ export async function analyze(req, res, next) {
 
     const context = await buildAnalyzeContext(coin, primaryTf);
 
-    logger.info({ coin, primaryTf }, 'POST /api/analyze — calling Anthropic');
+    logger.info({ coin, primaryTf, model }, 'POST /api/analyze — calling Anthropic');
 
-    const { structured: rawStructured, narrative, ai_metadata } = await analyzeMarket(context);
+    // `model` viene del desplegable del frontend; analyzeMarket lo valida contra la
+    // whitelist (ANALYSIS_MODELS) y cae al default si no es válido.
+    const { structured: rawStructured, narrative, ai_metadata } = await analyzeMarket(context, model);
 
     // Validación determinista del output (§6.4). Fase 1: log + persistencia de todas las
     // violaciones de reglas duras del prompt (telemetría). Se valida SIEMPRE el output crudo.

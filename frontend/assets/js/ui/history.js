@@ -24,6 +24,17 @@ function fmtPrice(n) {
   return `$${n.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
 }
 
+// Etiqueta corta del modelo para la tarjeta (fallback al id crudo para análisis
+// antiguos con modelos fuera de la lista actual, p.ej. claude-opus-4-7).
+const MODEL_LABELS = {
+  'claude-opus-4-8': 'Opus 4.8',
+  'claude-sonnet-5': 'Sonnet 5',
+  'claude-haiku-4-5': 'Haiku 4.5',
+};
+function modelLabel(id) {
+  return MODEL_LABELS[id] ?? (id ? id.replace('claude-', '') : '');
+}
+
 function timeAgo(iso) {
   if (!iso) return '';
   const then = new Date(iso).getTime();
@@ -82,6 +93,7 @@ function renderCard(a) {
   const action = el('span', `hist-action ${actionClass(a.action)}`, a.action ?? '—');
   head.appendChild(action);
   head.appendChild(el('span', 'hist-confidence', a.confidence ?? '—'));
+  if (a.model_used) head.appendChild(el('span', 'hist-model', modelLabel(a.model_used)));
   const ts = el('span', 'hist-ts');
   ts.textContent = `${timeAgo(a.timestamp)} · ${fmtDate(a.timestamp)}`;
   ts.title = a.timestamp ?? '';

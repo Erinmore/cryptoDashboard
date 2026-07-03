@@ -1,13 +1,17 @@
 import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
+import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
 export const PROMPT_VERSION = 'v5_3_tf_naming_unified';
 
-// TEMPORAL (2026-07-03): bajado a Sonnet 5 ($2/$10 intro, mucho más barato) para
-// verificar el panel en vivo sin gastar en Opus. Revertir a 'claude-opus-4-8' una
-// vez confirmada la UI. Sonnet 5 activa adaptive thinking por defecto si se omite
-// `thinking` → lo desactivamos abajo para evitar truncado con max_tokens y abaratar.
-const MODEL = 'claude-sonnet-5';
+// El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
+// se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
+// de la whitelist (o el default) — nunca deja pasar un id arbitrario.
+function resolveModel(modelId) {
+  return ANALYSIS_MODELS.find((m) => m.id === modelId)
+    ?? ANALYSIS_MODELS.find((m) => m.id === DEFAULT_ANALYSIS_MODEL)
+    ?? ANALYSIS_MODELS[0];
+}
 // El output es JSON puro { structured, narrative }: si se trunca por tope de tokens,
 // JSON.parse falla y se pierde la llamada (de pago). 8192 da margen holgado al narrative.
 const MAX_TOKENS = 8192;
@@ -789,16 +793,19 @@ function extractJson(raw) {
   return raw;
 }
 
-function buildLlmRequest(context) {
+/**
+ * @param {object} context
+ * @param {string} [modelId] - id de ANALYSIS_MODELS; si falta/no válido → default.
+ */
+function buildLlmRequest(context, modelId) {
+  const m = resolveModel(modelId);
   return {
-    model: MODEL,
+    model: m.id,
     max_tokens: MAX_TOKENS,
     prompt_version: PROMPT_VERSION,
-    // thinking desactivado explícitamente: en Sonnet 5 omitirlo activa adaptive
-    // thinking (gasta tokens + riesgo de truncar el JSON). Válido también en
-    // Opus 4.8/4.7 al revertir. El parse busca el bloque type==='text', así que
-    // sería robusto igualmente, pero sin thinking es más barato y rápido.
-    thinking: { type: 'disabled' },
+    // thinking sólo se desactiva donde hace falta (Sonnet 5 activa adaptive al
+    // omitirlo → gasta tokens y puede truncar). Opus/Haiku van sin `thinking`.
+    ...(m.disableThinking ? { thinking: { type: 'disabled' } } : {}),
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: buildPrompt(context) }],
   };
@@ -811,7 +818,7 @@ function buildLlmRequest(context) {
  * @returns {Promise<{ structured: object, narrative: object, ai_metadata: object }>}
  * @throws {AppError} 503 si ANTHROPIC_API_KEY no está configurada
  */
-export async function analyzeMarket(context) {
+export async function analyzeMarket(context, modelId) {
   if (!env.anthropicApiKey) {
     throw new AppError(
       'Anthropic API key not configured — set ANTHROPIC_API_KEY in .env',
@@ -823,8 +830,11 @@ export async function analyzeMarket(context) {
   const Anthropic = (await import('@anthropic-ai/sdk')).default;
   const client = new Anthropic({ apiKey: env.anthropicApiKey });
 
-  const { model, max_tokens, thinking, system, messages } = buildLlmRequest(context);
-  const response = await client.messages.create({ model, max_tokens, thinking, system, messages });
+  const { model, max_tokens, thinking, system, messages } = buildLlmRequest(context, modelId);
+  const response = await client.messages.create({
+    model, max_tokens, system, messages,
+    ...(thinking ? { thinking } : {}), // sólo se envía en modelos que lo requieren (Sonnet 5)
+  });
 
   // Respuesta truncada por tope de tokens → el JSON está incompleto. Fallar con un
   // mensaje claro en vez de dejar que JSON.parse reporte un "non-JSON" engañoso.
@@ -883,4 +893,4 @@ export async function analyzeMarket(context) {
   };
 }
 
-export { buildPrompt, buildLlmRequest, extractJson };
+export { buildPrompt, buildLlmRequest, extractJson, resolveModel };

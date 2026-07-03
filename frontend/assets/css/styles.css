@@ -210,6 +210,21 @@ html, body {
   border-color: var(--accent);
 }
 
+/* Desplegable de modelo IA — mismo lenguaje visual que .btn-secondary */
+.model-select {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.model-select:hover  { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent); }
+.model-select:focus  { outline: none; border-color: var(--accent); }
+
 .btn-primary {
   background: var(--accent);
   color: white;
@@ -975,6 +990,14 @@ html, body {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+.hist-model {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--sp-md);
 }
 .hist-ts {
   margin-left: auto;

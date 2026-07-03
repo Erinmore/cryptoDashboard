@@ -122,7 +122,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
 
   const rows = db.prepare(`
     SELECT
-      a.id, a.timestamp, a.primary_tf,
+      a.id, a.timestamp, a.primary_tf, a.model_used,
       a.price_current, a.price_change_24h_pct,
       a.btc_dominance_pct,
 

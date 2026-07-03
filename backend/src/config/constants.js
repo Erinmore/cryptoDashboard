@@ -105,3 +105,16 @@ export const FUNDING_RATE_LOW = -0.0005;  // -0.05% — sobrecargado de shorts
 
 // ─── History ──────────────────────────────────────────────────
 export const MAX_ANALYSES_STORED = 1000;
+
+// ─── Modelos de análisis IA (seleccionables desde el frontend) ──
+// Whitelist: POST /api/analyze sólo acepta uno de estos ids; si viene otro o
+// ninguno, se usa DEFAULT_ANALYSIS_MODEL. `cost` es orientativo (~25k in / ~3k out).
+// `disableThinking`: sólo Sonnet 5 lo necesita — omitir `thinking` en Sonnet 5
+// activa adaptive thinking (gasta tokens y puede truncar el JSON). Opus/Haiku van
+// sin `thinking` (off por defecto al omitirlo).
+export const ANALYSIS_MODELS = [
+  { id: 'claude-opus-4-8',  label: 'Opus 4.8',  cost: '~$0.20', disableThinking: false },
+  { id: 'claude-sonnet-5',  label: 'Sonnet 5',  cost: '~$0.09', disableThinking: true  },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', cost: '~$0.04', disableThinking: false },
+];
+export const DEFAULT_ANALYSIS_MODEL = 'claude-opus-4-8';
