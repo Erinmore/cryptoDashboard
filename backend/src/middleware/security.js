@@ -5,7 +5,11 @@ import compression from 'compression';
 import env from '../config/env.js';
 
 export function applySecurityMiddleware(app) {
-  app.use(helmet());
+  // CSP desactivada: en producción el mismo Express sirve el frontend construido
+  // (dist/), que usa atributos `style=` inline y un módulo ES same-origin. La CSP
+  // por defecto de helmet bloquearía esos inline. App single-user en LAN de
+  // confianza sin contenido externo ⇒ el resto de cabeceras de helmet se mantienen.
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.use(compression());
 
   const allowedOrigins = env.isDev
