@@ -185,6 +185,11 @@ async function runAnalysis() {
 
     if (rec) {
       updateRecommendation(rec);
+      // El panel "Análisis IA" está al final de una barra lateral larga (a ~2000px):
+      // tras un análisis nuevo lo llevamos a la vista para que el resultado no quede
+      // fuera de pantalla. Solo aquí (análisis on-demand), no al restaurar en el load.
+      document.getElementById('recommendation-panel')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       // Persistir recomendación para esta coin
       saveCoinState(coin, { recommendation: rec });
     } else {
