@@ -175,6 +175,10 @@ async function runAnalysis() {
   if (btn) btn.disabled = true;
 
   showRecommendationLoading();
+  // Llevar el panel a la vista ya al iniciar: así se ve el spinner durante la
+  // espera (~40s) y el resultado aparece en el mismo sitio, sin quedar a 2000px.
+  document.getElementById('recommendation-panel')
+    ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   try {
     const data = await postAnalyze(coin, tf);
     // Schema nuevo: el endpoint devuelve { structured, narrative, ai_metadata }.
