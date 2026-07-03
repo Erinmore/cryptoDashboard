@@ -71,6 +71,35 @@
       <!-- Resize handle -->
       <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
 
+      <!-- Panel de recomendación IA — primero de todos, encima de los indicadores -->
+      <div class="sidebar-section" id="recommendation-panel">
+        <h3 class="section-title">Análisis IA</h3>
+        <div class="section-body">
+          <div id="recommendation-empty">
+            <p class="rec-empty-text">Sin análisis. Pulsa <strong>Analizar</strong> para obtener una recomendación.</p>
+          </div>
+          <div id="recommendation-loading" style="display:none">
+            <div class="spinner"></div>
+            <p class="rec-loading-text">Analizando mercado…</p>
+          </div>
+          <div id="recommendation-content" style="display:none">
+            <div class="rec-header">
+              <span id="rec-action" class="rec-action">—</span>
+              <span id="rec-confidence" class="rec-confidence">—</span>
+            </div>
+            <p id="rec-rationale" class="rec-rationale"></p>
+            <div id="rec-levels" class="rec-levels">
+              <div class="rec-level-row"><span class="rec-level-label">Entrada</span><span id="rec-entry" class="rec-level-value">—</span></div>
+              <div class="rec-level-row"><span class="rec-level-label">Stop Loss</span><span id="rec-sl" class="rec-level-value rec-sl">—</span></div>
+              <div class="rec-level-row"><span class="rec-level-label">TP1</span><span id="rec-tp1" class="rec-level-value rec-tp">—</span></div>
+              <div class="rec-level-row"><span class="rec-level-label">TP2</span><span id="rec-tp2" class="rec-level-value rec-tp">—</span></div>
+            </div>
+            <div id="rec-alerts"></div>
+            <p id="rec-timestamp" class="rec-timestamp"></p>
+          </div>
+        </div>
+      </div>
+
       <!-- ═══════════════════════════════════════════════ -->
       <!-- BLOQUE 1: MACRO GLOBAL                          -->
       <!-- ═══════════════════════════════════════════════ -->
@@ -347,35 +376,6 @@
             <span class="sent-label">Acción</span>
             <span class="sent-value" id="last-analysis-action">—</span>
             <span class="sent-signal" id="last-analysis-timestamp">—</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Panel de recomendación IA -->
-      <div class="sidebar-section" id="recommendation-panel">
-        <h3 class="section-title">Análisis IA</h3>
-        <div class="section-body">
-          <div id="recommendation-empty">
-            <p class="rec-empty-text">Sin análisis. Pulsa <strong>Analizar</strong> para obtener una recomendación.</p>
-          </div>
-          <div id="recommendation-loading" style="display:none">
-            <div class="spinner"></div>
-            <p class="rec-loading-text">Analizando mercado…</p>
-          </div>
-          <div id="recommendation-content" style="display:none">
-            <div class="rec-header">
-              <span id="rec-action" class="rec-action">—</span>
-              <span id="rec-confidence" class="rec-confidence">—</span>
-            </div>
-            <p id="rec-rationale" class="rec-rationale"></p>
-            <div id="rec-levels" class="rec-levels">
-              <div class="rec-level-row"><span class="rec-level-label">Entrada</span><span id="rec-entry" class="rec-level-value">—</span></div>
-              <div class="rec-level-row"><span class="rec-level-label">Stop Loss</span><span id="rec-sl" class="rec-level-value rec-sl">—</span></div>
-              <div class="rec-level-row"><span class="rec-level-label">TP1</span><span id="rec-tp1" class="rec-level-value rec-tp">—</span></div>
-              <div class="rec-level-row"><span class="rec-level-label">TP2</span><span id="rec-tp2" class="rec-level-value rec-tp">—</span></div>
-            </div>
-            <div id="rec-alerts"></div>
-            <p id="rec-timestamp" class="rec-timestamp"></p>
           </div>
         </div>
       </div>
