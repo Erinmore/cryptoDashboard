@@ -771,6 +771,24 @@ function buildPrompt(ctx) {
  * @param {object} context - Contexto de mercado completo
  * @returns {{ model: string, max_tokens: number, prompt_version: string, system: string, messages: Array<{role: string, content: string}> }}
  */
+/**
+ * Extrae el objeto JSON de la respuesta cruda del LLM. Robustece el parse ante
+ * modelos que no devuelven JSON puro pese a la instrucción: preámbulo de texto
+ * y/o fences markdown (```json ... ```). Prioridad: bloque fenced con `{` →
+ * substring del primer '{' al último '}' → la cadena tal cual (deja que
+ * JSON.parse falle si de verdad no hay JSON). Inofensivo con JSON puro (Opus).
+ * @param {string} raw
+ * @returns {string}
+ */
+function extractJson(raw) {
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence && fence[1].includes('{')) return fence[1].trim();
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first !== -1 && last > first) return raw.slice(first, last + 1);
+  return raw;
+}
+
 function buildLlmRequest(context) {
   return {
     model: MODEL,
@@ -834,7 +852,9 @@ export async function analyzeMarket(context) {
 
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    // Robusto entre modelos: algunos (Sonnet 5) no respetan "JSON puro" y añaden
+    // preámbulo y/o envuelven el objeto en un bloque markdown ```json ... ```.
+    parsed = JSON.parse(extractJson(raw));
   } catch {
     throw new AppError(
       `Anthropic returned non-JSON response: ${raw.slice(0, 200)}`,
@@ -863,4 +883,4 @@ export async function analyzeMarket(context) {
   };
 }
 
-export { buildPrompt, buildLlmRequest };
+export { buildPrompt, buildLlmRequest, extractJson };
