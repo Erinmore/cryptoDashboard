@@ -208,9 +208,11 @@ function runMigrations(db) {
       fvg_bullish_count INTEGER,
       fvg_bearish_count INTEGER,
 
-      -- S/R distances
+      -- S/R distances + strength (del nivel más cercano; strength = min(floor(touches/2),5))
       nearest_support_pct REAL,
       nearest_resistance_pct REAL,
+      nearest_support_strength INTEGER,
+      nearest_resistance_strength INTEGER,
 
       -- Volume Profile
       vp_poc_distance_pct REAL,
@@ -297,6 +299,9 @@ function runMigrations(db) {
   // no la añade a una tabla ya existente, así que la incorporamos con ALTER TABLE.
   // Las BBDD nuevas ya la traen del CREATE de arriba (el ensureColumn es no-op).
   ensureColumn(db, 'analyses', 'validation_warnings', 'TEXT');
+  // S/R strength del nivel más cercano (antes solo se persistía la distancia %).
+  ensureColumn(db, 'analysis_tf_snapshot', 'nearest_support_strength', 'INTEGER');
+  ensureColumn(db, 'analysis_tf_snapshot', 'nearest_resistance_strength', 'INTEGER');
 }
 
 export function closeDb() {

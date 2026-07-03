@@ -30,23 +30,29 @@ import logger from '../middleware/logger.js';
  * @param {Array} resistances - Array de { price, touches, strength }
  * @returns {object}
  */
-function computeLevelDistances(price, supports, resistances) {
+export function computeLevelDistances(price, supports, resistances) {
   let distToSupport = null;
   let distToResistance = null;
+  let supportStrength = null;
+  let resistanceStrength = null;
 
   if (supports?.length > 0) {
     const nearestSupport = supports[0]; // Ya ordenado (mayor primero)
     distToSupport = parseFloat(((price - nearestSupport.price) / price * 100).toFixed(2));
+    supportStrength = nearestSupport.strength ?? null;
   }
 
   if (resistances?.length > 0) {
     const nearestResistance = resistances[0]; // Ya ordenado (menor primero)
     distToResistance = parseFloat(((nearestResistance.price - price) / price * 100).toFixed(2));
+    resistanceStrength = nearestResistance.strength ?? null;
   }
 
   return {
     distance_to_nearest_support_pct: distToSupport,
     distance_to_nearest_resistance_pct: distToResistance,
+    nearest_support_strength: supportStrength,
+    nearest_resistance_strength: resistanceStrength,
   };
 }
 
@@ -785,8 +791,10 @@ function buildTfSnapshots(analysisId, technical) {
       fvg_bullish_count: (smc?.unmitigated_fvgs?.bullish ?? []).length,
       fvg_bearish_count: (smc?.unmitigated_fvgs?.bearish ?? []).length,
 
-      nearest_support_pct:    data.distance_to_nearest_support_pct ?? null,
-      nearest_resistance_pct: data.distance_to_nearest_resistance_pct ?? null,
+      nearest_support_pct:         data.distance_to_nearest_support_pct ?? null,
+      nearest_resistance_pct:      data.distance_to_nearest_resistance_pct ?? null,
+      nearest_support_strength:    data.nearest_support_strength ?? null,
+      nearest_resistance_strength: data.nearest_resistance_strength ?? null,
 
       vp_poc_distance_pct: vp?.poc_distance_pct ?? null,
       vp_valid:            vp?.valid != null ? (vp.valid ? 1 : 0) : null,

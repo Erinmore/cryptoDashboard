@@ -74,6 +74,7 @@ export function saveAnalysis(data) {
       bos_direction, bos_valid, choch_direction,
       fvg_bullish_count, fvg_bearish_count,
       nearest_support_pct, nearest_resistance_pct,
+      nearest_support_strength, nearest_resistance_strength,
       vp_poc_distance_pct, vp_valid
     ) VALUES (
       @analysis_id, @tf,
@@ -89,6 +90,7 @@ export function saveAnalysis(data) {
       @bos_direction, @bos_valid, @choch_direction,
       @fvg_bullish_count, @fvg_bearish_count,
       @nearest_support_pct, @nearest_resistance_pct,
+      @nearest_support_strength, @nearest_resistance_strength,
       @vp_poc_distance_pct, @vp_valid
     )
   `);
