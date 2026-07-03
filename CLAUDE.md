@@ -117,7 +117,7 @@ src/controllers/             ← Orquestación, validación de params, formato r
   analysisController.js      ← POST /api/analyze — fetcha datos, llama Anthropic, guarda en DB
   historyController.js       ← GET /api/history/:coin — paginación, valida coin
 src/services/                ← Lógica de negocio, I/O externo, cache
-  anthropicService.js        ← PROMPT_VERSION v5_0_structured_output; analyzeMarket() implementado con SDK real (import dinámico); OUTPUT FORMAT JSON puro {structured, narrative}; parse + validación de estructura; AppError 502 si respuesta no es JSON válido
+  anthropicService.js        ← MODEL (temporal `claude-sonnet-5`, revertir a `claude-opus-4-8`; ver §17 SESSION_STATE) + `thinking:{type:'disabled'}`; PROMPT_VERSION v5_3_tf_naming_unified; analyzeMarket() con SDK real (import dinámico); OUTPUT FORMAT JSON puro {structured, narrative}; `extractJson()` — parse robusto que extrae el JSON de preámbulo/fences markdown (Sonnet 5 no da JSON puro; Opus sí); AppError 502 si tras extraer no es JSON válido
   dbService.js               ← saveAnalysis({ header, tfSnapshots, clusters }) — transacción 4 tablas; getAnalysisHistory() devuelve action/confidence/risk_score/executive_summary/score_total; pruning en cascada
   indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores + Volume Profile + computeTrend ponderado
   coingeckoService.js        ← fetchOHLC (Binance klines: 1h/4h/1D/1W con taker_buy_base real), fetchCurrentPrice, fetchBTCDominance, fetchGlobalMarketData, fetchCoinMarketData
@@ -156,14 +156,14 @@ frontend/
   assets/
     css/styles.css           ← Dark mode completo (variables CSS, todos los componentes)
     js/
-      app.js                 ← Entry point: init PixiJS, carga datos, conecta eventos, persistencia
+      app.js                 ← Entry point: init PixiJS, carga datos, conecta eventos, persistencia. runAnalysis() muestra "⏳ Analizando…" en el botón y al terminar abre el modal de Historial (openHistory) con el resultado + previos
       api/
         client.js            ← fetchData(coin, tf) + postAnalyze(coin, tf)
       state/
         store.js             ← Estado global: getState(), setState(), subscribe()
         storage.js           ← Persistencia por coin en localStorage (coin, tf, recommendation)
       ui/
-        sidebar.js           ← updateHeader, updateIndicators, updateSentiment, updateRecommendation (schema {structured,narrative})
+        sidebar.js           ← updateHeader, updateIndicators, updateSentiment, updateRecommendation (schema {structured,narrative}), updateLastAnalysis. show/hideRecommendationLoading fijan `style.display` INLINE (los divs se ocultan con inline en el HTML → togglear sólo la clase `.hidden` no bastaba). Panel "Análisis IA" + "Análisis Previo" son las 2 primeras secciones del sidebar
         history.js           ← Modal historial IA (Fase 12): fetchHistory + fetchOutcomeStats. Cabecera de backtesting (win-rate/PnL/TP-stop) + tarjetas (acción, scores, gating, setup, validation_warnings, resultado outcome por horizonte)
       renderer/
         pixiRenderer.js      ← PIXI.Application + ResizeObserver
@@ -354,7 +354,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **186 tests totales**: 121 unitarios (`indicators.test.js`) + 48 integración (`integration.test.js`) + 12 helpers de series temporales (`timeSeries.test.js`) + 5 persistencia de históricos (`historyPersistence.test.js`)
+- **260 tests totales**: 125 `indicators.test.js` + 54 `integration.test.js` + 24 `analysisValidator.test.js` + 22 `outcome.test.js` + 12 `timeSeries.test.js` + 7 `timeframeConflicts.test.js` + 6 `historyPersistence.test.js` + 5 `extractJson.test.js` + 4 `fundingSummary.test.js` + 3 `lsrSummary.test.js`
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
 - Los tests de integración usan supertest + `jest.unstable_mockModule` para mockear todos los servicios externos — offline, deterministas, ~1.5s
 
@@ -726,7 +726,7 @@ Frontend accesible en `http://localhost:3001`, backend en `http://localhost:3000
 9. **Setup infra Pi**: instalar Docker, crear red `proxy`, levantar NPM, configurar proxy host en UI — ⏳ ÚNICO PENDIENTE MAYOR
 10. Deuda menor §6: FVGs detallados, SuperTrend level numérico, S/R strength, `volume_history.vwap` top-level
 
-**API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa (`claude-opus-4-8` — bump desde 4.7 el 2026-07-03; mismo precio $5/$25, sin breaking changes). `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
+**API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa. **Modelo actual: `claude-sonnet-5` (TEMPORAL** — bajado de Opus 4.8 el 2026-07-03 para verificar la UI barato, ~$0.09 vs ~$0.20/análisis; **revertir a `claude-opus-4-8`** tras validar, cambio de 1 línea en `anthropicService.js`; ver §17 SESSION_STATE). `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
 
 **Jobs de fondo (index.js):** `historyPoller` (300s, persiste todas las monedas) + `outcomeService` (900s, rellena backtesting). Flags `HISTORY_POLLER_ENABLED` / `OUTCOME_JOB_ENABLED`.
 
