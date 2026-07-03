@@ -295,6 +295,25 @@ Lee `frontend/CSS_CONVENTIONS.md` para documentación completa. Resumen de varia
 
 ---
 
+## Selección de modelo IA — comparativa observada (2026-07-03)
+
+El modelo del análisis se elige desde el desplegable del header (whitelist `ANALYSIS_MODELS`, default **Opus 4.8**). Comparativa empírica de los 3 tiers sobre el **mismo mercado** (SOL, ~$81.4, F&G 21, sin apenas movimiento en 2h → las diferencias son interpretación del modelo, no condiciones distintas):
+
+| Modelo | Total | Volumen (V) | Riesgo | Cómo llega a Esperar | Calidad de la tesis |
+|--------|-------|-------------|--------|----------------------|---------------------|
+| **Opus 4.8** (~$0.20) | +1 | 0 | 6/10 | "setup cargado, falta trigger" | **La más accionable**: da el trigger exacto (*cierre 4h sobre 82.0–82.6 con expansión de OI*) |
+| **Sonnet 5** (~$0.09) | +0.5 | +1 | 6/10 | scores contradictorios | Muy cerca de Opus; añade el matiz de **agotamiento técnico** (StochRSI 1D en 100, WT 4h overbought) |
+| **Haiku 4.5** (~$0.04) | −0.33 | −1 | 7/10 | **gating** (veto duro) | Coherente pero más superficial: "conflicto, fuera" sin plan hacia delante |
+
+**Conclusiones (guía para elegir modelo):**
+- **La decisión final es robusta**: los 3 convergen en `Esperar` con el mismo driver (`structure`) y el mismo diagnóstico de fondo (CHoCH bullish 1D vs 1W bajista + resistencia ~83 sin expansión de OI). El tier se nota en la **profundidad de la tesis y los scores**, no en la acción.
+- **El score de Volumen es la gran divergencia** (Haiku −1 / Opus 0 / Sonnet +1): el mismo CVD 1h divergente + OI plano se lee de tres formas. Señal genuinamente ambigua donde cada modelo mete su sesgo.
+- **Haiku 4.5 es más conservador/bajista** en señales ambiguas (V−1, riesgo 7/10, tiende a **gating**): puede vetar setups que Opus/Sonnet dejarían en "preparar". Útil como filtro rápido/barato, no para la tesis final.
+- **Recomendación**: como el output *es el producto*, usar **Opus 4.8** (o Sonnet 5, casi a la par y 2× más barato) para decisiones reales; Haiku 4.5 para un pulso rápido y económico.
+- El **badge de modelo** en cada tarjeta del historial (vía `analyses.model_used`) permite hacer esta comparación de un vistazo.
+
+---
+
 ## Timeframes
 
 `TIMEFRAMES = ['1h', '4h', '1D', '1W']` — ordenados de menor a mayor.
