@@ -100,7 +100,7 @@ src/app.js                   ← Factory createApp() — Express app sin listen(
 src/index.js                 ← Entry point: importa createApp, llama listen(), graceful shutdown
 src/config/
   env.js                     ← Todas las variables de entorno con defaults
-  constants.js               ← Constantes de indicadores, coins, timeframes
+  constants.js               ← Constantes de indicadores, coins, timeframes, `ANALYSIS_MODELS` (whitelist de modelos IA) + `DEFAULT_ANALYSIS_MODEL`
   db.js                      ← Conexión SQLite, migraciones inline al arrancar
 src/middleware/
   security.js                ← Helmet + CORS + Compression + express.json
@@ -117,7 +117,7 @@ src/controllers/             ← Orquestación, validación de params, formato r
   analysisController.js      ← POST /api/analyze — fetcha datos, llama Anthropic, guarda en DB
   historyController.js       ← GET /api/history/:coin — paginación, valida coin
 src/services/                ← Lógica de negocio, I/O externo, cache
-  anthropicService.js        ← MODEL (temporal `claude-sonnet-5`, revertir a `claude-opus-4-8`; ver §17 SESSION_STATE) + `thinking:{type:'disabled'}`; PROMPT_VERSION v5_3_tf_naming_unified; analyzeMarket() con SDK real (import dinámico); OUTPUT FORMAT JSON puro {structured, narrative}; `extractJson()` — parse robusto que extrae el JSON de preámbulo/fences markdown (Sonnet 5 no da JSON puro; Opus sí); AppError 502 si tras extraer no es JSON válido
+  anthropicService.js        ← Modelo SELECCIONABLE desde el frontend: `resolveModel(id)` valida contra `ANALYSIS_MODELS` (constants) y cae al default `claude-opus-4-8` — nunca deja pasar un id arbitrario. `buildLlmRequest(context, modelId)` / `analyzeMarket(context, modelId)`; `thinking:{type:'disabled'}` SÓLO en Sonnet 5 (Opus/Haiku sin thinking). PROMPT_VERSION v5_3_tf_naming_unified; OUTPUT FORMAT JSON puro {structured, narrative}; `extractJson()` — parse robusto que extrae el JSON de preámbulo/fences markdown (Sonnet 5 no da JSON puro; Opus sí); AppError 502 si tras extraer no es JSON válido
   dbService.js               ← saveAnalysis({ header, tfSnapshots, clusters }) — transacción 4 tablas; getAnalysisHistory() devuelve action/confidence/risk_score/executive_summary/score_total; pruning en cascada
   indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores + Volume Profile + computeTrend ponderado
   coingeckoService.js        ← fetchOHLC (Binance klines: 1h/4h/1D/1W con taker_buy_base real), fetchCurrentPrice, fetchBTCDominance, fetchGlobalMarketData, fetchCoinMarketData
@@ -156,7 +156,7 @@ frontend/
   assets/
     css/styles.css           ← Dark mode completo (variables CSS, todos los componentes)
     js/
-      app.js                 ← Entry point: init PixiJS, carga datos, conecta eventos, persistencia. runAnalysis() muestra "⏳ Analizando…" en el botón y al terminar abre el modal de Historial (openHistory) con el resultado + previos
+      app.js                 ← Entry point: init PixiJS, carga datos, conecta eventos, persistencia. runAnalysis() lee el modelo del desplegable `#model-select` (persistido en localStorage `cryptex_model`), muestra "⏳ Analizando…" en el botón y al terminar abre el modal de Historial (openHistory) con el resultado + previos
       api/
         client.js            ← fetchData(coin, tf) + postAnalyze(coin, tf)
       state/
@@ -354,7 +354,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **260 tests totales**: 125 `indicators.test.js` + 54 `integration.test.js` + 24 `analysisValidator.test.js` + 22 `outcome.test.js` + 12 `timeSeries.test.js` + 7 `timeframeConflicts.test.js` + 6 `historyPersistence.test.js` + 5 `extractJson.test.js` + 4 `fundingSummary.test.js` + 3 `lsrSummary.test.js`
+- **264 tests totales**: 125 `indicators.test.js` + 54 `integration.test.js` + 24 `analysisValidator.test.js` + 22 `outcome.test.js` + 12 `timeSeries.test.js` + 7 `timeframeConflicts.test.js` + 6 `historyPersistence.test.js` + 5 `extractJson.test.js` + 4 `fundingSummary.test.js` + 4 `modelSelection.test.js` + 3 `lsrSummary.test.js`
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
 - Los tests de integración usan supertest + `jest.unstable_mockModule` para mockear todos los servicios externos — offline, deterministas, ~1.5s
 
@@ -726,7 +726,7 @@ Frontend accesible en `http://localhost:3001`, backend en `http://localhost:3000
 9. **Setup infra Pi**: instalar Docker, crear red `proxy`, levantar NPM, configurar proxy host en UI — ⏳ ÚNICO PENDIENTE MAYOR
 10. Deuda menor §6: FVGs detallados, SuperTrend level numérico, S/R strength, `volume_history.vwap` top-level
 
-**API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa. **Modelo actual: `claude-sonnet-5` (TEMPORAL** — bajado de Opus 4.8 el 2026-07-03 para verificar la UI barato, ~$0.09 vs ~$0.20/análisis; **revertir a `claude-opus-4-8`** tras validar, cambio de 1 línea en `anthropicService.js`; ver §17 SESSION_STATE). `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
+**API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa. **Modelo IA seleccionable desde el frontend** (desplegable en el header): Opus 4.8 (~$0.20, default) / Sonnet 5 (~$0.09) / Haiku 4.5 (~$0.04). Whitelist `ANALYSIS_MODELS` en `constants.js`; validado por `resolveModel`; persistido en localStorage; el modelo usado se guarda en `analyses.model_used` y se muestra en cada tarjeta del historial. `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
 
 **Jobs de fondo (index.js):** `historyPoller` (300s, persiste todas las monedas) + `outcomeService` (900s, rellena backtesting). Flags `HISTORY_POLLER_ENABLED` / `OUTCOME_JOB_ENABLED`.
 
