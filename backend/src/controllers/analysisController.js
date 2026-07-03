@@ -57,6 +57,17 @@ export function computeLevelDistances(price, supports, resistances) {
 }
 
 /**
+ * Nivel numérico de SuperTrend: la banda que actúa de soporte (tendencia UP) o de
+ * resistencia (tendencia DOWN). El indicador deja exactamente una de las dos no-null.
+ * @param {{trend:string, support:?number, resistance:?number}|null} st
+ * @returns {number|null}
+ */
+export function supertrendLevel(st) {
+  if (!st) return null;
+  return (st.trend === 'UP' ? st.support : st.resistance) ?? null;
+}
+
+/**
  * Calcula la tendencia de una serie de valores via regresión lineal simple.
  * Devuelve 'rising' | 'falling' | 'flat' según el signo de la pendiente.
  * @param {number[]} values
@@ -775,6 +786,7 @@ function buildTfSnapshots(analysisId, technical) {
       adx_trend_direction: adx?.trend_direction ?? null,
       adx_regime:          adx?.regime ?? null,
       supertrend_direction: st?.trend ?? null,
+      supertrend_level:     supertrendLevel(st),
       wave_trend_signal:   wt?.signal ?? null,
       bb_position:         bb?.position ?? null,
       bb_width_pct:        bb?.width_pct ?? null,

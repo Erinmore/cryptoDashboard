@@ -373,7 +373,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **268 tests totales**: 125 `indicators.test.js` + 54 `integration.test.js` + 24 `analysisValidator.test.js` + 22 `outcome.test.js` + 12 `timeSeries.test.js` + 7 `timeframeConflicts.test.js` + 6 `historyPersistence.test.js` + 5 `extractJson.test.js` + 4 `fundingSummary.test.js` + 4 `modelSelection.test.js` + 4 `levelStrength.test.js` + 3 `lsrSummary.test.js`
+- **271 tests totales**: 125 `indicators.test.js` + 54 `integration.test.js` + 24 `analysisValidator.test.js` + 22 `outcome.test.js` + 12 `timeSeries.test.js` + 7 `timeframeConflicts.test.js` + 6 `historyPersistence.test.js` + 5 `extractJson.test.js` + 4 `fundingSummary.test.js` + 4 `modelSelection.test.js` + 7 `levelStrength.test.js` + 3 `lsrSummary.test.js`
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
 - Los tests de integración usan supertest + `jest.unstable_mockModule` para mockear todos los servicios externos — offline, deterministas, ~1.5s
 
@@ -550,6 +550,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **Deploy nativo + systemd** (no Docker) — ver §Deploy. Cambio de código habilitante: en `app.js`, con `NODE_ENV=production` y si existe `frontend/dist/index.html`, Express sirve el SPA (`express.static` + fallback `app.get(/^(?!\/api|\/health).*/)`) desde el mismo origen que la API. `security.js`: `helmet({ contentSecurityPolicy: false })` (el SPA usa `style=` inline; app single-user en LAN). Gated a producción → dev (Vite) y los 264 tests intactos. Nuevo `scripts/deploy.sh` (build + rsync + restart systemd).
   - **Fix `last_analysis` (bug preexistente)**: en `dataController`, `getLastAnalysis()` va dentro del `Promise.allSettled` pero se usaba **sin `resolve()`**, devolviendo el resultado settled crudo → `last_analysis: {}` (campos `undefined`). Rompía el panel "Análisis Previo" del sidebar desde el rename del Sprint Schema. Corregido con `const lastAnalysisRow = resolve(lastAnalysis)`. Commits `31f748d` (deploy) + `c1b5de2` (fix).
   - **S/R strength persistido (deuda §6 resuelta)**: `analysis_tf_snapshot` guardaba solo la distancia % al nivel más cercano, no su fuerza. Ahora persiste `nearest_support_strength`/`nearest_resistance_strength` (escala 0-5 = `min(floor(touches/2),5)`, ya calculada por `calculateSupportResistance`). `computeLevelDistances` (exportada) coge el `strength` de `supports[0]`/`resistances[0]`; migración idempotente `ensureColumn` en `db.js`; INSERT ampliado en `dbService`. 4 tests nuevos (`levelStrength.test.js`). Migración verificada en la Pi (filas viejas → NULL).
+  - **SuperTrend level persistido (deuda §6, media prioridad)**: `analysis_tf_snapshot` guardaba solo `supertrend_direction`, no el nivel numérico. Ahora persiste `supertrend_level REAL` (banda de soporte en UP / resistencia en DOWN, vía helper puro `supertrendLevel(st)` exportado). Mismo patrón `ensureColumn` + map + INSERT. 3 tests. **Nota:** estos ítems de snapshot son de *persistencia* (enriquecen historial/backtesting) — el LLM ya recibía el dato en el payload en vivo. 271 tests.
 
 ---
 

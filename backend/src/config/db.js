@@ -190,6 +190,7 @@ function runMigrations(db) {
       adx_trend_direction TEXT,
       adx_regime TEXT,
       supertrend_direction TEXT,
+      supertrend_level REAL,
       wave_trend_signal TEXT,
       bb_position REAL,
       bb_width_pct REAL,
@@ -302,6 +303,8 @@ function runMigrations(db) {
   // S/R strength del nivel más cercano (antes solo se persistía la distancia %).
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_support_strength', 'INTEGER');
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_resistance_strength', 'INTEGER');
+  // SuperTrend: nivel numérico (banda de soporte/resistencia), antes solo la dirección.
+  ensureColumn(db, 'analysis_tf_snapshot', 'supertrend_level', 'REAL');
 }
 
 export function closeDb() {

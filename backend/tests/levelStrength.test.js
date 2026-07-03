@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { computeLevelDistances } from '../src/controllers/analysisController.js';
+import { computeLevelDistances, supertrendLevel } from '../src/controllers/analysisController.js';
 
 describe('computeLevelDistances — strength del nivel más cercano', () => {
   const price = 100;
@@ -46,5 +46,20 @@ describe('computeLevelDistances — strength del nivel más cercano', () => {
     const r = computeLevelDistances(price, undefined, undefined);
     expect(r.nearest_support_strength).toBeNull();
     expect(r.nearest_resistance_strength).toBeNull();
+  });
+});
+
+describe('supertrendLevel — nivel numérico según dirección', () => {
+  test('tendencia UP → usa el soporte (banda inferior)', () => {
+    expect(supertrendLevel({ trend: 'UP', support: 95.5, resistance: null })).toBe(95.5);
+  });
+
+  test('tendencia DOWN → usa la resistencia (banda superior)', () => {
+    expect(supertrendLevel({ trend: 'DOWN', support: null, resistance: 104.2 })).toBe(104.2);
+  });
+
+  test('null / banda ausente → null (sin crash)', () => {
+    expect(supertrendLevel(null)).toBeNull();
+    expect(supertrendLevel({ trend: 'UP', support: null, resistance: null })).toBeNull();
   });
 });
