@@ -637,7 +637,7 @@ Pi (192.168.1.250, user pi)
     └── frontend/dist/                  ← build de Vite, servido por el propio Express
 ```
 
-**Clave del diseño:** un **único proceso Node**. En producción, Express sirve la API **y** el `frontend/dist/` construido (static + fallback SPA) **desde el mismo origen** → `/api` es same-origin, sin CORS ni reverse-proxy. Todo vive en `:8080`. Esto solo se activa con `NODE_ENV=production` (ver `app.js`: guard `existsSync(dist/index.html)` + `NODE_ENV`); en dev el frontend lo sigue sirviendo Vite (`:5173`) y en tests no hay `dist/`. `security.js` aplica `helmet({ contentSecurityPolicy: false })` porque el SPA usa atributos `style=` inline (app single-user en LAN, sin contenido externo).
+**Clave del diseño:** un **único proceso Node**. En producción, Express sirve la API **y** el `frontend/dist/` construido (static + fallback SPA) **desde el mismo origen** → `/api` es same-origin, sin CORS ni reverse-proxy. Todo vive en `:8080`. Esto solo se activa con `NODE_ENV=production` (ver `app.js`: guard `existsSync(dist/index.html)` + `NODE_ENV`); en dev el frontend lo sigue sirviendo Vite (`:5173`) y en tests no hay `dist/`. `security.js` aplica `helmet({ contentSecurityPolicy: false, frameguard: false })` porque el SPA usa atributos `style=` inline (CSP off) y el kiosko lo embebe en un iframe cross-origin (frameguard off) — app single-user en LAN, sin contenido externo. El callback de CORS ante un origen no permitido responde `cb(null, false)` (no lanza): un `throw` daba HTTP 500 en los assets `crossorigin` del build de Vite, dejando la página sin estilos. Ver §Integración kiosko (iframe).
 
 **URL:** `http://192.168.1.250:8080` desde cualquier equipo de la LAN. (`cryptex.lan` pendiente de entrada DNS en el router Zyxel — daría `http://cryptex.lan:8080`.)
 
@@ -699,6 +699,15 @@ Overrides por env: `PI_HOST` (`pi@192.168.1.250`), `PI_DIR` (`/home/pi/cryptex`)
 
 La BD de desarrollo se migró con un snapshot consistente: `VACUUM INTO` (consolida el WAL en un único fichero sin tocar el original vía better-sqlite3) → transfer → `stop` servicio → reemplazar `cryptex.db` (borrando `-wal`/`-shm`) → `start`. Se migra en vez de empezar de cero porque `history_series` (CVD/VWAP) **no tiene fuente externa y no se puede reconstruir**.
 
+### Integración kiosko (iframe) — 2 fixes de cabeceras en `security.js`
+
+CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `--kiosk` → `http://localhost:8000`). El kiosko y CRYPTEX son **orígenes distintos** (`localhost:8000` vs `192.168.1.250:8080`), lo que obligó a relajar dos cabeceras. Ambos cambios viven en el código (los propaga `deploy.sh`), no solo en la Pi:
+
+- **Framing (`frameguard: false`)** — helmet emite por defecto `X-Frame-Options: SAMEORIGIN`, que bloqueaba el iframe cross-origin (ni se veía). `X-Frame-Options` no admite un origen concreto (solo `DENY`/`SAMEORIGIN`) y la alternativa CSP `frame-ancestors` no sirve porque la CSP ya está apagada (SPA con `style=` inline). → `helmet({ contentSecurityPolicy: false, frameguard: false })`.
+- **CORS (`cb(null, false)`)** — los assets del build de Vite llevan `crossorigin` → el navegador los pide en modo CORS con cabecera `Origin`. El callback de CORS **lanzaba** ante orígenes fuera de la allow-list (vacía en producción) → `throw` = HTTP 500 → CSS/JS no cargaban (página plana). (`curl` no lo destapaba: no manda `Origin`.) Fix: `cb(null, false)` en vez de `cb(new Error(...))` — no añade cabeceras CORS pero **no rompe**: same-origin no las necesita y una cross-origin real sigue bloqueada por el navegador al faltar `Access-Control-Allow-Origin` (no abre agujero).
+
+**Si algún día se expone CRYPTEX fuera de la LAN, reconsiderar ambos** (reacotar framing vía CSP `frame-ancestors` y restringir CORS a orígenes concretos). Ver SESSION_STATE.md §19.
+
 ### Ficheros Docker (alternativa, NO en uso)
 
 `backend/Dockerfile`, `frontend/Dockerfile` y `docker-compose.yml` siguen en el repo por si algún día se migra al modelo contenedores + reverse-proxy (p. ej. al añadir más proyectos a la Pi). El diseño single-process actual se contiene en 1 sola imagen trivialmente. El plan original documentado (NPM en `:80` enrutando por hostname, red externa `proxy`, dos contenedores) queda **archivado** — no refleja lo desplegado.
@@ -719,7 +728,7 @@ La BD de desarrollo se migró con un snapshot consistente: `VACUUM INTO` (consol
 
 **Deuda menor pendiente:**
 - Entrada DNS `cryptex.lan → 192.168.1.250` en el router Zyxel (URL bonita, opcional).
-- Integración en el kiosko del asistente (`:8000`) — mostrar CRYPTEX desde el Chromium `--kiosk` (requiere conocer qué sirve el `:8000`).
+- ~~Integración en el kiosko del asistente (`:8000`)~~ ✅ (2026-07-03/04) — CRYPTEX se embebe en un `<iframe>` del kiosko; 2 fixes de cabeceras en `security.js` (`frameguard: false` + CORS `cb(null, false)`). Ver §Integración kiosko (iframe) y SESSION_STATE.md §19.
 - Deuda §6: **solo queda FVGs detallados** (tabla `analysis_fvg_snapshot`). S/R strength ✅, SuperTrend level ✅ (2026-07-03); `volume_history.vwap` ya resuelto por §12 (nota obsoleta). Todos son de *persistencia* (historial/backtesting), no de contexto al LLM.
 
 **API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa. **Modelo IA seleccionable desde el frontend** (desplegable en el header): Opus 4.8 (~$0.20, default) / Sonnet 5 (~$0.09) / Haiku 4.5 (~$0.04). Whitelist `ANALYSIS_MODELS` en `constants.js`; validado por `resolveModel`; persistido en localStorage; el modelo usado se guarda en `analyses.model_used` y se muestra en cada tarjeta del historial. `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
