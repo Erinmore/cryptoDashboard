@@ -175,7 +175,7 @@ async function runAnalysis() {
   // Feedback visible en el propio botón durante la espera (~40s): el análisis
   // tarda y el usuario clica arriba, así sabe que está en marcha sin depender
   // del panel de la barra lateral (que queda muy abajo).
-  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Analizando…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '&#x23F3;'; }
 
   showRecommendationLoading();
   try {
@@ -292,7 +292,22 @@ function init() {
   if (modelSel) {
     const saved = localStorage.getItem('cryptex_model');
     if (saved && [...modelSel.options].some(o => o.value === saved)) modelSel.value = saved;
-    modelSel.addEventListener('change', () => localStorage.setItem('cryptex_model', modelSel.value));
+
+    // El precio solo se ve con el desplegable abierto (ahorra ancho en el header):
+    // cerrado → solo el nombre; abierto → "Nombre · ~$X".
+    const showPrice = (on) => {
+      for (const o of modelSel.options) {
+        o.textContent = on ? `${o.dataset.name} · ${o.dataset.price}` : o.dataset.name;
+      }
+    };
+    showPrice(false);
+    modelSel.addEventListener('mousedown', () => showPrice(true));   // clic: a punto de abrir
+    modelSel.addEventListener('focus',     () => showPrice(true));   // teclado: a punto de abrir
+    modelSel.addEventListener('blur',      () => showPrice(false));  // cerrado
+    modelSel.addEventListener('change', () => {
+      showPrice(false);
+      localStorage.setItem('cryptex_model', modelSel.value);
+    });
   }
 
   // ── Selector de TF ───────────────────────────────────────────────

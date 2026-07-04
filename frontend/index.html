@@ -39,15 +39,15 @@
 
     <div class="header-right">
       <span id="timer-display" class="timer-display">60s</span>
-      <button id="btn-refresh" class="btn btn-secondary" title="Actualizar datos">&#x21BB; Actualizar</button>
-      <button id="btn-download" class="btn btn-secondary" title="Descargar payload + prompt del LLM">&#x2B07; Download data</button>
-      <button id="btn-history" class="btn btn-secondary" title="Historial de análisis IA">&#x1F551; Historial</button>
+      <button id="btn-refresh" class="btn btn-secondary btn-icon" title="Actualizar datos" aria-label="Actualizar datos">&#x21BB;</button>
+      <button id="btn-download" class="btn btn-secondary btn-icon" title="Descargar payload + prompt del LLM" aria-label="Descargar payload + prompt del LLM">&#x2B07;</button>
+      <button id="btn-history" class="btn btn-secondary btn-icon" title="Historial de análisis IA" aria-label="Historial de análisis IA">&#x1F551;</button>
       <select id="model-select" class="model-select" title="Modelo IA para el análisis (coste orientativo por análisis)">
-        <option value="claude-opus-4-8">Opus 4.8 · ~$0.20</option>
-        <option value="claude-sonnet-5">Sonnet 5 · ~$0.09</option>
-        <option value="claude-haiku-4-5">Haiku 4.5 · ~$0.04</option>
+        <option value="claude-opus-4-8" data-name="Opus 4.8" data-price="~$0.20">Opus 4.8</option>
+        <option value="claude-sonnet-5" data-name="Sonnet 5" data-price="~$0.09">Sonnet 5</option>
+        <option value="claude-haiku-4-5" data-name="Haiku 4.5" data-price="~$0.04">Haiku 4.5</option>
       </select>
-      <button id="btn-analyze" class="btn btn-primary" title="Análisis IA">&#x26A1; Analizar</button>
+      <button id="btn-analyze" class="btn btn-primary btn-icon" title="Análisis IA" aria-label="Análisis IA">&#x26A1;</button>
     </div>
   </header>
 

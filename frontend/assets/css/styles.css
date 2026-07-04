@@ -194,6 +194,13 @@ html, body {
   border-color: var(--accent);
 }
 
+/* Botones solo-icono — cuadrados, para ahorrar ancho en el header */
+.btn-icon {
+  padding: 5px var(--sp-lg);
+  font-size: var(--fs-2xl);
+  line-height: 1;
+}
+
 /* Desplegable de modelo IA — mismo lenguaje visual que .btn-secondary */
 .model-select {
   background: var(--bg-card);
