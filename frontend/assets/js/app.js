@@ -61,11 +61,10 @@ function updateUI(state) {
 
 // ── Helpers TF buttons ─────────────────────────────────────────────
 
-/** Marca el botón de TF activo en el DOM. */
+/** Sincroniza el desplegable de TF con el TF activo. */
 function syncTfButtons(tf) {
-  document.querySelectorAll('.tf-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tf === tf);
-  });
+  const sel = document.getElementById('tf-select');
+  if (sel) sel.value = tf;
 }
 
 // ── Helpers panel recomendación ────────────────────────────────────
@@ -297,16 +296,14 @@ function init() {
   }
 
   // ── Selector de TF ───────────────────────────────────────────────
-  document.querySelectorAll('.tf-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const newTf = btn.dataset.tf;
-      syncTfButtons(newTf);
-      setState({ tf: newTf, viewport: null });
-      // Persistir tf para la coin actual
-      saveCoinState(getState().coin, { tf: newTf });
-      loadData();
-      timer.reset();
-    });
+  document.getElementById('tf-select')?.addEventListener('change', (e) => {
+    const newTf = e.target.value;
+    syncTfButtons(newTf);
+    setState({ tf: newTf, viewport: null });
+    // Persistir tf para la coin actual
+    saveCoinState(getState().coin, { tf: newTf });
+    loadData();
+    timer.reset();
   });
 
   // ── Selector de moneda ───────────────────────────────────────────

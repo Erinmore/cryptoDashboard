@@ -139,22 +139,6 @@ html, body {
 }
 .coin-select:hover { border-color: var(--accent); }
 
-.tf-buttons { display: flex; gap: 4px; }
-
-.tf-btn {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  padding: 3px 10px;
-  border-radius: var(--radius-md);
-  font-family: inherit;
-  font-size: var(--fs-lg);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.tf-btn:hover    { border-color: var(--accent); color: var(--text-primary); }
-.tf-btn.active   { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
-
 .price-display {
   font-size: var(--fs-3xl);
   font-weight: 400;
