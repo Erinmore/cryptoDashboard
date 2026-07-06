@@ -535,8 +535,10 @@ function fmtSigned(v) {
  * Renderiza el panel de Análisis IA a partir del schema nuevo.
  * @param {{ structured: object, narrative?: object }|object} rec
  *   Acepta `{ structured, narrative }` o el propio `structured` directo.
+ * @param {string} [timestamp] — ISO del análisis; si falta se usa la hora actual
+ *   (compat: al lanzar un análisis nuevo desde este navegador es "ahora").
  */
-export function updateRecommendation(rec) {
+export function updateRecommendation(rec, timestamp = null) {
   hideEl('recommendation-loading');
   hideEl('recommendation-empty');
 
@@ -601,11 +603,11 @@ export function updateRecommendation(rec) {
     if (bits.length) addAlert('info', bits.join(' · '));
   }
 
-  // Timestamp
+  // Timestamp (el del análisis si se conoce; si no, la hora actual)
   const tsEl = $('rec-timestamp');
   if (tsEl) {
-    const now = new Date();
-    tsEl.textContent = `Análisis a las ${now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`;
+    const when = timestamp ? new Date(timestamp) : new Date();
+    tsEl.textContent = `Análisis a las ${when.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`;
   }
 }
 

@@ -12,6 +12,17 @@ import logger from '../middleware/logger.js';
 
 import { COINALYZE_SYMBOLS } from '../config/constants.js';
 
+/** Parsea `ai_response_full` (JSON string) a {structured, narrative}; null si falta o es inválido. */
+function parseAiResponseFull(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.structured ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 
 export async function getData(req, res, next) {
   const start = Date.now();
@@ -125,6 +136,10 @@ export async function getData(req, res, next) {
         timestamp: lastAnalysisRow.timestamp,
         action: lastAnalysisRow.action,
         confidence: lastAnalysisRow.confidence,
+        // Análisis completo {structured, narrative} para hidratar el panel "Análisis IA"
+        // en cualquier dispositivo (el panel rico vivía solo en localStorage del navegador
+        // que lo lanzó → no se veía en la Pi). Se parsea aquí; null si falta o no parsea.
+        full: parseAiResponseFull(lastAnalysisRow.ai_response_full),
       } : null,
       binance_walls: resolve(binanceWalls),
       binance_ticker: resolve(binanceTicker),

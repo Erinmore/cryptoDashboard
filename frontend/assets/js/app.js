@@ -70,12 +70,18 @@ function syncTfButtons(tf) {
 // ── Helpers panel recomendación ────────────────────────────────────
 
 /**
- * Muestra el panel de recomendación con `rec` si existe, o el estado vacío.
+ * Muestra el panel de recomendación IA. Prefiere el último análisis persistido en
+ * el servidor (`state.lastAnalysis.full`) sobre el de localStorage `localRec`, para
+ * que el panel se vea igual en cualquier dispositivo (antes vivía solo en el
+ * localStorage del navegador que lanzó el análisis → no aparecía en la Pi).
  * No emite llamadas a la API — solo actualiza el DOM.
  */
-function restoreRecommendationPanel(rec) {
-  if (rec) {
-    updateRecommendation(rec);
+function restoreRecommendationPanel(localRec) {
+  const serverLast = getState().lastAnalysis;
+  if (serverLast?.full?.structured) {
+    updateRecommendation(serverLast.full, serverLast.timestamp);
+  } else if (localRec) {
+    updateRecommendation(localRec);
   } else {
     hideRecommendationLoading();
   }
@@ -363,9 +369,11 @@ function init() {
 
     saveLastCoin(newCoin);
     syncTfButtons(newTf);
+    // Instantáneo con lo persistido en local; tras cargar datos se re-hidrata con el
+    // último análisis del servidor (state.lastAnalysis.full) para esta moneda.
     restoreRecommendationPanel(savedRec);
 
-    loadData();
+    loadData().then(() => restoreRecommendationPanel(savedRec));
     timer.reset();
   });
 
