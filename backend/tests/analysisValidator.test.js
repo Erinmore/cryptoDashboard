@@ -97,6 +97,38 @@ describe('validateAnalysis — gating', () => {
   });
 });
 
+describe('validateAnalysis — conviction decay (>=3 contradicciones)', () => {
+  const rulesWith = (structured, count) =>
+    validateAnalysis(structured, { backendContradictionCount: count }).warnings.map(w => w.rule);
+
+  test('backendContradictionCount>=3 con action!=Esperar → severe', () => {
+    const bad = base({ action: 'Comprar', scores: { derivatives: 2, structure: 1, volume: 1, onchain: 0, total: 1.3 } });
+    const { warnings, hasSevere } = validateAnalysis(bad, { backendContradictionCount: 3 });
+    expect(warnings.map(w => w.rule)).toContain('conviction_decay_forces_wait');
+    expect(hasSevere).toBe(true);
+  });
+
+  test('la 6ª contradicción (volume<0 & structure>0) cierra el conteo a 3', () => {
+    // backend cuenta 2; el LLM aporta la 6ª (volume<0 con structure>0) → total 3 → dispara.
+    const bad = base({ action: 'Comprar', scores: { derivatives: 1, structure: 1, volume: -1, onchain: 0, total: 0.5 } });
+    expect(rulesWith(bad, 2)).toContain('conviction_decay_forces_wait');
+  });
+
+  test('sin la 6ª, backend=2 no llega al umbral', () => {
+    const bad = base({ action: 'Comprar', scores: { derivatives: 1, structure: 1, volume: 1, onchain: 0, total: 1 } });
+    expect(rulesWith(bad, 2)).not.toContain('conviction_decay_forces_wait');
+  });
+
+  test('total>=3 pero action=Esperar → no dispara (ya cumple)', () => {
+    expect(rulesWith(base({ action: 'Esperar' }), 5)).not.toContain('conviction_decay_forces_wait');
+  });
+
+  test('sin opts (llamada de un solo arg) → nunca dispara decay', () => {
+    const bad = base({ action: 'Comprar', scores: { derivatives: 2, structure: 1, volume: 1, onchain: 0, total: 1.3 } });
+    expect(validateAnalysis(bad).warnings.map(w => w.rule)).not.toContain('conviction_decay_forces_wait');
+  });
+});
+
 describe('validateAnalysis — puertas Comprar/Vender', () => {
   test('Comprar sin derivatives>=+1 y volume>=+1 → severe buy_gate', () => {
     const bad = base({ action: 'Comprar', scores: { derivatives: 0, structure: 1, volume: 1, onchain: 0, total: 0.6 } });
@@ -206,5 +238,27 @@ describe('applyFailSafe — Fase 2 (degradar a Esperar ante violación severa)',
     applyFailSafe(bad, validateAnalysis(bad));
     expect(bad.action).toBe('Comprar');   // el original intacto
     expect(bad.fail_safe_applied).toBeUndefined();
+  });
+
+  test('missing_confirmations vacío → se rellena con el motivo (coherente con Esperar)', () => {
+    const bad = base({
+      action: 'Comprar',
+      scores: { derivatives: 0, structure: 1, volume: 1, onchain: 0, total: 0.6 },
+      missing_confirmations: [],  // el LLM dijo "setup ejecutable, no falta nada"
+    });
+    const { structured } = applyFailSafe(bad, validateAnalysis(bad));
+    expect(structured.action).toBe('Esperar');
+    expect(structured.missing_confirmations.length).toBeGreaterThan(0);
+    expect(structured.missing_confirmations[0]).toContain('buy_gate');
+  });
+
+  test('missing_confirmations no vacío → se respeta el del LLM', () => {
+    const bad = base({
+      action: 'Comprar',
+      scores: { derivatives: 0, structure: 1, volume: 1, onchain: 0, total: 0.6 },
+      missing_confirmations: ['expansión de Open Interest'],
+    });
+    const { structured } = applyFailSafe(bad, validateAnalysis(bad));
+    expect(structured.missing_confirmations).toEqual(['expansión de Open Interest']);
   });
 });

@@ -145,7 +145,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       a.score_derivatives, a.score_structure, a.score_volume, a.score_onchain, a.score_total,
       a.primary_driver,
       a.has_executable_setup, a.gating_active, a.gating_reason,
-      a.contradictions_found, a.contradiction_count,
+      a.contradictions_found, a.contradiction_count, a.contradiction_codes,
       a.setup_entry_price, a.setup_stop_price, a.setup_tp1_price,
 
       a.tf_conflict, a.macro_regime,

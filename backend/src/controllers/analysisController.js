@@ -11,7 +11,7 @@ import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
 import { getHistories } from '../services/historyService.js';
 import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js';
-import { validateAnalysis, applyFailSafe } from '../services/analysisValidator.js';
+import { applyDecisionGates } from '../services/decisionGates.js';
 import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
 import { computeVetos, computeContradictions } from '../utils/gating.js';
@@ -740,8 +740,8 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     conviction:           structured.conviction ?? null,
     primary_driver:       structured.primary_driver ?? null,
     has_executable_setup: structured.has_executable_setup ? 1 : 0,
-    // El veto del backend ya se impuso sobre `structured` en runAnalysis (antes de validar),
-    // así que aquí basta con persistir el flag tal cual — ya es autoritativo.
+    // El veto del backend ya se impuso sobre `structured` en applyDecisionGates (antes de
+    // validar), así que aquí basta con persistir el flag tal cual — ya es autoritativo.
     gating_active:        structured.gating_active ? 1 : 0,
     gating_reason:        structured.gating_reason ?? null,
     contradictions_found: structured.contradictions_found ? 1 : 0,
@@ -893,36 +893,26 @@ export async function analyze(req, res, next) {
     // whitelist (ANALYSIS_MODELS) y cae al default si no es válido.
     const { structured: rawStructured, narrative, ai_metadata } = await analyzeMarket(context, model);
 
-    // El veto del backend (HARD GATING determinista) es autoritativo sobre el output del
-    // LLM: si el backend vetó el trade, imponemos gating_active=true ANTES de validar. Así
-    // el validador dispara `gating_forces_wait` si el LLM desobedeció (action != Esperar) y
-    // el fail-safe degrada la acción — el hard gate no depende del cumplimiento del LLM.
-    if (context.gating?.veto_long || context.gating?.veto_short) {
-      rawStructured.gating_active = true;
-      rawStructured.gating_reason = rawStructured.gating_reason ?? context.gating.veto_reason ?? null;
-    }
-
-    // Validación determinista del output (§6.4). Fase 1: log + persistencia de todas las
-    // violaciones de reglas duras del prompt (telemetría). Se valida SIEMPRE el output crudo.
-    const validation = validateAnalysis(rawStructured);
+    // Puertas de decisión sobre el output crudo (§6.4 + HARD GATING). Los hard gates del
+    // backend (veto determinista + conviction decay >=3) fuerzan Esperar SIEMPRE; las demás
+    // violaciones de reglas del prompt degradan solo con el fail-safe activo (flag de
+    // observación). Ver services/decisionGates.js.
+    const { structured, validation, degraded } = applyDecisionGates(
+      rawStructured,
+      context.gating,
+      env.analysisFailsafeEnabled,
+    );
     if (validation.warnings.length > 0) {
       logger.warn(
         { coin, action: rawStructured.action, hasSevere: validation.hasSevere, warnings: validation.warnings },
         'POST /api/analyze — output del LLM viola reglas del prompt',
       );
     }
-
-    // Fase 2: fail-safe — ante violación SEVERA degradar a Esperar (si está habilitado).
-    let structured = rawStructured;
-    if (env.analysisFailsafeEnabled) {
-      const failSafe = applyFailSafe(rawStructured, validation);
-      structured = failSafe.structured;
-      if (failSafe.applied) {
-        logger.warn(
-          { coin, original_action: rawStructured.action, rules: structured.fail_safe_rules },
-          'POST /api/analyze — FAIL-SAFE aplicado: acción degradada a Esperar',
-        );
-      }
+    if (degraded) {
+      logger.warn(
+        { coin, original_action: rawStructured.action, rules: structured.fail_safe_rules },
+        'POST /api/analyze — FAIL-SAFE aplicado: acción degradada a Esperar',
+      );
     }
 
     const processingMs = Date.now() - start;

@@ -171,17 +171,22 @@ export function computeContradictions({ technical, openInterest, primaryTf }) {
 
   // 6. Señal SMC estructural principal ausente / fuera del umbral táctico del TF primario.
   //    No basta con que exista un BOS/CHoCH: debe estar "active" (dentro del umbral
-  //    táctico). Una señal null (el backend la descartó por antigua) o con
-  //    signal_status="context" (dentro de la ventana de contexto pero fuera de la
-  //    táctica) NO cuenta como confirmación estructural activa → contradicción.
-  const smc = pTf?.smc ?? null;
-  if (smc) {
+  //    táctico). Casos que NO cuentan como confirmación estructural activa → contradicción:
+  //      - smc === null (no hay BOS/CHoCH/FVG alguno): el caso MÁS fuerte de "sin estructura".
+  //      - señal descartada por antigua (last_bos/choch === null).
+  //      - señal con signal_status="context" (en la ventana de contexto, fuera de la táctica).
+  //    Se gatea por pTf (no por smc): si smc es null la contradicción SÍ debe contar; el guard
+  //    anterior (`if (smc)`) la omitía justo en el caso extremo, invirtiendo la intención.
+  if (pTf) {
+    const smc = pTf.smc ?? null;
     const hasActiveStructure =
-      smc.last_bos?.signal_status === 'active' || smc.last_choch?.signal_status === 'active';
+      smc?.last_bos?.signal_status === 'active' || smc?.last_choch?.signal_status === 'active';
     if (!hasActiveStructure) {
       contradictions.push({
         code: 'no_active_smc_structure',
-        detail: `sin BOS/CHoCH "active" (dentro del umbral táctico) en ${primaryTf}`,
+        detail: smc
+          ? `sin BOS/CHoCH "active" (dentro del umbral táctico) en ${primaryTf}`
+          : `sin estructura SMC (BOS/CHoCH/FVG) en ${primaryTf}`,
       });
     }
   }

@@ -244,6 +244,17 @@ describe('computeContradictions', () => {
     expect(r.contradictions.map((c) => c.code)).not.toContain('no_active_smc_structure');
   });
 
+  test('smc === null (sin BOS/CHoCH/FVG) SÍ cuenta como contradicción estructural', () => {
+    const ctx = fiveContradictions();
+    // Caso extremo: no hay estructura SMC alguna. Es el "sin estructura activa" más fuerte;
+    // el guard anterior (`if (smc)`) lo omitía justo aquí, invirtiendo la intención.
+    ctx.technical['4h'].smc = null;
+    const r = computeContradictions(ctx);
+    const struct = r.contradictions.find((c) => c.code === 'no_active_smc_structure');
+    expect(struct).toBeDefined();
+    expect(struct.detail).toContain('sin estructura SMC');
+  });
+
   test('OI ausente no cuenta como contradicción (dato faltante ≠ OI cayendo)', () => {
     const ctx = fiveContradictions();
     ctx.openInterest = null;

@@ -31,9 +31,13 @@ const inRange  = (v, lo, hi) => isNum(v) && v >= lo && v <= hi;
 /**
  * Valida el objeto `structured` de un análisis contra las reglas del prompt.
  * @param {object} structured
+ * @param {{ backendContradictionCount?: number }} [opts]
+ *   backendContradictionCount: contradicciones deterministas precalculadas por el backend
+ *   (5 de 6 del CONVICTION DECAY, ver utils/gating.js). Se le suma aquí la 6ª (que depende
+ *   de los scores del LLM) para cerrar el conteo y decidir si dispara `conviction_decay_forces_wait`.
  * @returns {{ warnings: Array<{rule:string, severity:'severe'|'minor', message:string}>, hasSevere: boolean }}
  */
-export function validateAnalysis(structured) {
+export function validateAnalysis(structured, opts = {}) {
   const warnings = [];
   const warn = (rule, severity, message) => warnings.push({ rule, severity, message });
 
@@ -78,6 +82,19 @@ export function validateAnalysis(structured) {
   // ── Gating: gating_active=true ⟹ action="Esperar" ─────────────────────────
   if (gating_active === true && action !== 'Esperar') {
     warn('gating_forces_wait', 'severe', `gating_active=true pero action="${action}" (debería ser Esperar)`);
+  }
+
+  // ── Conviction decay: >=3 contradicciones ⟹ action="Esperar" ──────────────
+  // El backend precalcula 5 de las 6 contradicciones del CONVICTION DECAY; la 6ª
+  // (Volume Flow Score negativo con Structure Score positivo) depende de los scores
+  // del LLM, que aquí sí tenemos → se cierra el conteo determinista. El prompt exige
+  // ESPERAR con total >=3; esta regla lo hace cumplir (severa → candidata a fail-safe).
+  const sixthContradiction = isInt(s.volume) && isInt(s.structure) && s.volume < 0 && s.structure > 0;
+  const contradictionTotal =
+    (isInt(opts.backendContradictionCount) ? opts.backendContradictionCount : 0) + (sixthContradiction ? 1 : 0);
+  if (contradictionTotal >= 3 && action !== 'Esperar') {
+    warn('conviction_decay_forces_wait', 'severe',
+      `contradiction_count=${contradictionTotal} (>=3) exige Esperar pero action="${action}"`);
   }
 
   // ── Puertas de Comprar / Vender ───────────────────────────────────────────
@@ -164,12 +181,21 @@ export function applyFailSafe(structured, validation) {
   const note = `[FAIL-SAFE] Acción degradada a Esperar por violación de reglas duras del prompt `
     + `(${severeRules.join(', ')}). Output original del LLM: action="${structured.action}".`;
 
+  // Coherencia de missing_confirmations: un Esperar forzado NO es un setup ejecutable, así que
+  // un array vacío ("no falta nada para operar") contradiría la acción. Si el LLM lo dejó vacío,
+  // lo poblamos con el motivo del bloqueo; si ya traía confirmaciones pendientes, se respetan.
+  const existingMissing = Array.isArray(structured.missing_confirmations) ? structured.missing_confirmations : [];
+  const missing_confirmations = existingMissing.length > 0
+    ? existingMissing
+    : [`Trade bloqueado por el backend (${severeRules.join(', ')}); no ejecutar hasta que se resuelva.`];
+
   const patched = {
     ...structured,
     action: 'Esperar',
     // Un Esperar forzado no ejecuta: se neutraliza el setup para no dejar niveles activos.
     has_executable_setup: false,
     setup: null,
+    missing_confirmations,
     fail_safe_applied: true,
     fail_safe_original_action: structured.action ?? null,
     fail_safe_rules: severeRules,
