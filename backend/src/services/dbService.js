@@ -31,6 +31,7 @@ export function saveAnalysis(data) {
       tf_conflict,
       action, confidence, risk_score, conviction, primary_driver,
       has_executable_setup, gating_active, gating_reason, contradictions_found, missing_confirmations,
+      contradiction_count, contradiction_codes,
       score_derivatives, score_structure, score_volume, score_onchain, score_total,
       setup_entry_price, setup_stop_price, setup_tp1_price, setup_tp2_price,
       setup_validity_candles, setup_tf_execution,
@@ -51,6 +52,7 @@ export function saveAnalysis(data) {
       @tf_conflict,
       @action, @confidence, @risk_score, @conviction, @primary_driver,
       @has_executable_setup, @gating_active, @gating_reason, @contradictions_found, @missing_confirmations,
+      @contradiction_count, @contradiction_codes,
       @score_derivatives, @score_structure, @score_volume, @score_onchain, @score_total,
       @setup_entry_price, @setup_stop_price, @setup_tp1_price, @setup_tp2_price,
       @setup_validity_candles, @setup_tf_execution,
@@ -143,6 +145,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       a.score_derivatives, a.score_structure, a.score_volume, a.score_onchain, a.score_total,
       a.primary_driver,
       a.has_executable_setup, a.gating_active, a.gating_reason,
+      a.contradictions_found, a.contradiction_count,
       a.setup_entry_price, a.setup_stop_price, a.setup_tp1_price,
 
       a.tf_conflict, a.macro_regime,

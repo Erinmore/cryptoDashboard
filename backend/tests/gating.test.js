@@ -219,7 +219,7 @@ describe('computeContradictions', () => {
         '4h': {
           distance_to_nearest_support_pct: 5,
           distance_to_nearest_resistance_pct: 6,
-          smc: { last_bos: { direction: 'bull' }, last_choch: null },
+          smc: { last_bos: { direction: 'bull', signal_status: 'active' }, last_choch: null },
         },
       },
       openInterest: { change_24h_pct: 3 },
@@ -227,6 +227,21 @@ describe('computeContradictions', () => {
     });
     expect(r.contradiction_count).toBe(0);
     expect(r.contradictions).toEqual([]);
+  });
+
+  test('BOS con signal_status="context" (fuera del umbral táctico) cuenta como contradicción', () => {
+    const ctx = fiveContradictions();
+    // Existe estructura pero solo de contexto, no táctica → sigue faltando confirmación activa.
+    ctx.technical['4h'].smc = { last_bos: { signal_status: 'context' }, last_choch: null };
+    const r = computeContradictions(ctx);
+    expect(r.contradictions.map((c) => c.code)).toContain('no_active_smc_structure');
+  });
+
+  test('BOS con signal_status="active" suprime la contradicción estructural', () => {
+    const ctx = fiveContradictions();
+    ctx.technical['4h'].smc = { last_bos: { signal_status: 'active' }, last_choch: null };
+    const r = computeContradictions(ctx);
+    expect(r.contradictions.map((c) => c.code)).not.toContain('no_active_smc_structure');
   });
 
   test('OI ausente no cuenta como contradicción (dato faltante ≠ OI cayendo)', () => {

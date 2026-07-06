@@ -687,6 +687,12 @@ describe('POST /api/analyze', () => {
       'expansión de Open Interest',
       'confirmación de ruptura con volumen',
     ]);
+
+    // contradiction_count del backend (determinista) vuelve en el historial, separado
+    // del contradictions_found booleano del LLM.
+    expect(entry).toHaveProperty('contradiction_count');
+    expect(typeof entry.contradiction_count).toBe('number');
+    expect(entry).toHaveProperty('contradictions_found');
   });
 });
 

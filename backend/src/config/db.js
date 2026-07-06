@@ -129,6 +129,10 @@ function runMigrations(db) {
       gating_reason TEXT,
       contradictions_found INTEGER,
       missing_confirmations TEXT,
+      -- Contradicciones deterministas del backend (utils/gating.js), separadas del
+      -- booleano contradictions_found del LLM → permite comparar backend vs LLM.
+      contradiction_count INTEGER,
+      contradiction_codes TEXT,
 
       -- LLM internal scores
       score_derivatives INTEGER,
@@ -303,6 +307,10 @@ function runMigrations(db) {
   ensureColumn(db, 'analyses', 'validation_warnings', 'TEXT');
   // missing_confirmations: array JSON de confirmaciones ausentes (por qué no se opera).
   ensureColumn(db, 'analyses', 'missing_confirmations', 'TEXT');
+  // Contradicciones deterministas del backend (conteo + códigos JSON) — telemetría
+  // vs el contradictions_found booleano que reporta el LLM.
+  ensureColumn(db, 'analyses', 'contradiction_count', 'INTEGER');
+  ensureColumn(db, 'analyses', 'contradiction_codes', 'TEXT');
   // S/R strength del nivel más cercano (antes solo se persistía la distancia %).
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_support_strength', 'INTEGER');
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_resistance_strength', 'INTEGER');

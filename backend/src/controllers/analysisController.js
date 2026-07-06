@@ -675,7 +675,6 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
   const etf   = context.etf_flows ?? null;
   const ob    = context.order_book ?? null;
   const setup = structured.setup ?? null;
-  const backendVeto = context.gating?.veto_long || context.gating?.veto_short || false;
 
   return {
     id,
@@ -741,13 +740,19 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     conviction:           structured.conviction ?? null,
     primary_driver:       structured.primary_driver ?? null,
     has_executable_setup: structured.has_executable_setup ? 1 : 0,
-    // El veto del backend es autoritativo: si está activo, gating_active se persiste
-    // como true aunque el LLM no lo haya reflejado (garantiza el hard gate determinista).
-    gating_active:        (structured.gating_active || backendVeto) ? 1 : 0,
-    gating_reason:        structured.gating_reason ?? (backendVeto ? context.gating.veto_reason : null),
+    // El veto del backend ya se impuso sobre `structured` en runAnalysis (antes de validar),
+    // así que aquí basta con persistir el flag tal cual — ya es autoritativo.
+    gating_active:        structured.gating_active ? 1 : 0,
+    gating_reason:        structured.gating_reason ?? null,
     contradictions_found: structured.contradictions_found ? 1 : 0,
     missing_confirmations: Array.isArray(structured.missing_confirmations) && structured.missing_confirmations.length > 0
       ? JSON.stringify(structured.missing_confirmations)
+      : null,
+    // Contradicciones deterministas del backend (utils/gating.js) — telemetría separada
+    // del booleano contradictions_found del LLM. Persistimos conteo + códigos.
+    contradiction_count: context.gating?.contradiction_count ?? null,
+    contradiction_codes: Array.isArray(context.gating?.contradictions) && context.gating.contradictions.length > 0
+      ? JSON.stringify(context.gating.contradictions.map((c) => c.code))
       : null,
 
     score_derivatives: structured.scores?.derivatives ?? null,
@@ -887,6 +892,15 @@ export async function analyze(req, res, next) {
     // `model` viene del desplegable del frontend; analyzeMarket lo valida contra la
     // whitelist (ANALYSIS_MODELS) y cae al default si no es válido.
     const { structured: rawStructured, narrative, ai_metadata } = await analyzeMarket(context, model);
+
+    // El veto del backend (HARD GATING determinista) es autoritativo sobre el output del
+    // LLM: si el backend vetó el trade, imponemos gating_active=true ANTES de validar. Así
+    // el validador dispara `gating_forces_wait` si el LLM desobedeció (action != Esperar) y
+    // el fail-safe degrada la acción — el hard gate no depende del cumplimiento del LLM.
+    if (context.gating?.veto_long || context.gating?.veto_short) {
+      rawStructured.gating_active = true;
+      rawStructured.gating_reason = rawStructured.gating_reason ?? context.gating.veto_reason ?? null;
+    }
 
     // Validación determinista del output (§6.4). Fase 1: log + persistencia de todas las
     // violaciones de reglas duras del prompt (telemetría). Se valida SIEMPRE el output crudo.
