@@ -16,13 +16,14 @@ import {
   detectRSIDivergence,
   detectMarketRegime,
 } from '../src/utils/indicators.js';
-import { computeTrend } from '../src/services/indicatorService.js';
+import { computeTrend, computeIndicators } from '../src/services/indicatorService.js';
 import { calculateVolumeProfile } from '../src/utils/volumeProfile.js';
 import {
   detectSwings,
   detectLastBOS,
   detectLastCHoCH,
   detectUnmitigatedFVGs,
+  calculateSMC,
 } from '../src/utils/smc.js';
 
 // ─── RSI ──────────────────────────────────────────────────────────────────────
@@ -986,6 +987,84 @@ describe('SMC — detectUnmitigatedFVGs', () => {
     const fvgs = detectUnmitigatedFVGs(candles);
     expect(fvgs.bullish.length).toBe(1);
     expect(fvgs.bullish[0].mitigation_pct).toBe(75); // 3/4 del gap cubierto
+  });
+});
+
+describe('SMC — calculateSMC signal_status (decay precalculado)', () => {
+  // Gap bullish [100,102] en idx 2, mitigation 0, seguido de velas que no lo mitigan
+  // (low siempre >= 102). Length=10 → el FVG queda con candles_ago = 10-1-2 = 7.
+  const unmitigatedGap = [
+    { t: 0, open: 99,  high: 100, low: 98,  close: 99.5, volume: 100 },
+    { t: 1, open: 100, high: 105, low: 100, close: 104,  volume: 100 },
+    { t: 2, open: 104, high: 106, low: 102, close: 105,  volume: 100 }, // FVG idx 2
+    { t: 3, open: 105, high: 107, low: 103, close: 106,  volume: 100 },
+    { t: 4, open: 106, high: 108, low: 104, close: 107,  volume: 100 },
+    { t: 5, open: 107, high: 109, low: 105, close: 108,  volume: 100 },
+    { t: 6, open: 108, high: 110, low: 106, close: 109,  volume: 100 },
+    { t: 7, open: 109, high: 111, low: 107, close: 110,  volume: 100 },
+    { t: 8, open: 110, high: 112, low: 108, close: 111,  volume: 100 },
+    { t: 9, open: 111, high: 113, low: 109, close: 112,  volume: 100 },
+  ];
+
+  test('sin timeframe → FVG reciente sin mitigar cuenta como "active"', () => {
+    const smc = calculateSMC(unmitigatedGap);
+    const fvg = smc.unmitigated_fvgs.bullish[0];
+    expect(fvg.mitigation_pct).toBe(0);
+    expect(fvg.signal_status).toBe('active'); // activeMax=Infinity sin timeframe
+  });
+
+  test('timeframe 4h → mismo FVG con candles_ago=7 (>4) degrada a "context"', () => {
+    const smc = calculateSMC(unmitigatedGap, { timeframe: '4h' });
+    const fvg = smc.unmitigated_fvgs.bullish[0];
+    expect(fvg.candles_ago).toBe(7);
+    expect(fvg.signal_status).toBe('context');
+  });
+
+  test('FVG con mitigation_pct > 70 → "expired" independientemente del TF', () => {
+    // Gap [100,104]; vela 3 con low=101 cubre 3/4 → 75% > 70. Pad a length 10.
+    const partiallyMitigated = [
+      { t: 0, open: 99,  high: 100, low: 98,  close: 99.5, volume: 100 },
+      { t: 1, open: 100, high: 106, low: 100, close: 105,  volume: 100 },
+      { t: 2, open: 105, high: 108, low: 104, close: 107,  volume: 100 }, // FVG [100,104]
+      { t: 3, open: 107, high: 109, low: 101, close: 108,  volume: 100 }, // mitiga 75%
+      { t: 4, open: 108, high: 110, low: 106, close: 109,  volume: 100 },
+      { t: 5, open: 109, high: 111, low: 107, close: 110,  volume: 100 },
+      { t: 6, open: 110, high: 112, low: 108, close: 111,  volume: 100 },
+      { t: 7, open: 111, high: 113, low: 109, close: 112,  volume: 100 },
+      { t: 8, open: 112, high: 114, low: 110, close: 113,  volume: 100 },
+      { t: 9, open: 113, high: 115, low: 111, close: 114,  volume: 100 },
+    ];
+    const smc = calculateSMC(partiallyMitigated, { timeframe: '4h' });
+    const fvg = smc.unmitigated_fvgs.bullish[0];
+    expect(fvg.mitigation_pct).toBe(75);
+    expect(fvg.signal_status).toBe('expired');
+  });
+});
+
+describe('computeIndicators — flags precalculados baratos (Fase 5)', () => {
+  // Serie alcista sintética suficiente para todos los indicadores (>=30 velas).
+  const rising = Array.from({ length: 60 }, (_, i) => {
+    const base = 100 + i;
+    return { t: i * 3600000, open: base, high: base + 1.5, low: base - 0.5, close: base + 1, volume: 1000 + i * 10 };
+  });
+
+  test('cvd trae cvd_strength (marginal/moderate/strong)', () => {
+    const ind = computeIndicators(rising, '1h');
+    expect(ind.cvd).toHaveProperty('cvd_strength');
+    expect(['marginal', 'moderate', 'strong']).toContain(ind.cvd.cvd_strength);
+  });
+
+  test('vwap trae price_vs_vwap; en tendencia alcista el precio queda above', () => {
+    const ind = computeIndicators(rising, '1h');
+    expect(ind.vwap).toHaveProperty('price_vs_vwap');
+    expect(ind.vwap.price_vs_vwap).toBe('above'); // precio por encima del VWAP rolling en subida
+  });
+
+  test('volume_profile trae price_vs_poc y excursion', () => {
+    const ind = computeIndicators(rising, '1h');
+    expect(ind.volume_profile).toHaveProperty('price_vs_poc');
+    expect(['above', 'below', 'at']).toContain(ind.volume_profile.price_vs_poc);
+    expect(ind.volume_profile).toHaveProperty('excursion'); // null o above_vah/below_val
   });
 });
 

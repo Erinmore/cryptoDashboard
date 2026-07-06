@@ -307,6 +307,32 @@ const MAX_CANDLES_AGO_BY_TF = {
   '1W': 6,
 };
 
+// Sub-umbral "activa": dentro de él la señal es táctica (puede ser trigger); entre
+// él y MAX_CANDLES_AGO_BY_TF es solo contexto. Alinea con la tabla de decay del
+// SYSTEM_PROMPT — antes el LLM la aplicaba a mano; ahora se precalcula (signal_status).
+const ACTIVE_CANDLES_AGO_BY_TF = {
+  '1h': 6,
+  '4h': 4,
+  '1D': 3,
+  '1W': 2,
+};
+
+// FVG: se degrada por mitigación además de por antigüedad (regla FVG del prompt).
+const FVG_MITIGATION_EXPIRED = 70; // mitigation_pct > 70 → sin fuerza magnética
+const FVG_MITIGATION_ACTIVE = 40;  // < 40 + dentro de umbral → peso completo
+
+/** Estado de una señal BOS/CHoCH según su antigüedad. */
+function bosChochStatus(candlesAgo, activeMax) {
+  return candlesAgo <= activeMax ? 'active' : 'context';
+}
+
+/** Estado de un FVG combinando mitigación y antigüedad (regla FVG del SYSTEM_PROMPT). */
+function fvgStatus(fvg, activeMax) {
+  if (fvg.mitigation_pct > FVG_MITIGATION_EXPIRED) return 'expired';
+  if (fvg.candles_ago <= activeMax && fvg.mitigation_pct < FVG_MITIGATION_ACTIVE) return 'active';
+  return 'context';
+}
+
 /**
  * Helper de alto nivel: empaqueta last_bos, last_choch y unmitigated_fvgs en
  * un solo objeto. Devuelve null si no hay datos suficientes para ningún cálculo.
@@ -326,6 +352,10 @@ export function calculateSMC(candles, opts = {}) {
   const maxCandlesAgo = opts.timeframe
     ? (MAX_CANDLES_AGO_BY_TF[opts.timeframe] ?? Infinity)
     : Infinity;
+  // Sin timeframe (tests legacy) → activeMax=Infinity: todo cuenta como 'active'.
+  const activeMax = opts.timeframe
+    ? (ACTIVE_CANDLES_AGO_BY_TF[opts.timeframe] ?? Infinity)
+    : Infinity;
 
   const smcOpts = { lookback: opts.lookback ?? 2, maxCandlesAgo };
 
@@ -334,14 +364,23 @@ export function calculateSMC(candles, opts = {}) {
   const fvgs       = detectUnmitigatedFVGs(candles, opts);
   if (!last_bos && !last_choch && !fvgs) return null;
 
-  const addCandlesAgo = (event) => {
+  // Anota candles_ago + signal_status precalculado (active/context) para que el LLM
+  // no aplique la tabla de decay a mano.
+  const annotateEvent = (event) => {
     if (!event) return null;
-    return { ...event, candles_ago: candles.length - 1 - event.break_candle_idx };
+    const candles_ago = candles.length - 1 - event.break_candle_idx;
+    return { ...event, candles_ago, signal_status: bosChochStatus(candles_ago, activeMax) };
   };
 
+  // FVGs: signal_status combina mitigación y antigüedad (active/context/expired).
+  const annotateFvgs = (fvgList) =>
+    (fvgList ?? []).map((f) => ({ ...f, signal_status: fvgStatus(f, activeMax) }));
+
   return {
-    last_bos:         addCandlesAgo(last_bos),
-    last_choch:       addCandlesAgo(last_choch),
-    unmitigated_fvgs: fvgs,
+    last_bos:         annotateEvent(last_bos),
+    last_choch:       annotateEvent(last_choch),
+    unmitigated_fvgs: fvgs
+      ? { bullish: annotateFvgs(fvgs.bullish), bearish: annotateFvgs(fvgs.bearish) }
+      : fvgs,
   };
 }

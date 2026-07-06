@@ -128,6 +128,7 @@ function runMigrations(db) {
       gating_active INTEGER,
       gating_reason TEXT,
       contradictions_found INTEGER,
+      missing_confirmations TEXT,
 
       -- LLM internal scores
       score_derivatives INTEGER,
@@ -300,6 +301,8 @@ function runMigrations(db) {
   // no la añade a una tabla ya existente, así que la incorporamos con ALTER TABLE.
   // Las BBDD nuevas ya la traen del CREATE de arriba (el ensureColumn es no-op).
   ensureColumn(db, 'analyses', 'validation_warnings', 'TEXT');
+  // missing_confirmations: array JSON de confirmaciones ausentes (por qué no se opera).
+  ensureColumn(db, 'analyses', 'missing_confirmations', 'TEXT');
   // S/R strength del nivel más cercano (antes solo se persistía la distancia %).
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_support_strength', 'INTEGER');
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_resistance_strength', 'INTEGER');

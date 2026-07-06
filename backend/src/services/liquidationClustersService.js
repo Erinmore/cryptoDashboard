@@ -138,11 +138,18 @@ export async function fetchLiquidationClusters(coin) {
       }
     }
 
+    // Zona magnética activa: cluster en la banda 1%-3% del precio (regla F5 del prompt,
+    // precalculada para que el LLM lea el flag en vez de comparar rangos a ojo).
+    const inBand = (pct, lo, hi) => pct != null && pct >= lo && pct <= hi;
     const result = {
       long_clusters,
       short_clusters,
       nearest_long_cluster_pct,
       nearest_short_cluster_pct,
+      // longs en riesgo (imán bajista): cluster long a -1%..-3% por debajo del precio.
+      magnetic_long_zone_active: inBand(nearest_long_cluster_pct, -3, -1),
+      // shorts en riesgo (imán alcista): cluster short a +1%..+3% por encima del precio.
+      magnetic_short_zone_active: inBand(nearest_short_cluster_pct, 1, 3),
       source: 'coinalyze_inferred',
     };
 

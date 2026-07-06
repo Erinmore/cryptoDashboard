@@ -30,7 +30,7 @@ export function saveAnalysis(data) {
       ob_imbalance_ratio, ob_imbalance_top5_ratio, ob_imbalance_signal,
       tf_conflict,
       action, confidence, risk_score, conviction, primary_driver,
-      has_executable_setup, gating_active, gating_reason, contradictions_found,
+      has_executable_setup, gating_active, gating_reason, contradictions_found, missing_confirmations,
       score_derivatives, score_structure, score_volume, score_onchain, score_total,
       setup_entry_price, setup_stop_price, setup_tp1_price, setup_tp2_price,
       setup_validity_candles, setup_tf_execution,
@@ -50,7 +50,7 @@ export function saveAnalysis(data) {
       @ob_imbalance_ratio, @ob_imbalance_top5_ratio, @ob_imbalance_signal,
       @tf_conflict,
       @action, @confidence, @risk_score, @conviction, @primary_driver,
-      @has_executable_setup, @gating_active, @gating_reason, @contradictions_found,
+      @has_executable_setup, @gating_active, @gating_reason, @contradictions_found, @missing_confirmations,
       @score_derivatives, @score_structure, @score_volume, @score_onchain, @score_total,
       @setup_entry_price, @setup_stop_price, @setup_tp1_price, @setup_tp2_price,
       @setup_validity_candles, @setup_tf_execution,
@@ -146,7 +146,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       a.setup_entry_price, a.setup_stop_price, a.setup_tp1_price,
 
       a.tf_conflict, a.macro_regime,
-      a.executive_summary, a.validation_warnings,
+      a.executive_summary, a.validation_warnings, a.missing_confirmations,
 
       -- Resultado a posteriori (analysis_outcome), null si aún no evaluado
       o.outcome_1h, o.outcome_24h, o.outcome_7d,

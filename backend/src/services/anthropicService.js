@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v5_3_tf_naming_unified';
+export const PROMPT_VERSION = 'v6_0_backend_gating';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -111,20 +111,20 @@ reducir convicción de la señal direccional.
 
 FUNDING SEVERITY RULE
 
-Un funding rate > 0.05% (cada 8h) — campo severity="elevated" o superior — es una alerta de riesgo de squeeze que pesa MÁS que cualquier indicador técnico aislado.
+El campo funding_rate.severity ya viene clasificado por el backend. Un funding cargado (severity="elevated" o superior) es una alerta de riesgo de squeeze que pesa MÁS que cualquier indicador técnico aislado. Interpreta el flag, no recalcules umbrales:
 
-severity="extreme" (> 0.5%): riesgo de liquidation cascade inmediato. Reducir tamaño de posición a mínimo o no entrar.
-severity="high" (> 0.2%): coste de carry agresivo. Los longs deben tener catalizador muy claro para justificar entrada.
-severity="elevated" (> 0.05%): mercado cargado. Usar como filtro de riesgo adicional.
-severity="normal" (<= 0.05%): sin impacto diferencial en el score.
+severity="extreme": riesgo de liquidation cascade inmediato. Reducir tamaño de posición a mínimo o no entrar.
+severity="high": coste de carry agresivo. Los longs deben tener catalizador muy claro para justificar entrada.
+severity="elevated": mercado cargado. Usar como filtro de riesgo adicional.
+severity="normal": sin impacto diferencial en el score.
 
 FUNDING NEGATIVO — SEVERITY RULE (señal de short squeeze)
 
-Un funding rate negativo indica que los shorts están pagando a los longs — señal de que el mercado está cargado de posiciones cortas. Cuando es extremo, la probabilidad de un short squeeze aumenta si aparece un trigger de ruptura.
+Un funding rate negativo indica que los shorts están pagando a los longs — señal de que el mercado está cargado de posiciones cortas. Cuando es extremo, la probabilidad de un short squeeze aumenta si aparece un trigger de ruptura. El campo funding_rate.severity_negative ya viene clasificado:
 
-severity_negative="elevated_short_overload" (< -0.05%): mercado cargado de shorts. Usar como filtro de contexto. Sin impacto directo en el score.
-severity_negative="high_short_overload" (< -0.2%): coste de carry agresivo para shorts. Señal de squeeze potencial si existe trigger. Añadir +1 al Derivatives Score.
-severity_negative="extreme_short_overload" (< -0.5%): squeeze de shorts estadísticamente probable si existe trigger de ruptura. Añadir +2 al Derivatives Score. Reducir convicción SHORT a mínimo — abrir short con funding extremo negativo implica pagar un coste de carry insostenible.
+severity_negative="elevated_short_overload": mercado cargado de shorts. Usar como filtro de contexto. Sin impacto directo en el score.
+severity_negative="high_short_overload": coste de carry agresivo para shorts. Señal de squeeze potencial si existe trigger. Añadir +1 al Derivatives Score.
+severity_negative="extreme_short_overload": squeeze de shorts estadísticamente probable si existe trigger de ruptura. Añadir +2 al Derivatives Score. Reducir convicción SHORT a mínimo — abrir short con funding extremo negativo implica pagar un coste de carry insostenible.
 
 REGLA: Si funding negativo extremo persiste sin expansión de OI ni trigger de ruptura, mantener el score pero no ejecutar — el squeeze puede tardar o no materializarse.
 
@@ -203,15 +203,13 @@ Precio ↓ + CVD ↓ (alineación): CAPITULACIÓN / DISTRIBUCIÓN AGRESIVA. Vend
 
 El campo source="taker_real" indica datos reales de Binance klines — máxima confianza. source="heuristic" = estimación — reducir convicción un nivel.
 
-MAGNITUD DEL CVD — campo cvd_delta_vs_volume_pct:
+MAGNITUD DEL CVD — campo cvd_strength (precalculado):
 
-El campo trend ("rising"/"falling") da la dirección, pero cvd_delta_vs_volume_pct da la FUERZA: es el delta neto comprador/vendedor de la ventana de divergencia expresado como % del volumen total de esa ventana. Úsalo así:
+El campo trend ("rising"/"falling") da la dirección; cvd_strength da la FUERZA del desequilibrio comprador/vendedor de la ventana (ya bucketizado por el backend desde cvd_delta_vs_volume_pct):
 
-|cvd_delta_vs_volume_pct| < 2%: presión neta marginal. La dirección del CVD es ruido de fondo, no aporta convicción al Volume Flow Score aunque trend sea "rising"/"falling".
-|cvd_delta_vs_volume_pct| entre 2% y 8%: presión neta moderada. Confirma la dirección del CVD con peso normal.
-|cvd_delta_vs_volume_pct| > 8%: presión neta fuerte (absorción o agresión marcada). Refuerza la lectura de absorción/agresión de arriba en un nivel.
-
-No interpretes este campo como un porcentaje de cambio de precio ni de volumen total del activo — es exclusivamente la magnitud del desequilibrio comprador-vendedor dentro de la ventana.
+cvd_strength="marginal": presión neta marginal. La dirección del CVD es ruido de fondo, no aporta convicción al Volume Flow Score aunque trend sea "rising"/"falling".
+cvd_strength="moderate": presión neta moderada. Confirma la dirección del CVD con peso normal.
+cvd_strength="strong": presión neta fuerte (absorción o agresión marcada). Refuerza la lectura de absorción/agresión de arriba en un nivel.
 
 B2. Order Book Imbalance (ajuste al Volume Flow Score)
 
@@ -221,9 +219,9 @@ CONVENCIÓN DEL RATIO: imbalance_ratio NO es un ratio bid/ask. Es la FRACCIÓN d
 
 Usa el campo categórico imbalance_signal (ya calculado con los umbrales correctos), no interpretes el ratio crudo a ojo:
 
-Si imbalance_signal = "buy_pressure" (imbalance_ratio > 0.60): sumar +0.5 al Volume Flow Score.
-Si imbalance_signal = "sell_pressure" (imbalance_ratio < 0.40): restar -0.5 al Volume Flow Score.
-Si imbalance_signal = "balanced" (imbalance_ratio entre 0.40 y 0.60): sin ajuste, aunque el ratio se aleje algo de 0.50.
+Si imbalance_signal = "buy_pressure": sumar +0.5 al Volume Flow Score.
+Si imbalance_signal = "sell_pressure": restar -0.5 al Volume Flow Score.
+Si imbalance_signal = "balanced": sin ajuste, aunque el ratio crudo se aleje algo de 0.50.
 
 El spread (spread_pct) indica liquidez: spread > 0.05% en BTC = mercado ilíquido, mayor riesgo de slippage.
 
@@ -236,17 +234,17 @@ vah / val — Value Area High/Low (70% del volumen). Precio dentro del value are
 hvn[] — High Volume Nodes: soportes/resistencias fuertes donde el precio tiende a frenar.
 lvn[] — Low Volume Nodes: zonas de poco interés; el precio las atraviesa rápido.
 
-Integración con Structure Score:
+Integración con Structure Score (usa el flag price_vs_poc de cada TF, ya calculado):
 
-Si el precio está por encima del POC del 1D y el 4h, añadir +0.5.
-Si el precio está por debajo del POC del 1D y el 4h, restar -0.5.
+Si price_vs_poc="above" en 1D y en 4h, añadir +0.5.
+Si price_vs_poc="below" en 1D y en 4h, restar -0.5.
 Usar HVN como niveles de invalidación y LVN como zonas de aceleración.
 
-REGLA DE EXCURSIÓN DE PRECIO (volume profile):
+REGLA DE EXCURSIÓN DE PRECIO (campo excursion del volume profile, precalculado):
 
-Si el precio está más de un 2% por encima del VAH del TF primario: marcar como excursión alcista. Reducir convicción de LONG un nivel. Añadir al Risk Score.
-Si el precio está más de un 2% por debajo del VAL del TF primario: marcar como excursión bajista. Reducir convicción de SHORT un nivel. Añadir al Risk Score.
-Si el POC del TF primario está más de un 5% alejado del precio actual (campo poc_distance_pct > 5 o valid=false): ese volume profile ya no representa el rango activo. Ignorarlo como referencia táctica y señalarlo explícitamente en el análisis.
+Si excursion="above_vah" en el TF primario (precio >2% sobre el VAH): excursión alcista. Reducir convicción de LONG un nivel. Añadir al Risk Score.
+Si excursion="below_val" en el TF primario (precio >2% bajo el VAL): excursión bajista. Reducir convicción de SHORT un nivel. Añadir al Risk Score.
+Si el volume profile del TF primario es inválido (valid=false, poc_distance_pct > 5): ese volume profile ya no representa el rango activo. Ignorarlo como referencia táctica y señalarlo explícitamente en el análisis.
 
 FALLBACK DE VOLUME PROFILE:
 
@@ -260,8 +258,8 @@ VWAP — REGLA DE CONTEXTO (no scoring directo):
 
 El VWAP refleja el precio promedio ponderado por volumen. No puntúa en ningún score, pero ajusta la convicción.
 
-Precio > VWAP 1D: confirma momentum alcista diario. Refuerza bias alcista si Structure Score >= +1.
-Precio < VWAP 1D: señal de debilidad estructural. Añade cautela a cualquier bias alcista.
+price_vs_vwap="above" en 1D: confirma momentum alcista diario. Refuerza bias alcista si Structure Score >= +1.
+price_vs_vwap="below" en 1D: señal de debilidad estructural. Añade cautela a cualquier bias alcista.
 VWAP divergence="bearish" en 1D con precio subiendo: bandera de advertencia equivalente a CVD 1D divergente. Reduce convicción LONG en 1 nivel.
 VWAP divergence="bullish" en 1D con precio cayendo: bandera de cautela para shorts.
 
@@ -343,11 +341,13 @@ Usa los campos "macro", "etf_flows" y "volatility" del dataset.
 
 F1. Macro (DXY / SPX / Gold):
 
-DXY trend_5d="rising" = presión bajista sobre cripto (dólar fuerte = risk-off).
-DXY trend_5d="falling" = viento de cola alcista para cripto.
-SPX trend_5d="rising" con DXY flat = entorno risk-on favorable.
-SPX trend_5d="falling" = reducir conviction alcista incluso si cripto muestra soporte.
-Gold trend_5d="rising" bruscamente = búsqueda de safe haven = contexto de estrés.
+El backend ya sintetiza el régimen macro en el campo macro.macro_regime (con macro.macro_regime_basis explicando en qué trends se basa). Usa el flag como señal primaria de contexto risk-on/risk-off, no recalcules el régimen a partir de los trends individuales:
+
+macro_regime="risk_on": entorno favorable para cripto (dólar débil / bolsa fuerte). Permite mantener conviction alcista.
+macro_regime="risk_off": presión sobre cripto (dólar fuerte / bolsa débil). Reducir conviction alcista incluso si cripto muestra soporte.
+macro_regime="mixed": sin sesgo macro claro. Neutral.
+
+Matices secundarios (solo para afinar el relato, ya incorporados en el régimen): DXY trend_5d="rising" = dólar fuerte = risk-off; Gold trend_5d="rising" bruscamente = búsqueda de safe haven = contexto de estrés.
 
 F2. ETF Flows (solo BTC y ETH spot ETF):
 
@@ -386,44 +386,24 @@ F4. SMC — Smart Money Concepts
 
 Usa technical[tf].smc por timeframe.
 
-NORMALIZACIÓN TEMPORAL DE SEÑALES SMC (aplicar antes de interpretar cualquier señal):
+DECAY DE SEÑALES SMC — ya precalculado por el backend (campo signal_status):
 
-Las señales SMC tienen vida útil limitada. Aplicar la siguiente tabla de decay según el TF:
+Cada señal SMC (last_bos, last_choch) y cada FVG traen signal_status. NO apliques tablas de antigüedad a mano; interpreta el flag:
+- signal_status="active": señal táctica. Peso completo. Puede ser trigger.
+- signal_status="context": peso reducido. No es trigger de ejecución, solo contexto.
+- signal_status="expired" (solo FVGs, mitigation_pct > 70): sin fuerza magnética. Ignorar.
 
-Para el TF primario (4h por defecto):
-- candles_ago 0-4: señal táctica activa. Peso completo. Puede ser trigger.
-- candles_ago 5-12: señal de contexto. Peso reducido. No es trigger de ejecución.
-- candles_ago > 12: ignorar como señal de ejecución. Solo referencia histórica.
+Las señales demasiado antiguas ya vienen como null (el backend las descarta): su ausencia = sin confirmación estructural activa.
 
-Para 1D:
-- candles_ago 0-3: señal táctica activa. Peso completo.
-- candles_ago 4-9: señal de contexto. Peso reducido.
-- candles_ago > 9: ignorar como señal de ejecución.
+Un CHoCH con signal_status="active" invalida un BOS con signal_status="context", aunque apunten en la misma dirección. Prioriza siempre la señal más reciente que esté "active".
 
-Para 1h:
-- candles_ago 0-6: señal táctica activa.
-- candles_ago 7-18: contexto.
-- candles_ago > 18: ignorar.
+Interpretación:
 
-Para 1W:
-- candles_ago 0-2: señal táctica activa.
-- candles_ago 3-6: contexto.
-- candles_ago > 6: ignorar.
-
-Para FVGs específicamente:
-- mitigation_pct > 70: ignorar. Sin fuerza magnética relevante.
-- mitigation_pct 40-70 + candles_ago fuera del umbral táctico del TF: degradar a contexto débil.
-- mitigation_pct < 40 + candles_ago dentro del umbral táctico: peso completo.
-
-Un CHoCH reciente dentro del umbral táctico invalida un BOS antiguo fuera del umbral, aunque apunten en la misma dirección. Priorizar siempre la señal más reciente que esté dentro del umbral táctico de su TF.
-
-Interpretación (después de aplicar decay):
-
-Usar last_bos y last_choch como confirmación primaria de cambio estructural, solo si están dentro del umbral táctico de su TF.
-Si last_choch.direction contradice last_bos.direction y ambos están dentro del umbral: priorizar CHoCH.
-Si last_bos y last_choch apuntan en la misma dirección y ambos están dentro del umbral: estructura confirmada, mayor conviction.
-unmitigated_fvgs[] dentro del umbral táctico y con mitigation_pct < 40: actúan como imanes de precio. FVGs bullish = soporte potencial. FVGs bearish = resistencia potencial.
-Un FVG cerca del precio actual (< 2%) pesa más que uno lejano, siempre que esté dentro del umbral temporal.
+Usar last_bos y last_choch como confirmación primaria de cambio estructural, solo si signal_status="active".
+Si last_choch.direction contradice last_bos.direction y ambos están "active": priorizar CHoCH.
+Si last_bos y last_choch apuntan en la misma dirección y ambos "active": estructura confirmada, mayor conviction.
+unmitigated_fvgs[] con signal_status="active": actúan como imanes de precio. FVGs bullish = soporte potencial. FVGs bearish = resistencia potencial.
+Un FVG cerca del precio actual (< 2%) pesa más que uno lejano, siempre que esté "active".
 
 BOS POST-RETROCESO — REGLA DE CONFIRMACIÓN:
 
@@ -448,27 +428,22 @@ Si last_choch.direction ≠ last_bos.direction Y last_bos.candles_ago < last_cho
 
 F5. Liquidation Clusters:
 
-Usa derivatives.liquidation_clusters.
-Si nearest_long_cluster_pct está entre -1% y -3%: zona magnética bajista activa (longs en riesgo).
-Si nearest_short_cluster_pct está entre +1% y +3%: zona magnética alcista activa (shorts en riesgo).
+Usa derivatives.liquidation_clusters (flags precalculados):
+magnetic_long_zone_active=true: zona magnética bajista activa (cluster de longs a -1%..-3%, longs en riesgo).
+magnetic_short_zone_active=true: zona magnética alcista activa (cluster de shorts a +1%..+3%, shorts en riesgo).
 Usar estos niveles como zonas de aceleración potencial, no como targets directos.
 source="coinalyze_inferred": es un proxy basado en liquidaciones históricas, no datos de CoinGlass en tiempo real.
 
-HARD GATING — VETOS DE TRADE (evaluar después de los scores, antes del output)
+HARD GATING — VETOS DE TRADE (ya precalculados por el backend)
 
-Estas condiciones son binarias. No se ponderan. No se razonan alrededor. Si se cumplen, el trade queda vetado independientemente de cualquier score positivo.
+El backend evalúa los vetos de forma determinista y los entrega en el bloque gating del dataset. NO recalcules las condiciones ni los umbrales: obedece los flags.
 
-VETO LONG — se activa si se cumplen los tres simultáneamente:
-1. CVD 1D con divergence="bearish" (precio sube, CVD 1D cae)
-2. open_interest.change_24h_pct < +1% (OI no está expandiendo)
-3. precio dentro del 1.5% de una resistencia con 3 o más toques
+gating.veto_long=true: prohibido recomendar COMPRAR. El output es ESPERAR.
+gating.veto_short=true: prohibido recomendar VENDER. El output es ESPERAR.
 
-VETO SHORT — se activa si se cumplen los tres simultáneamente:
-1. CVD 1D con divergence="bullish" (precio cae, CVD 1D sube)
-2. funding_rate.severity = "normal" o rate negativo
-3. precio dentro del 1.5% de un soporte con 3 o más toques
+Estos vetos son binarios y no se ponderan: se activan independientemente de cualquier score positivo. El campo gating.veto_reason explica qué disparó el veto (CVD 1D en divergencia + OI sin expandir + precio pegado a una S/R fuerte del TF primario con 3+ toques); gating.conditions desglosa cada condición.
 
-Si se activa cualquier veto: el output es ESPERAR. Indicar explícitamente qué condición de veto se ha activado y qué tendría que cambiar para que el veto se levante.
+Cuando un veto esté activo: pon gating_active=true y refleja el motivo en gating_reason del output, y explica en el análisis qué tendría que cambiar para que el veto se levante.
 
 DECISION ENGINE (NO MOSTRAR AL USUARIO)
 
@@ -566,14 +541,19 @@ no ejecutar compra.
 
 CONVICTION DECAY — PENALIZACIÓN POR CONTRADICCIONES
 
-Cada contradicción relevante reduce la convicción global. Si se acumulan tres o más de las siguientes condiciones, la convicción cae a nivel donde no se permite trade y el output es ESPERAR:
+El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[] (con gating.contradiction_count). Cubren:
+- CVD 1D en divergencia con el precio
+- OI plano o cayendo (change_24h_pct < 0)
+- Resistencia o soporte relevante a menos del 1.5% (TF primario)
+- Conflicto entre 1W y 1D (tendencias opuestas)
+- Señal SMC estructural principal ausente / fuera del umbral táctico del TF primario
 
-CVD 1D en divergencia con el precio
-OI plano o cayendo (change_24h_pct < 0)
-Resistencia o soporte relevante a menos del 1.5%
-Conflicto entre 1W y 1D (tendencias opuestas)
-Volume Flow Score negativo con Structure Score positivo
-Señal SMC principal fuera del umbral táctico de su TF
+Añade UNA contradicción más al conteo si aplica según tus scores internos (el backend no la puede conocer):
+- Volume Flow Score negativo con Structure Score positivo
+
+Si el total (gating.contradiction_count + la sexta si aplica) es 3 o más, la convicción cae a nivel donde no se permite trade y el output es ESPERAR.
+
+En el campo missing_confirmations[] del output, lista en lenguaje claro qué confirmaciones faltan para poder operar (p. ej. "expansión de Open Interest", "confirmación de ruptura con volumen", "alineación 1W/1D"). Es la explicación legible y accionable de por qué NO se toma el trade. Array vacío si el setup es plenamente ejecutable.
 
 DATA INTERPRETATION RULES
 
@@ -704,6 +684,7 @@ El JSON debe tener exactamente esta estructura:
     "gating_active": <true|false>,
     "gating_reason": "<string o null>",
     "contradictions_found": <true|false>,
+    "missing_confirmations": [<string>, ...],
     "scores": {
       "derivatives": <-2|-1|0|1|2>,
       "structure": <-2|-1|0|1|2>,
@@ -738,6 +719,7 @@ Reglas de validación del JSON:
 - conviction debe ser un número entre 0.0 y 1.0
 - Todos los campos de scores deben ser enteros entre -2 y +2
 - setup es null si no hay setup ejecutable (has_executable_setup=false)
+- missing_confirmations es un array de strings (vacío si el setup es plenamente ejecutable)
 - executive_summary máximo 2 frases, sin saltos de línea
 - Los campos de narrative son strings con el análisis completo (pueden ser párrafos largos)
 

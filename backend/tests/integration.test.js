@@ -154,6 +154,7 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
       gating_active:        false,
       gating_reason:        null,
       contradictions_found: true,
+      missing_confirmations: ['expansión de Open Interest', 'confirmación de ruptura con volumen'],
       scores: { derivatives: 0, structure: -1, volume: 0, onchain: 0, total: -0.2 },
       setup:            null,
       executive_summary: 'Señales contradictorias entre derivados y estructura. Sin setup ejecutable en este momento.',
@@ -168,7 +169,7 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
     },
     ai_metadata: {
       model:          'stub',
-      prompt_version: 'v5_3_tf_naming_unified',
+      prompt_version: 'v6_0_backend_gating',
       input_tokens:   0,
       output_tokens:  0,
     },
@@ -177,11 +178,11 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
   buildLlmRequest: jest.fn((ctx) => ({
     model: 'claude-sonnet-5',
     max_tokens: 4096,
-    prompt_version: 'v5_3_tf_naming_unified',
+    prompt_version: 'v6_0_backend_gating',
     system: 'stub system prompt',
     messages: [{ role: 'user', content: 'stub prompt' }],
   })),
-  PROMPT_VERSION: 'v5_3_tf_naming_unified',
+  PROMPT_VERSION: 'v6_0_backend_gating',
 }));
 
 // ─── Import app AND mocked modules AFTER mocks are in place ──────────────────
@@ -366,7 +367,7 @@ describe('GET /api/analyze/payload', () => {
     const requiredKeys = [
       'coin', 'primary_tf', 'price_current', 'price_change_24h_pct',
       'global_market', 'coin_market', 'sentiment', 'technical',
-      'timeframe_analysis', 'derivatives', 'onchain', 'etf_flows',
+      'timeframe_analysis', 'gating', 'derivatives', 'onchain', 'etf_flows',
       'macro', 'volatility', 'order_book', 'volume_history',
     ];
     for (const key of requiredKeys) {
@@ -374,12 +375,23 @@ describe('GET /api/analyze/payload', () => {
     }
   });
 
+  test('payload.gating exposes precomputed veto flags', async () => {
+    const res = await request.get('/api/analyze/payload?coin=BTC&primary_tf=4h');
+    const g = res.body.payload.gating;
+    expect(g).toHaveProperty('veto_long');
+    expect(g).toHaveProperty('veto_short');
+    expect(g).toHaveProperty('veto_reason');
+    expect(typeof g.veto_long).toBe('boolean');
+    expect(typeof g.veto_short).toBe('boolean');
+    expect(g.conditions.sr_timeframe).toBe('4h');
+  });
+
   test('response includes llm_request with system prompt + user message', async () => {
     const res = await request.get('/api/analyze/payload?coin=BTC&primary_tf=4h');
     expect(res.status).toBe(200);
     expect(res.body.llm_request).toBeDefined();
     expect(res.body.llm_request.system).toEqual(expect.any(String));
-    expect(res.body.llm_request.prompt_version).toBe('v5_3_tf_naming_unified');
+    expect(res.body.llm_request.prompt_version).toBe('v6_0_backend_gating');
     expect(Array.isArray(res.body.llm_request.messages)).toBe(true);
     expect(res.body.llm_request.messages[0].role).toBe('user');
   });
@@ -583,7 +595,7 @@ describe('POST /api/analyze', () => {
 
     // ai_metadata
     expect(res.body.ai_metadata).toBeDefined();
-    expect(res.body.ai_metadata.prompt_version).toBe('v5_3_tf_naming_unified');
+    expect(res.body.ai_metadata.prompt_version).toBe('v6_0_backend_gating');
   });
 
   test('fail-safe: Comprar sin puerta se degrada a Esperar (§6.4 Fase 2)', async () => {
@@ -607,7 +619,7 @@ describe('POST /api/analyze', () => {
         smart_money_read: 'x', divergences_anomalies: 'x', tactical_setup: 'x',
         risk_analysis: 'x', recommendation_detail: 'x', invalidation: 'x',
       },
-      ai_metadata: { model: 'stub', prompt_version: 'v5_3_tf_naming_unified', input_tokens: 0, output_tokens: 0 },
+      ai_metadata: { model: 'stub', prompt_version: 'v6_0_backend_gating', input_tokens: 0, output_tokens: 0 },
     });
 
     const res = await request.post('/api/analyze').send({ coin: 'BTC', primary_tf: '4h' });
@@ -668,6 +680,13 @@ describe('POST /api/analyze', () => {
     expect(entry).toHaveProperty('confidence');
     expect(entry).toHaveProperty('executive_summary');
     expect(entry.action).toBe('Esperar');
+
+    // missing_confirmations se persiste como JSON string y vuelve en el historial.
+    expect(entry).toHaveProperty('missing_confirmations');
+    expect(JSON.parse(entry.missing_confirmations)).toEqual([
+      'expansión de Open Interest',
+      'confirmación de ruptura con volumen',
+    ]);
   });
 });
 

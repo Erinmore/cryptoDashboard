@@ -14,6 +14,7 @@ import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js'
 import { validateAnalysis, applyFailSafe } from '../services/analysisValidator.js';
 import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
+import { computeVetos, computeContradictions } from '../utils/gating.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
 // CVD/VWAP se persisten y pueden tener huecos tras un apagado prolongado; un salto mayor
@@ -492,6 +493,25 @@ async function buildAnalyzeContext(coin, primaryTf) {
         : null,
   };
 
+  // HARD GATING determinista: los vetos de trade se precalculan aquí (utils/gating.js)
+  // en vez de dejar que el LLM recomponga el AND de tres condiciones con umbrales de %.
+  // El LLM recibe los flags en el bloque `gating` y solo obedece. S/R del TF primario.
+  const gating = {
+    ...computeVetos({
+      technical,
+      openInterest: oi ? { change_24h_pct: oi.change_24h_pct } : null,
+      funding: fr ? { severity: fr.severity, rate_pct: fr.rate_pct } : null,
+      currentPrice,
+      primaryTf,
+    }),
+    // Contradicciones deterministas del CONVICTION DECAY (5 de 6; el LLM suma la 6ª).
+    ...computeContradictions({
+      technical,
+      openInterest: oi ? { change_24h_pct: oi.change_24h_pct } : null,
+      primaryTf,
+    }),
+  };
+
   // D22: fuente del precio de referencia
   const priceSource = 'binance_spot';
   const priceTimestampUtc = new Date().toISOString();
@@ -567,6 +587,8 @@ async function buildAnalyzeContext(coin, primaryTf) {
     technical,
 
     timeframe_analysis: tfConflicts,
+
+    gating,
 
     derivatives: {
       funding_rate: fr ? {
@@ -653,6 +675,7 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
   const etf   = context.etf_flows ?? null;
   const ob    = context.order_book ?? null;
   const setup = structured.setup ?? null;
+  const backendVeto = context.gating?.veto_long || context.gating?.veto_short || false;
 
   return {
     id,
@@ -718,9 +741,14 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     conviction:           structured.conviction ?? null,
     primary_driver:       structured.primary_driver ?? null,
     has_executable_setup: structured.has_executable_setup ? 1 : 0,
-    gating_active:        structured.gating_active ? 1 : 0,
-    gating_reason:        structured.gating_reason ?? null,
+    // El veto del backend es autoritativo: si está activo, gating_active se persiste
+    // como true aunque el LLM no lo haya reflejado (garantiza el hard gate determinista).
+    gating_active:        (structured.gating_active || backendVeto) ? 1 : 0,
+    gating_reason:        structured.gating_reason ?? (backendVeto ? context.gating.veto_reason : null),
     contradictions_found: structured.contradictions_found ? 1 : 0,
+    missing_confirmations: Array.isArray(structured.missing_confirmations) && structured.missing_confirmations.length > 0
+      ? JSON.stringify(structured.missing_confirmations)
+      : null,
 
     score_derivatives: structured.scores?.derivatives ?? null,
     score_structure:   structured.scores?.structure ?? null,
