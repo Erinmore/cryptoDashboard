@@ -144,6 +144,27 @@ export function validateAnalysis(structured, opts = {}) {
     warn('setup_missing', 'minor', 'has_executable_setup=true pero setup es null');
   }
 
+  // ── Cotas de sanidad del setup (H6) — minor, alimentan fill-rate/telemetría ─
+  // No degradan la acción, pero marcan setups mal calibrados (entradas lejanas, R:R pobre)
+  // que en el backtest tienden a quedar 'not_triggered' y escapar de la evaluación.
+  if (hasSetup) {
+    const { entry_price, stop_price, tp1_price } = setup;
+    const price = opts.currentPrice;
+    if (isNum(entry_price) && isNum(price) && price > 0) {
+      const entryDistPct = Math.abs(entry_price - price) / price * 100;
+      if (entryDistPct > 8) {
+        warn('setup_entry_far', 'minor', `entry=${entry_price} a ${entryDistPct.toFixed(1)}% del precio ${price} (poco probable de llenarse)`);
+      }
+    }
+    if (isNum(entry_price) && isNum(stop_price) && isNum(tp1_price) && entry_price !== stop_price) {
+      const risk = Math.abs(entry_price - stop_price);
+      const reward = Math.abs(tp1_price - entry_price);
+      if (risk > 0 && reward / risk < 1) {
+        warn('setup_low_rr', 'minor', `R:R tp1/stop = ${(reward / risk).toFixed(2)} (<1: riesgo mayor que recompensa)`);
+      }
+    }
+  }
+
   // ── Dirección del setup coherente con la acción ───────────────────────────
   if (hasSetup) {
     const { entry_price, stop_price, tp1_price } = setup;

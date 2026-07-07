@@ -189,6 +189,39 @@ describe('validateAnalysis — signo de scores.total', () => {
   });
 });
 
+describe('validateAnalysis — cotas de sanidad del setup (H6, minor)', () => {
+  test('entry lejos del precio → setup_entry_far', () => {
+    const far = base({
+      action: 'Comprar', has_executable_setup: true,
+      scores: { derivatives: 2, structure: 1, volume: 1, onchain: 0, total: 1.3 },
+      setup: { entry_price: 120, stop_price: 115, tp1_price: 130, tp2_price: 140 },
+    });
+    // precio 100, entry 120 → 20% de distancia.
+    const w = validateAnalysis(far, { currentPrice: 100 }).warnings.map((x) => x.rule);
+    expect(w).toContain('setup_entry_far');
+  });
+
+  test('R:R < 1 → setup_low_rr', () => {
+    const poor = base({
+      action: 'Comprar', has_executable_setup: true,
+      scores: { derivatives: 2, structure: 1, volume: 1, onchain: 0, total: 1.3 },
+      setup: { entry_price: 100, stop_price: 90, tp1_price: 103, tp2_price: 106 }, // risk 10, reward 3
+    });
+    expect(validateAnalysis(poor, { currentPrice: 100 }).warnings.map((x) => x.rule)).toContain('setup_low_rr');
+  });
+
+  test('setup bien calibrado → sin warnings de sanidad', () => {
+    const w = validateAnalysis(buyValid, { currentPrice: 100 }).warnings.map((x) => x.rule);
+    expect(w).not.toContain('setup_entry_far');
+    expect(w).not.toContain('setup_low_rr');
+  });
+
+  test('sin currentPrice no evalúa distancia de entrada (retrocompatible)', () => {
+    const w = validateAnalysis(buyValid).warnings.map((x) => x.rule);
+    expect(w).not.toContain('setup_entry_far');
+  });
+});
+
 describe('applyFailSafe — Fase 2 (degradar a Esperar ante violación severa)', () => {
   test('sin violación severa no altera el structured', () => {
     const s = base();

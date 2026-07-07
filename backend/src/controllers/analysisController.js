@@ -960,6 +960,7 @@ export async function analyze(req, res, next) {
       env.analysisFailsafeEnabled,
       env.gatingFailClosedOnMissing,
       context.expected_scores,
+      context.price_current,
     );
     if (validation.warnings.length > 0) {
       logger.warn(

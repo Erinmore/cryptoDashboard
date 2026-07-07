@@ -732,6 +732,15 @@ describe('GET /api/outcome/stats', () => {
     expect(res.body.stats).toBeDefined();
     expect(res.body.stats).toHaveProperty('total_evaluated');
     expect(res.body.stats).toHaveProperty('win_rate_24h');
+    // Fase 4 (C5/H6): integridad estadística.
+    expect(res.body.stats).toHaveProperty('directional_n');
+    expect(res.body.stats).toHaveProperty('sample_insufficient');
+    expect(res.body.stats).toHaveProperty('win_rate_ci_low');
+    expect(res.body.stats).toHaveProperty('win_rate_ci_high');
+    expect(res.body.stats).toHaveProperty('setup_fill_rate');
+    expect(res.body.stats).toHaveProperty('min_directional_sample');
+    expect(Array.isArray(res.body.stats.by_primary_tf)).toBe(true);
+    expect(Array.isArray(res.body.stats.by_model)).toBe(true);
   });
 
   test('filtra por coin válida', async () => {

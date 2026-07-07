@@ -27,7 +27,7 @@ import { validateAnalysis, applyFailSafe } from './analysisValidator.js';
  * @param {boolean} [failClosedOnMissing=true] - `env.gatingFailClosedOnMissing` (H2).
  * @returns {{ structured: object, validation: object, degraded: boolean, hardGate: boolean }}
  */
-export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failClosedOnMissing = true, expectedScores = null) {
+export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failClosedOnMissing = true, expectedScores = null, currentPrice = null) {
   const vetoActive = !!(gating?.veto_long || gating?.veto_short);
   // H2 · Fail-closed: datos críticos ausentes bloquean trades DIRECCIONALES (Comprar/Vender).
   // No bloquea Preparar/Esperar (no abren posición inmediata). Es un hard gate del backend.
@@ -47,6 +47,7 @@ export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failC
   const validation = validateAnalysis(rawStructured, {
     backendContradictionCount: gating?.contradiction_count ?? 0,
     expectedScores,
+    currentPrice,
   });
 
   const vetoTriggered = vetoActive && rawStructured.action !== 'Esperar';

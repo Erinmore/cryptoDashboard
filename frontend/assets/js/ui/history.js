@@ -250,14 +250,21 @@ function renderStats(s) {
   };
 
   metric('Evaluados', String(s.total_evaluated));
-  metric('Win-rate 24h',
-    s.win_rate_24h != null ? `${s.win_rate_24h}%` : '—',
-    s.win_rate_24h == null ? '' : s.win_rate_24h >= 50 ? 'win' : 'loss');
+  // C5: sin muestra direccional suficiente, el win-rate no es concluyente → se dice
+  // explícitamente en vez de mostrar un % engañoso. Con muestra, se acompaña del IC 95%.
+  if (s.sample_insufficient) {
+    metric('Win-rate 24h',
+      `muestra insuf. (${s.directional_n ?? 0}/${s.min_directional_sample ?? 20})`, '');
+  } else {
+    metric('Win-rate 24h', `${s.win_rate_24h}%`, s.win_rate_24h >= 50 ? 'win' : 'loss');
+    metric('IC 95% (Wilson)', `${s.win_rate_ci_low}–${s.win_rate_ci_high}%`);
+  }
   metric('PnL medio 24h',
     s.avg_pnl_pct_24h != null ? fmtSignedPct(s.avg_pnl_pct_24h) : '—',
     s.avg_pnl_pct_24h == null ? '' : s.avg_pnl_pct_24h >= 0 ? 'win' : 'loss');
-  metric('W / L 24h', `${s.win_24h ?? 0} / ${s.loss_24h ?? 0}`);
+  metric('W / L 24h (n=' + (s.directional_n ?? 0) + ')', `${s.win_24h ?? 0} / ${s.loss_24h ?? 0}`);
   metric('Setups TP / Stop', `${s.setup_tp ?? 0} / ${s.setup_stop ?? 0}`);
+  if (s.setup_fill_rate != null) metric('Setup fill-rate', `${s.setup_fill_rate}%`);
 
   box.appendChild(grid);
   return box;

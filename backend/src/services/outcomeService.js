@@ -33,7 +33,20 @@ let timer = null;
 async function processAnalysis(a, now) {
   const tMs = new Date(a.timestamp).getTime();
   if (Number.isNaN(tMs)) return false;
-  const priceAt = a.price_current;
+
+  // M2 · Baseline anclado a la MISMA fuente de klines que los precios de horizonte.
+  // El `price_current` persistido viene del ticker spot (CoinGecko) → mezclar fuentes
+  // introduce un sesgo sistemático en outcome/pnl. Se ancla al close de la vela de 1m del
+  // instante del análisis (una vez; se reutiliza en ciclos siguientes). Fallback: price_current.
+  let priceAt = a.price_at_analysis;
+  if (priceAt == null) {
+    try {
+      priceAt = await fetchHistoricalClose(a.coin, tMs);
+    } catch (err) {
+      logger.warn({ id: a.id, err: err.message }, 'outcomeJob: fallo baseline kline');
+    }
+    if (priceAt == null) priceAt = a.price_current;
+  }
 
   const out = { analysis_id: a.id, price_at_analysis: priceAt };
 

@@ -1,5 +1,6 @@
 import { getDb } from '../config/db.js';
 import { MAX_ANALYSES_STORED } from '../config/constants.js';
+import { wilsonInterval } from '../utils/stats.js';
 
 // ─── Save analysis (4-table transaction) ──────────────────────────────────────
 
@@ -200,6 +201,7 @@ export function getAnalysesNeedingOutcome(olderThanMs, limit = 100) {
     SELECT a.id, a.coin, a.timestamp, a.price_current, a.action,
            a.has_executable_setup, a.setup_entry_price, a.setup_stop_price,
            a.setup_tp1_price, a.setup_tp2_price,
+           o.price_at_analysis,
            o.price_1h_later, o.price_4h_later, o.price_24h_later, o.price_7d_later,
            o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop, o.setup_outcome
     FROM analyses a
@@ -254,31 +256,78 @@ export function upsertOutcome(o) {
   });
 }
 
+// Muestra mínima para reportar un win-rate como no-ruido (auditoría C5). Por debajo, el
+// IC de Wilson es tan ancho que la cifra puntual no informa → se marca insuficiente.
+const MIN_DIRECTIONAL_SAMPLE = 20;
+
+// Columnas de agregación de outcome (sin el SELECT ni el FROM — reutilizables para
+// consultas globales y segmentadas por TF/modelo).
+const OUTCOME_AGG_COLS = `
+    COUNT(*)                                                    AS total_evaluated,
+    SUM(CASE WHEN o.outcome_24h = 'win'  THEN 1 ELSE 0 END)     AS win_24h,
+    SUM(CASE WHEN o.outcome_24h = 'loss' THEN 1 ELSE 0 END)     AS loss_24h,
+    SUM(CASE WHEN o.outcome_24h = 'flat' THEN 1 ELSE 0 END)     AS flat_24h,
+    ROUND(AVG(o.pnl_pct_24h), 2)                                AS avg_pnl_pct_24h,
+    SUM(CASE WHEN o.setup_outcome IN ('tp1','tp2') THEN 1 ELSE 0 END) AS setup_tp,
+    SUM(CASE WHEN o.setup_outcome = 'stop' THEN 1 ELSE 0 END)   AS setup_stop,
+    SUM(CASE WHEN o.setup_outcome = 'open' THEN 1 ELSE 0 END)   AS setup_open,
+    SUM(CASE WHEN o.setup_outcome IN ('tp1','tp2','stop','expired') THEN 1 ELSE 0 END) AS setup_filled,
+    SUM(CASE WHEN o.setup_outcome = 'not_triggered' THEN 1 ELSE 0 END) AS setup_not_triggered,
+    SUM(CASE WHEN o.setup_outcome = 'invalid' THEN 1 ELSE 0 END) AS setup_invalid
+`;
+const OUTCOME_FROM = `FROM analysis_outcome o JOIN analyses a ON a.id = o.analysis_id`;
+
+/**
+ * Enriquece una fila de agregados con win-rate + IC de Wilson + fill-rate.
+ * Aplica el gate de muestra mínima: sin n suficiente, win_rate_24h=null e insuficiente=true.
+ */
+function decorateOutcomeRow(row) {
+  const wins = row.win_24h ?? 0;
+  const directional = wins + (row.loss_24h ?? 0);
+  const ci = wilsonInterval(wins, directional);
+  const insufficient = directional < MIN_DIRECTIONAL_SAMPLE;
+
+  // Fill-rate del setup (H6): los 'not_triggered' (entradas alucinadas que nunca se
+  // llenaron) cuentan en el denominador en vez de evaporarse de las stats.
+  const filled = row.setup_filled ?? 0;
+  const notTriggered = row.setup_not_triggered ?? 0;
+  const fillDenom = filled + notTriggered;
+
+  return {
+    ...row,
+    directional_n: directional,
+    sample_insufficient: insufficient,
+    win_rate_24h: insufficient ? null : ci.point,
+    win_rate_ci_low: insufficient ? null : ci.low,
+    win_rate_ci_high: insufficient ? null : ci.high,
+    setup_fill_rate: fillDenom > 0 ? parseFloat(((filled / fillDenom) * 100).toFixed(1)) : null,
+  };
+}
+
 /**
  * Estadísticas agregadas de backtesting a partir de analysis_outcome.
+ * Incluye IC de Wilson, gate de muestra mínima, fill-rate y segmentación por TF y modelo.
  * @param {string|null} coin - Filtra por moneda, o null para todas.
  */
 export function getOutcomeStats(coin = null) {
   const db = getDb();
-  const row = db.prepare(`
-    SELECT
-      COUNT(*)                                                    AS total_evaluated,
-      SUM(CASE WHEN o.outcome_24h = 'win'  THEN 1 ELSE 0 END)     AS win_24h,
-      SUM(CASE WHEN o.outcome_24h = 'loss' THEN 1 ELSE 0 END)     AS loss_24h,
-      SUM(CASE WHEN o.outcome_24h = 'flat' THEN 1 ELSE 0 END)     AS flat_24h,
-      ROUND(AVG(o.pnl_pct_24h), 2)                                AS avg_pnl_pct_24h,
-      SUM(CASE WHEN o.setup_outcome IN ('tp1','tp2') THEN 1 ELSE 0 END) AS setup_tp,
-      SUM(CASE WHEN o.setup_outcome = 'stop' THEN 1 ELSE 0 END)   AS setup_stop,
-      SUM(CASE WHEN o.setup_outcome = 'open' THEN 1 ELSE 0 END)   AS setup_open
-    FROM analysis_outcome o
-    JOIN analyses a ON a.id = o.analysis_id
-    WHERE (@coin IS NULL OR a.coin = @coin)
-  `).get({ coin: coin ? coin.toUpperCase() : null });
+  const coinArg = coin ? coin.toUpperCase() : null;
+  const overall = db.prepare(
+    `SELECT ${OUTCOME_AGG_COLS} ${OUTCOME_FROM} WHERE (@coin IS NULL OR a.coin = @coin)`,
+  ).get({ coin: coinArg });
 
-  const directional = (row.win_24h ?? 0) + (row.loss_24h ?? 0);
+  // field ∈ {'primary_tf','model_used'} — nombres controlados internamente (no user input).
+  const byField = (field) => db.prepare(
+    `SELECT a.${field} AS key, ${OUTCOME_AGG_COLS} ${OUTCOME_FROM}
+     WHERE (@coin IS NULL OR a.coin = @coin) AND a.${field} IS NOT NULL
+     GROUP BY a.${field} ORDER BY a.${field}`,
+  ).all({ coin: coinArg }).map((r) => decorateOutcomeRow(r));
+
   return {
-    ...row,
-    win_rate_24h: directional > 0 ? parseFloat(((row.win_24h / directional) * 100).toFixed(1)) : null,
+    ...decorateOutcomeRow(overall),
+    min_directional_sample: MIN_DIRECTIONAL_SAMPLE,
+    by_primary_tf: byField('primary_tf'),
+    by_model: byField('model_used'),
   };
 }
 
