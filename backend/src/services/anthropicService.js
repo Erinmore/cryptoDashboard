@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_1_btc_context';
+export const PROMPT_VERSION = 'v6_2_gating_consistency';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -441,9 +441,11 @@ El backend evalúa los vetos de forma determinista y los entrega en el bloque ga
 gating.veto_long=true: prohibido recomendar COMPRAR. El output es ESPERAR.
 gating.veto_short=true: prohibido recomendar VENDER. El output es ESPERAR.
 
-Estos vetos son binarios y no se ponderan: se activan independientemente de cualquier score positivo. El campo gating.veto_reason explica qué disparó el veto (CVD 1D en divergencia + OI sin expandir + precio pegado a una S/R fuerte del TF primario con 3+ toques); gating.conditions desglosa cada condición.
+Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish + OI sin expandir + resistencia fuerte (3+ toques) a <=1.5%; VETO SHORT = el espejo exacto (CVD 1D bullish + OI sin expandir + soporte fuerte a <=1.5%). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
 
-Cuando un veto esté activo: pon gating_active=true y refleja el motivo en gating_reason del output, y explica en el análisis qué tendría que cambiar para que el veto se levante.
+FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Puedes usar PREPARAR/ESPERAR y señalar qué dato falta.
+
+Cuando un veto esté activo o data_insufficient: pon gating_active=true y refleja el motivo en gating_reason del output, y explica en el análisis qué tendría que cambiar para levantarlo.
 
 DECISION ENGINE (NO MOSTRAR AL USUARIO)
 
@@ -541,15 +543,17 @@ no ejecutar compra.
 
 CONVICTION DECAY — PENALIZACIÓN POR CONTRADICCIONES
 
-El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[] (con gating.contradiction_count). Cubren:
+El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[] (con gating.contradiction_count, ya deduplicado contra el veto activo). Cubren:
 - CVD 1D en divergencia con el precio
 - OI plano o cayendo (change_24h_pct < 0)
-- Resistencia o soporte relevante a menos del 1.5% (TF primario)
+- Precio pegado (<=1.5%) a un nivel S/R con historial (2+ toques) del TF primario
 - Conflicto entre 1W y 1D (tendencias opuestas)
-- Señal SMC estructural principal ausente / fuera del umbral táctico del TF primario
+- CONFLICTO estructural activo: BOS y CHoCH ambos "active" y en direcciones OPUESTAS
+
+IMPORTANTE (cambio de criterio): la mera AUSENCIA de estructura SMC activa ya NO es una contradicción — es falta de confirmación, no evidencia en contra. El backend la entrega como gating.missing_structural_confirmation=true; úsala para poblar missing_confirmations[] (qué falta para operar), no para el conteo de contradicciones.
 
 Añade UNA contradicción más al conteo si aplica según tus scores internos (el backend no la puede conocer):
-- Volume Flow Score negativo con Structure Score positivo
+- Conflicto Volume Flow ↔ Structure: Volume negativo con Structure positivo, O Volume positivo con Structure negativo
 
 Si el total (gating.contradiction_count + la sexta si aplica) es 3 o más, la convicción cae a nivel donde no se permite trade y el output es ESPERAR.
 

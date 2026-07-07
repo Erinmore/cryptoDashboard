@@ -14,7 +14,7 @@ import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js'
 import { applyDecisionGates } from '../services/decisionGates.js';
 import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
-import { computeVetos, computeContradictions } from '../utils/gating.js';
+import { computeGating } from '../utils/gating.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
 // CVD/VWAP se persisten y pueden tener huecos tras un apagado prolongado; un salto mayor
@@ -536,21 +536,14 @@ async function buildAnalyzeContext(coin, primaryTf) {
   // HARD GATING determinista: los vetos de trade se precalculan aquí (utils/gating.js)
   // en vez de dejar que el LLM recomponga el AND de tres condiciones con umbrales de %.
   // El LLM recibe los flags en el bloque `gating` y solo obedece. S/R del TF primario.
-  const gating = {
-    ...computeVetos({
-      technical,
-      openInterest: oi ? { change_24h_pct: oi.change_24h_pct } : null,
-      funding: fr ? { severity: fr.severity, rate_pct: fr.rate_pct } : null,
-      currentPrice,
-      primaryTf,
-    }),
-    // Contradicciones deterministas del CONVICTION DECAY (5 de 6; el LLM suma la 6ª).
-    ...computeContradictions({
-      technical,
-      openInterest: oi ? { change_24h_pct: oi.change_24h_pct } : null,
-      primaryTf,
-    }),
-  };
+  // computeGating combina vetos (simétricos, fail-closed) + contradicciones (5 de 6;
+  // el LLM suma la 6ª) y aplica el dedupe veto↔contradicciones. Ver utils/gating.js.
+  const gating = computeGating({
+    technical,
+    openInterest: oi ? { change_24h_pct: oi.change_24h_pct } : null,
+    currentPrice,
+    primaryTf,
+  });
 
   // D22: fuente del precio de referencia
   const priceSource = 'binance_spot';
@@ -945,6 +938,7 @@ export async function analyze(req, res, next) {
       rawStructured,
       context.gating,
       env.analysisFailsafeEnabled,
+      env.gatingFailClosedOnMissing,
     );
     if (validation.warnings.length > 0) {
       logger.warn(

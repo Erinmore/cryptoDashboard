@@ -42,6 +42,11 @@ const env = {
   // apagar (ANALYSIS_FAILSAFE_ENABLED=false) para observar el output crudo del LLM.
   analysisFailsafeEnabled: (process.env.ANALYSIS_FAILSAFE_ENABLED ?? 'true').toLowerCase() !== 'false',
 
+  // Fail-closed del gating (auditoría H2): si faltan los inputs críticos del veto
+  // (CVD 1D u Open Interest), bloquear trades direccionales (degradar a Esperar) en vez
+  // de dejarlos pasar a ciegas. Es un hard gate del backend, independiente del fail-safe.
+  gatingFailClosedOnMissing: (process.env.GATING_FAIL_CLOSED_ON_MISSING ?? 'true').toLowerCase() !== 'false',
+
   // Poller de fondo de históricos: persiste history_series de TODAS las monedas
   // (no solo la visualizada en el frontend), clave para CVD/VWAP —sin backfill externo—
   // y para cobertura continua de backtesting. Activo por defecto.

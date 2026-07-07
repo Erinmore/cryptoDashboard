@@ -82,6 +82,31 @@ describe('applyDecisionGates — conviction decay', () => {
   });
 });
 
+describe('applyDecisionGates — fail-closed por datos ausentes (H2)', () => {
+  const insufficient = { ...noGating, data_insufficient: true, missing_inputs: ['open_interest'] };
+
+  test('data_insufficient + Comprar + fail-safe APAGADO → Esperar (hard gate)', () => {
+    const { structured, degraded, hardGate } = applyDecisionGates(buyStructured(), insufficient, false, true);
+    expect(hardGate).toBe(true);
+    expect(degraded).toBe(true);
+    expect(structured.action).toBe('Esperar');
+    expect(structured.gating_active).toBe(true);
+    expect(structured.gating_reason).toMatch(/open_interest/);
+  });
+
+  test('data_insufficient pero failClosedOnMissing=false → NO bloquea', () => {
+    const { degraded, hardGate } = applyDecisionGates(buyStructured(), insufficient, false, false);
+    expect(hardGate).toBe(false);
+    expect(degraded).toBe(false);
+  });
+
+  test('data_insufficient con acción NO direccional (Esperar) → no aplica', () => {
+    const raw = { ...buyStructured(), action: 'Esperar', has_executable_setup: false, setup: null };
+    const { hardGate } = applyDecisionGates(raw, insufficient, false, true);
+    expect(hardGate).toBe(false);
+  });
+});
+
 describe('applyDecisionGates — fail-safe de observación (reglas del prompt, no hard gate)', () => {
   test('buy_gate violado + sin veto/decay + fail-safe APAGADO → NO degrada (output crudo)', () => {
     // Comprar con volume=0 (no pasa buy_gate) pero sin veto ni decay: es una violación de regla

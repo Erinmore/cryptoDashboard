@@ -384,6 +384,12 @@ describe('GET /api/analyze/payload', () => {
     expect(typeof g.veto_long).toBe('boolean');
     expect(typeof g.veto_short).toBe('boolean');
     expect(g.conditions.sr_timeframe).toBe('4h');
+    // Fase 2: campos nuevos del gating consistente.
+    expect(g).toHaveProperty('data_insufficient');
+    expect(g).toHaveProperty('missing_inputs');
+    expect(g).toHaveProperty('contradiction_count');
+    expect(g).toHaveProperty('missing_structural_confirmation');
+    expect(g).toHaveProperty('deduped_by_veto');
   });
 
   test('response includes llm_request with system prompt + user message', async () => {

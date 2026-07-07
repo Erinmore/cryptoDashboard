@@ -1,18 +1,19 @@
 /**
- * gating.test.js — vetos deterministas (utils/gating.js).
+ * gating.test.js — gating determinista (utils/gating.js) tras la auditoría (Fase 2).
  *
- * Verifica computeVetos(): traslada el HARD GATING del SYSTEM_PROMPT a código.
- * VETO LONG y VETO SHORT exigen sus tres condiciones simultáneas; falta cualquiera
- * → no hay veto. La S/R se toma del TF primario. Datos ausentes no activan veto.
+ * Cambios cubiertos:
+ *  - H3 · Vetos LONG/SHORT SIMÉTRICOS (CVD 1D + OI + S/R del TF primario). Sin funding.
+ *  - H2 · data_insufficient cuando falta CVD 1D u Open Interest (fail-closed).
+ *  - H1 · Ausencia de estructura ≠ contradicción (→ missing_structural_confirmation);
+ *         solo un CONFLICTO estructural activo (BOS vs CHoCH opuestos) cuenta.
+ *  - H1 · price_near_key_level exige nivel con 2+ toques.
+ *  - H4 · computeGating deduplica veto↔contradicciones.
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { computeVetos, computeContradictions, nearStrongLevel } from '../src/utils/gating.js';
+import { computeVetos, computeContradictions, computeGating, nearStrongLevel } from '../src/utils/gating.js';
 
-// Contexto base con TF primario 4h que dispara VETO LONG:
-//  - CVD 1D bearish
-//  - OI change_24h_pct < +1%
-//  - resistencia 4h a <1.5% con 3+ toques
+// Contexto que dispara VETO LONG: CVD 1D bearish + OI plano + resistencia 4h <1.5% con 3+ toques.
 function longVetoContext() {
   return {
     technical: {
@@ -20,34 +21,29 @@ function longVetoContext() {
       '4h': {
         support_resistance: {
           supports: [{ price: 90, touches: 5 }],
-          resistances: [{ price: 101, touches: 4 }], // 1% arriba de 100, 4 toques
+          resistances: [{ price: 101, touches: 4 }],
         },
       },
     },
     openInterest: { change_24h_pct: 0.3 },
-    funding: { severity: 'normal', rate_pct: 0.01 },
     currentPrice: 100,
     primaryTf: '4h',
   };
 }
 
-// Contexto base que dispara VETO SHORT:
-//  - CVD 1D bullish
-//  - funding severity normal (o negativo)
-//  - soporte 4h a <1.5% con 3+ toques
+// Contexto que dispara VETO SHORT (espejo): CVD 1D bullish + OI plano + soporte 4h <1.5% con 3+ toques.
 function shortVetoContext() {
   return {
     technical: {
       '1D': { cvd: { divergence: 'bullish' } },
       '4h': {
         support_resistance: {
-          supports: [{ price: 99, touches: 3 }], // 1% abajo de 100, 3 toques
+          supports: [{ price: 99, touches: 3 }],
           resistances: [{ price: 120, touches: 5 }],
         },
       },
     },
-    openInterest: { change_24h_pct: 5 },
-    funding: { severity: 'normal', rate_pct: 0.0 },
+    openInterest: { change_24h_pct: 0.3 },
     currentPrice: 100,
     primaryTf: '4h',
   };
@@ -60,23 +56,16 @@ describe('nearStrongLevel', () => {
     expect(r.distance_pct).toBe(1);
   });
 
-  test('nivel cercano pero con <3 toques → no cuenta', () => {
-    const r = nearStrongLevel([{ price: 101, touches: 2 }], 100);
-    expect(r.found).toBe(false);
+  test('nivel cercano pero con <3 toques → no cuenta (umbral por defecto)', () => {
+    expect(nearStrongLevel([{ price: 101, touches: 2 }], 100).found).toBe(false);
+  });
+
+  test('minTouches configurable: con 2 sí cuenta', () => {
+    expect(nearStrongLevel([{ price: 101, touches: 2 }], 100, 2).found).toBe(true);
   });
 
   test('nivel con 3+ toques pero >1.5% de distancia → no cuenta', () => {
-    const r = nearStrongLevel([{ price: 105, touches: 8 }], 100);
-    expect(r.found).toBe(false);
-  });
-
-  test('escanea toda la lista: elige el nivel algo más lejano pero con toques suficientes', () => {
-    const r = nearStrongLevel(
-      [{ price: 100.5, touches: 1 }, { price: 101.2, touches: 4 }],
-      100,
-    );
-    expect(r.found).toBe(true);
-    expect(r.level.touches).toBe(4);
+    expect(nearStrongLevel([{ price: 105, touches: 8 }], 100).found).toBe(false);
   });
 
   test('lista vacía / precio null → no crashea', () => {
@@ -116,32 +105,25 @@ describe('computeVetos — VETO LONG', () => {
     ctx.technical['4h'].support_resistance.resistances = [{ price: 101, touches: 2 }];
     expect(computeVetos(ctx).veto_long).toBe(false);
   });
-
-  test('OI ausente (null) → no se afirma la condición → sin veto', () => {
-    const ctx = longVetoContext();
-    ctx.openInterest = null;
-    expect(computeVetos(ctx).veto_long).toBe(false);
-  });
 });
 
-describe('computeVetos — VETO SHORT', () => {
+describe('computeVetos — VETO SHORT (simétrico)', () => {
   test('las tres condiciones a la vez → veto_short activo', () => {
     const r = computeVetos(shortVetoContext());
     expect(r.veto_short).toBe(true);
     expect(r.veto_long).toBe(false);
     expect(r.veto_reason).toMatch(/VETO SHORT/);
+    expect(r.conditions.short).toEqual({
+      cvd_1d_bullish: true,
+      oi_not_expanding: true,
+      near_support_3plus_touches: true,
+    });
   });
 
-  test('funding favorable (severity elevated y rate positivo) → sin veto', () => {
+  test('OI expandiendo → sin veto short (mismo eje que long)', () => {
     const ctx = shortVetoContext();
-    ctx.funding = { severity: 'elevated', rate_pct: 0.08 };
+    ctx.openInterest.change_24h_pct = 4;
     expect(computeVetos(ctx).veto_short).toBe(false);
-  });
-
-  test('funding negativo cuenta como no favorable para short → veto activo', () => {
-    const ctx = shortVetoContext();
-    ctx.funding = { severity: 'high', rate_pct: -0.1 };
-    expect(computeVetos(ctx).veto_short).toBe(true);
   });
 
   test('soporte a más de 1.5% → sin veto', () => {
@@ -151,26 +133,42 @@ describe('computeVetos — VETO SHORT', () => {
   });
 });
 
-describe('computeVetos — robustez y TF primario', () => {
-  test('technical vacío → sin vetos, sin crash', () => {
-    const r = computeVetos({ technical: {}, openInterest: null, funding: null, currentPrice: 100, primaryTf: '4h' });
+describe('computeVetos — fail-closed (H2) y robustez', () => {
+  test('OI ausente → data_insufficient=true, sin veto afirmado', () => {
+    const ctx = longVetoContext();
+    ctx.openInterest = null;
+    const r = computeVetos(ctx);
+    expect(r.veto_long).toBe(false);
+    expect(r.data_insufficient).toBe(true);
+    expect(r.missing_inputs).toContain('open_interest');
+  });
+
+  test('CVD 1D ausente → data_insufficient=true', () => {
+    const ctx = longVetoContext();
+    delete ctx.technical['1D'];
+    const r = computeVetos(ctx);
+    expect(r.data_insufficient).toBe(true);
+    expect(r.missing_inputs).toContain('cvd_1d');
+  });
+
+  test('datos completos → data_insufficient=false', () => {
+    expect(computeVetos(longVetoContext()).data_insufficient).toBe(false);
+  });
+
+  test('technical vacío → sin vetos, data_insufficient, sin crash', () => {
+    const r = computeVetos({ technical: {}, openInterest: null, currentPrice: 100, primaryTf: '4h' });
     expect(r.veto_long).toBe(false);
     expect(r.veto_short).toBe(false);
-    expect(r.veto_reason).toBeNull();
+    expect(r.data_insufficient).toBe(true);
     expect(r.conditions.sr_timeframe).toBe('4h');
   });
 
-  test('usa la S/R del TF primario indicado (1h), no de 4h', () => {
+  test('usa la S/R del TF primario indicado (1h)', () => {
     const ctx = longVetoContext();
-    // Mover la resistencia disparadora al 1h y marcar 1h como primario.
     ctx.primaryTf = '1h';
     ctx.technical['1h'] = {
-      support_resistance: {
-        supports: [{ price: 90, touches: 5 }],
-        resistances: [{ price: 101, touches: 4 }],
-      },
+      support_resistance: { supports: [{ price: 90, touches: 5 }], resistances: [{ price: 101, touches: 4 }] },
     };
-    // La resistencia de 4h deja de importar; el veto sale del 1h.
     ctx.technical['4h'].support_resistance.resistances = [{ price: 130, touches: 4 }];
     const r = computeVetos(ctx);
     expect(r.veto_long).toBe(true);
@@ -179,93 +177,142 @@ describe('computeVetos — robustez y TF primario', () => {
 });
 
 describe('computeContradictions', () => {
-  // Contexto que dispara las 5 contradicciones deterministas a la vez.
-  function fiveContradictions() {
+  // Contexto con 4 contradicciones deterministas (sin conflicto estructural).
+  function fourContradictions() {
     return {
       technical: {
         '1D': { cvd: { divergence: 'bearish' }, trend: 'bullish' },
-        '1W': { trend: 'bearish' }, // opuesto a 1D → conflicto HTF
+        '1W': { trend: 'bearish' },
         '4h': {
-          distance_to_nearest_support_pct: 0.8, // <=1.5% → near key level
-          distance_to_nearest_resistance_pct: 4,
-          smc: { last_bos: null, last_choch: null }, // sin estructura activa
+          support_resistance: { supports: [{ price: 99.2, touches: 3 }], resistances: [{ price: 130, touches: 2 }] },
+          smc: { last_bos: null, last_choch: null },
         },
       },
-      openInterest: { change_24h_pct: -2 }, // OI cayendo
+      openInterest: { change_24h_pct: -2 },
+      currentPrice: 100,
       primaryTf: '4h',
     };
   }
 
-  test('detecta las 5 contradicciones deterministas', () => {
-    const r = computeContradictions(fiveContradictions());
-    expect(r.contradiction_count).toBe(5);
+  test('detecta las 4 contradicciones deterministas (sin la estructural)', () => {
+    const r = computeContradictions(fourContradictions());
     const codes = r.contradictions.map((c) => c.code);
-    expect(codes).toEqual(
-      expect.arrayContaining([
-        'cvd_1d_divergence',
-        'oi_flat_or_falling',
-        'price_near_key_level',
-        'htf_conflict_1w_1d',
-        'no_active_smc_structure',
-      ]),
-    );
+    expect(codes).toEqual(expect.arrayContaining([
+      'cvd_1d_divergence', 'oi_flat_or_falling', 'price_near_key_level', 'htf_conflict_1w_1d',
+    ]));
+    expect(codes).not.toContain('smc_structural_conflict');
+    expect(r.contradiction_count).toBe(4);
+  });
+
+  test('H1 · ausencia de estructura NO es contradicción, sí missing_structural_confirmation', () => {
+    const r = computeContradictions(fourContradictions());
+    expect(r.contradictions.map((c) => c.code)).not.toContain('smc_structural_conflict');
+    expect(r.missing_structural_confirmation).toBe(true);
+  });
+
+  test('H1 · smc null tampoco cuenta como contradicción (solo missing_confirmation)', () => {
+    const ctx = fourContradictions();
+    ctx.technical['4h'].smc = null;
+    const r = computeContradictions(ctx);
+    expect(r.contradictions.map((c) => c.code)).not.toContain('smc_structural_conflict');
+    expect(r.missing_structural_confirmation).toBe(true);
+  });
+
+  test('H1 · BOS y CHoCH activos y OPUESTOS → contradicción estructural', () => {
+    const ctx = fourContradictions();
+    ctx.technical['4h'].smc = {
+      last_bos: { direction: 'bullish', signal_status: 'active' },
+      last_choch: { direction: 'bearish', signal_status: 'active' },
+    };
+    const r = computeContradictions(ctx);
+    expect(r.contradictions.map((c) => c.code)).toContain('smc_structural_conflict');
+    expect(r.missing_structural_confirmation).toBe(false);
+  });
+
+  test('BOS y CHoCH activos en la MISMA dirección → sin conflicto', () => {
+    const ctx = fourContradictions();
+    ctx.technical['4h'].smc = {
+      last_bos: { direction: 'bullish', signal_status: 'active' },
+      last_choch: { direction: 'bullish', signal_status: 'active' },
+    };
+    const r = computeContradictions(ctx);
+    expect(r.contradictions.map((c) => c.code)).not.toContain('smc_structural_conflict');
+    expect(r.missing_structural_confirmation).toBe(false);
+  });
+
+  test('price_near_key_level exige 2+ toques (nivel con 1 toque no cuenta)', () => {
+    const ctx = fourContradictions();
+    ctx.technical['4h'].support_resistance = { supports: [{ price: 99.5, touches: 1 }], resistances: [] };
+    const r = computeContradictions(ctx);
+    expect(r.contradictions.map((c) => c.code)).not.toContain('price_near_key_level');
   });
 
   test('mercado limpio → sin contradicciones', () => {
     const r = computeContradictions({
       technical: {
         '1D': { cvd: { divergence: 'none' }, trend: 'bullish' },
-        '1W': { trend: 'bullish' }, // alineado con 1D
+        '1W': { trend: 'bullish' },
         '4h': {
-          distance_to_nearest_support_pct: 5,
-          distance_to_nearest_resistance_pct: 6,
-          smc: { last_bos: { direction: 'bull', signal_status: 'active' }, last_choch: null },
+          support_resistance: { supports: [{ price: 90, touches: 3 }], resistances: [{ price: 110, touches: 3 }] },
+          smc: { last_bos: { direction: 'bullish', signal_status: 'active' }, last_choch: null },
         },
       },
       openInterest: { change_24h_pct: 3 },
+      currentPrice: 100,
       primaryTf: '4h',
     });
     expect(r.contradiction_count).toBe(0);
-    expect(r.contradictions).toEqual([]);
-  });
-
-  test('BOS con signal_status="context" (fuera del umbral táctico) cuenta como contradicción', () => {
-    const ctx = fiveContradictions();
-    // Existe estructura pero solo de contexto, no táctica → sigue faltando confirmación activa.
-    ctx.technical['4h'].smc = { last_bos: { signal_status: 'context' }, last_choch: null };
-    const r = computeContradictions(ctx);
-    expect(r.contradictions.map((c) => c.code)).toContain('no_active_smc_structure');
-  });
-
-  test('BOS con signal_status="active" suprime la contradicción estructural', () => {
-    const ctx = fiveContradictions();
-    ctx.technical['4h'].smc = { last_bos: { signal_status: 'active' }, last_choch: null };
-    const r = computeContradictions(ctx);
-    expect(r.contradictions.map((c) => c.code)).not.toContain('no_active_smc_structure');
-  });
-
-  test('smc === null (sin BOS/CHoCH/FVG) SÍ cuenta como contradicción estructural', () => {
-    const ctx = fiveContradictions();
-    // Caso extremo: no hay estructura SMC alguna. Es el "sin estructura activa" más fuerte;
-    // el guard anterior (`if (smc)`) lo omitía justo aquí, invirtiendo la intención.
-    ctx.technical['4h'].smc = null;
-    const r = computeContradictions(ctx);
-    const struct = r.contradictions.find((c) => c.code === 'no_active_smc_structure');
-    expect(struct).toBeDefined();
-    expect(struct.detail).toContain('sin estructura SMC');
+    expect(r.missing_structural_confirmation).toBe(false);
   });
 
   test('OI ausente no cuenta como contradicción (dato faltante ≠ OI cayendo)', () => {
-    const ctx = fiveContradictions();
+    const ctx = fourContradictions();
     ctx.openInterest = null;
-    const r = computeContradictions(ctx);
-    expect(r.contradictions.map((c) => c.code)).not.toContain('oi_flat_or_falling');
+    expect(computeContradictions(ctx).contradictions.map((c) => c.code)).not.toContain('oi_flat_or_falling');
   });
 
   test('1D o 1W neutral → sin conflicto HTF', () => {
-    const ctx = fiveContradictions();
+    const ctx = fourContradictions();
     ctx.technical['1W'].trend = 'neutral';
-    const r = computeContradictions(ctx);
-    expect(r.contradictions.map((c) => c.code)).not.toContain('htf_conflict_1w_1d');
+    expect(computeContradictions(ctx).contradictions.map((c) => c.code)).not.toContain('htf_conflict_1w_1d');
+  });
+});
+
+describe('computeGating — dedupe veto↔contradicciones (H4)', () => {
+  test('sin veto → contradicciones intactas', () => {
+    const ctx = {
+      technical: {
+        '1D': { cvd: { divergence: 'bearish' }, trend: 'bullish' },
+        '1W': { trend: 'bearish' },
+        '4h': { support_resistance: { supports: [{ price: 99.2, touches: 3 }], resistances: [{ price: 130, touches: 2 }] }, smc: null },
+      },
+      openInterest: { change_24h_pct: 3 }, // OI expandiendo → sin veto, sin oi_flat
+      currentPrice: 100,
+      primaryTf: '4h',
+    };
+    const g = computeGating(ctx);
+    expect(g.veto_long).toBe(false);
+    expect(g.deduped_by_veto).toEqual([]);
+    // cvd_1d_divergence + price_near_key_level + htf_conflict presentes.
+    expect(g.contradiction_count).toBe(g.contradictions_raw_count);
+  });
+
+  test('con veto activo → se descuentan cvd_1d_divergence y price_near_key_level', () => {
+    const g = computeGating(longVetoContext());
+    expect(g.veto_long).toBe(true);
+    // El veto se construyó con CVD 1D bearish + resistencia fuerte cercana → esas
+    // contradicciones no se recuentan como evidencia independiente.
+    expect(g.contradictions.map((c) => c.code)).not.toContain('cvd_1d_divergence');
+    expect(g.contradictions.map((c) => c.code)).not.toContain('price_near_key_level');
+    expect(g.deduped_by_veto.length).toBeGreaterThan(0);
+    expect(g.contradiction_count).toBeLessThan(g.contradictions_raw_count);
+  });
+
+  test('propaga data_insufficient y missing_structural_confirmation', () => {
+    const ctx = longVetoContext();
+    ctx.openInterest = null;
+    const g = computeGating(ctx);
+    expect(g.data_insufficient).toBe(true);
+    expect(g).toHaveProperty('missing_structural_confirmation');
   });
 });

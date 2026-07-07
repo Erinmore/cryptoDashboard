@@ -86,10 +86,13 @@ export function validateAnalysis(structured, opts = {}) {
 
   // ── Conviction decay: >=3 contradicciones ⟹ action="Esperar" ──────────────
   // El backend precalcula 5 de las 6 contradicciones del CONVICTION DECAY; la 6ª
-  // (Volume Flow Score negativo con Structure Score positivo) depende de los scores
-  // del LLM, que aquí sí tenemos → se cierra el conteo determinista. El prompt exige
-  // ESPERAR con total >=3; esta regla lo hace cumplir (severa → candidata a fail-safe).
-  const sixthContradiction = isInt(s.volume) && isInt(s.structure) && s.volume < 0 && s.structure > 0;
+  // (conflicto Volume Flow ↔ Structure) depende de los scores del LLM, que aquí sí
+  // tenemos → se cierra el conteo determinista. El prompt exige ESPERAR con total >=3;
+  // esta regla lo hace cumplir (severa → candidata a fail-safe).
+  // M4: simétrica — cuenta el conflicto en cualquier dirección (volume<0∧structure>0 O
+  // volume>0∧structure<0), no solo el caso alcista. Antes penalizaba asimétricamente.
+  const sixthContradiction = isInt(s.volume) && isInt(s.structure) &&
+    ((s.volume < 0 && s.structure > 0) || (s.volume > 0 && s.structure < 0));
   const contradictionTotal =
     (isInt(opts.backendContradictionCount) ? opts.backendContradictionCount : 0) + (sixthContradiction ? 1 : 0);
   if (contradictionTotal >= 3 && action !== 'Esperar') {
