@@ -201,6 +201,20 @@ export function computeIndicators(candles, timeframe) {
 }
 
 /**
+ * Signo con zona muerta: +1 si diff>band, -1 si diff<-band, 0 en la banda [-band, band].
+ * Evita que una diferencia marginal vuelque un ±1 completo (H5). Función pura.
+ * @param {number} diff
+ * @param {number} band - semi-ancho de la zona muerta (>=0)
+ * @returns {number} -1 | 0 | 1
+ */
+export function signWithDeadband(diff, band) {
+  if (!Number.isFinite(diff)) return 0;
+  if (diff > band) return 1;
+  if (diff < -band) return -1;
+  return 0;
+}
+
+/**
  * Resumen de tendencia ponderado por jerarquía del SYSTEM_PROMPT:
  *   estructura (50%) > ejecución (30%) > volumen local (20%).
  * Derivados y on-chain son macro y se incorporan al payload fuera del bloque technical.
@@ -221,22 +235,30 @@ export function computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, 
   }
   const structure = structureCount > 0 ? structureScore / structureCount : 0;
 
-  // Ejecución: RSI, MACD histogram, WaveTrend, StochRSI
+  // Ejecución: RSI, MACD histogram, WaveTrend, StochRSI.
+  // H5 (auditoría) · DEAD-BANDS: los cruces binarios (histogram>0, wt1>wt2, k>d) sin zona
+  // muerta volcaban un ±1 completo ante diferencias sub-tick → la etiqueta parpadeaba con
+  // ruido. Ahora una diferencia marginal cuenta como 0 (neutral). Nota: esto amortigua el
+  // flicker de borde; una histéresis temporal real exigiría estado por-TF que la arquitectura
+  // de render-bajo-demanda no arrastra — el dead-band es el arreglo sin estado equivalente.
   let execScore = 0, execCount = 0;
   if (rsi) {
-    execScore += rsi.value > 55 ? 1 : rsi.value < 45 ? -1 : 0;
+    execScore += rsi.value > 55 ? 1 : rsi.value < 45 ? -1 : 0; // RSI ya tenía dead-band 45–55
     execCount++;
   }
   if (macd) {
-    execScore += macd.histogram > 0 ? 1 : -1;
+    // Dead-band relativo a la escala de la MACD (2% de max(|macd|,|signal|)) → invariante
+    // a la escala del activo. Si faltan value/signal, band≈0 y degrada al signo (como antes).
+    const scale = Math.max(Math.abs(macd.value ?? 0), Math.abs(macd.signal ?? 0), 1e-9);
+    execScore += signWithDeadband(macd.histogram, 0.02 * scale);
     execCount++;
   }
   if (waveTrend) {
-    execScore += waveTrend.wt1 > waveTrend.wt2 ? 1 : -1;
+    execScore += signWithDeadband(waveTrend.wt1 - waveTrend.wt2, 2); // WT oscila ~±60
     execCount++;
   }
   if (stochRsi) {
-    execScore += stochRsi.k > stochRsi.d ? 1 : -1;
+    execScore += signWithDeadband(stochRsi.k - stochRsi.d, 3); // StochRSI 0–100
     execCount++;
   }
   const execution = execCount > 0 ? execScore / execCount : 0;

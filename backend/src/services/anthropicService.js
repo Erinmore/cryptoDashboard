@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_2_gating_consistency';
+export const PROMPT_VERSION = 'v6_3_scoring_integrity';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -172,11 +172,10 @@ CVD volume_history (campo volume_history.cvd): refleja el CVD 1D acumulado hist�
 
 Si el dataset no especifica primary_tf explícitamente, asumir 4h como TF primario por defecto.
 
-Evalúa para el Volume Flow Score:
+Evalúa para el Volume Flow Score (evita el doble conteo — no son tres votos iguales):
 
-CVD del TF primario
-Volume Delta del TF primario
-OBV del TF primario
+CVD del TF primario (taker_real) = SEÑAL PRIMARIA. Define el signo del Volume Flow Score.
+Volume Delta y OBV del TF primario = CONFIRMACIÓN/DESEMPATE, no votos independientes. Derivan del mismo flujo taker que el CVD (están correlacionados por construcción); úsalos solo para reforzar o matizar la lectura del CVD, nunca para sumar convicción tres veces sobre el mismo dato.
 
 Interpretación:
 
@@ -265,11 +264,9 @@ VWAP divergence="bullish" en 1D con precio cayendo: bandera de cautela para shor
 
 C. Structure Score (-2 a +2)
 
-Evalúa:
+Evalúa la ESTRUCTURA DE MERCADO por TF (1D, 4h, 1h): market structure (HH/HL vs LH/LL), BOS/CHoCH (SMC), niveles S/R, Volume Profile (POC/VAH/VAL) y posición del precio respecto a ellos.
 
-1D
-4h
-1h
+IMPORTANTE (evita el doble conteo con Execution): el campo technical[tf].trend es un resumen de momentum que YA incorpora RSI/MACD/SuperTrend/StochRSI/WaveTrend. NO lo re-puntúes aquí como si fuera estructura — esos osciladores pertenecen al Execution Score (D). El Structure Score debe apoyarse en la estructura de precio y los niveles, no en los mismos osciladores que puntúas en D.
 
 Interpretación:
 

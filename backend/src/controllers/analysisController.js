@@ -15,6 +15,7 @@ import { applyDecisionGates } from '../services/decisionGates.js';
 import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
 import { computeGating } from '../utils/gating.js';
+import { computeExpectedScores, backendScoreTotal } from '../utils/expectedScores.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
 // CVD/VWAP se persisten y pueden tener huecos tras un apagado prolongado; un salto mayor
@@ -545,6 +546,15 @@ async function buildAnalyzeContext(coin, primaryTf) {
     primaryTf,
   });
 
+  // Guardia de divergencia de scores (auditoría C2): score direccional ESPERADO por el
+  // backend para Derivatives/Volume (los bloques que abren la puerta de Comprar/Vender).
+  // El validador compara el score del LLM contra este esperado y degrada si contradice
+  // flagrantemente el dato → la puerta deja de validarse solo contra el auto-reporte del LLM.
+  const expectedScores = computeExpectedScores(
+    { derivatives: { funding_rate: fr, long_short_ratio: lsr }, technical, order_book: orderBook },
+    primaryTf,
+  );
+
   // D22: fuente del precio de referencia
   const priceSource = 'binance_spot';
   const priceTimestampUtc = new Date().toISOString();
@@ -626,6 +636,11 @@ async function buildAnalyzeContext(coin, primaryTf) {
     timeframe_analysis: tfConflicts,
 
     gating,
+
+    // Scores esperados por el backend (guardia de divergencia, C2). El LLM no los ve como
+    // instrucción; el validador los usa para detectar que su score de la puerta contradice
+    // el dato. Se persisten para calibración (LLM vs backend).
+    expected_scores: expectedScores,
 
     derivatives: {
       funding_rate: fr ? {
@@ -797,6 +812,11 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     score_volume:      structured.scores?.volume ?? null,
     score_onchain:     structured.scores?.onchain ?? null,
     score_total:       structured.scores?.total ?? null,
+    // B2: total reproducible desde los componentes del LLM (no el decimal libre del LLM).
+    score_total_backend: backendScoreTotal(structured.scores),
+    // C2: scores esperados por el backend (guardia de divergencia) — telemetría LLM vs dato.
+    score_derivatives_expected: context.expected_scores?.derivatives?.score ?? null,
+    score_volume_expected:      context.expected_scores?.volume?.score ?? null,
 
     setup_entry_price:      setup?.entry_price ?? null,
     setup_stop_price:       setup?.stop_price ?? null,
@@ -939,6 +959,7 @@ export async function analyze(req, res, next) {
       context.gating,
       env.analysisFailsafeEnabled,
       env.gatingFailClosedOnMissing,
+      context.expected_scores,
     );
     if (validation.warnings.length > 0) {
       logger.warn(

@@ -16,7 +16,7 @@ import {
   detectRSIDivergence,
   detectMarketRegime,
 } from '../src/utils/indicators.js';
-import { computeTrend, computeIndicators } from '../src/services/indicatorService.js';
+import { computeTrend, computeIndicators, signWithDeadband } from '../src/services/indicatorService.js';
 import { calculateVolumeProfile } from '../src/utils/volumeProfile.js';
 import {
   detectSwings,
@@ -663,9 +663,32 @@ describe('detectMarketRegime', () => {
 
 // ─── computeTrend (jerarquía estructura > ejecución > volumen) ───────────────
 
+describe('signWithDeadband (H5)', () => {
+  test('dentro de la banda → 0', () => {
+    expect(signWithDeadband(1, 2)).toBe(0);
+    expect(signWithDeadband(-1.9, 2)).toBe(0);
+  });
+  test('fuera de la banda → signo', () => {
+    expect(signWithDeadband(3, 2)).toBe(1);
+    expect(signWithDeadband(-3, 2)).toBe(-1);
+  });
+  test('NaN → 0', () => {
+    expect(signWithDeadband(NaN, 2)).toBe(0);
+  });
+});
+
 describe('computeTrend', () => {
   test('returns neutral when all inputs are null', () => {
     expect(computeTrend({})).toBe('neutral');
+  });
+
+  test('H5 · MACD histogram marginal (ruido sub-tick) no vuelca la ejecución', () => {
+    // Con value/signal a escala 500, un histograma de 1 (0.2% de la escala) queda dentro
+    // del dead-band (2%) → cuenta como 0, no como -1. Sin dead-band habría restado un nivel.
+    const base = { adx: { trend_direction: 'bullish', regime: 'trending' }, superTrend: { trend: 'UP' } };
+    const withNoise = computeTrend({ ...base, macd: { value: 500, signal: 499, histogram: 1 } });
+    const withZero  = computeTrend({ ...base, macd: { value: 500, signal: 500, histogram: 0 } });
+    expect(withNoise).toBe(withZero); // el ruido marginal no cambia la etiqueta
   });
 
   test('returns strongly_bullish when all signals max bullish', () => {

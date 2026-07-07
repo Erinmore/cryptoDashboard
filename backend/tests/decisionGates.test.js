@@ -107,6 +107,31 @@ describe('applyDecisionGates — fail-closed por datos ausentes (H2)', () => {
   });
 });
 
+describe('applyDecisionGates — guardia de divergencia de scores (C2)', () => {
+  // El backend espera derivados bajistas pero el LLM afirma Comprar con derivatives=+2.
+  const expectedBearishDeriv = { derivatives: { score: -1, basis: ['LSR contrarian bear (-1)'] }, volume: { score: 0, basis: [] } };
+
+  test('Comprar con derivatives LLM=+2 vs esperado=-1 + fail-safe ON → degrada a Esperar', () => {
+    const { structured, degraded, validation } = applyDecisionGates(
+      buyStructured(), noGating, true, true, expectedBearishDeriv);
+    expect(validation.warnings.some((w) => w.rule === 'score_divergence_derivatives')).toBe(true);
+    expect(degraded).toBe(true);
+    expect(structured.action).toBe('Esperar');
+  });
+
+  test('sin expectedScores → no evalúa divergencia (retrocompatible)', () => {
+    const { validation } = applyDecisionGates(buyStructured(), noGating, true, true, null);
+    expect(validation.warnings.some((w) => w.rule?.startsWith('score_divergence'))).toBe(false);
+  });
+
+  test('scores del LLM alineados con lo esperado → sin divergencia', () => {
+    const aligned = { derivatives: { score: 2, basis: [] }, volume: { score: 1, basis: [] } };
+    const { validation, degraded } = applyDecisionGates(buyStructured(), noGating, true, true, aligned);
+    expect(validation.warnings.some((w) => w.rule?.startsWith('score_divergence'))).toBe(false);
+    expect(degraded).toBe(false);
+  });
+});
+
 describe('applyDecisionGates — fail-safe de observación (reglas del prompt, no hard gate)', () => {
   test('buy_gate violado + sin veto/decay + fail-safe APAGADO → NO degrada (output crudo)', () => {
     // Comprar con volume=0 (no pasa buy_gate) pero sin veto ni decay: es una violación de regla

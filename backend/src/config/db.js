@@ -316,6 +316,11 @@ function runMigrations(db) {
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_resistance_strength', 'INTEGER');
   // SuperTrend: nivel numérico (banda de soporte/resistencia), antes solo la dirección.
   ensureColumn(db, 'analysis_tf_snapshot', 'supertrend_level', 'REAL');
+  // Auditoría B2/C2: total reproducible del backend + scores esperados (guardia de
+  // divergencia) — telemetría LLM vs backend, no reemplazan los scores del LLM.
+  ensureColumn(db, 'analyses', 'score_total_backend', 'REAL');
+  ensureColumn(db, 'analyses', 'score_derivatives_expected', 'INTEGER');
+  ensureColumn(db, 'analyses', 'score_volume_expected', 'INTEGER');
 }
 
 export function closeDb() {

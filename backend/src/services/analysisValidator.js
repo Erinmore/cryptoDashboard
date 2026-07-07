@@ -110,6 +110,31 @@ export function validateAnalysis(structured, opts = {}) {
       `Vender exige derivatives<=-1 y volume<=-1 (derivatives=${s.derivatives}, volume=${s.volume})`);
   }
 
+  // ── Guardia de divergencia de scores (C2) ─────────────────────────────────
+  // La puerta de arriba compara el score del LLM contra sí misma (circular). Aquí lo
+  // comparamos contra el score ESPERADO por el backend desde el dato. Solo se dispara
+  // cuando el LLM abre la puerta en una dirección (score en el lado que autoriza el trade)
+  // pero el dato lee CLARAMENTE lo contrario (esperado en el lado opuesto, |.|>=1). Es
+  // deliberadamente conservador: no micro-gestiona, solo caza contradicciones flagrantes.
+  const exp = opts.expectedScores;
+  if (exp) {
+    const checkDiv = (block) => {
+      const llm = s[block];
+      const e = exp[block]?.score;
+      if (!isInt(llm) || !isNum(e)) return;
+      if (action === 'Comprar' && llm >= 1 && e <= -1) {
+        warn(`score_divergence_${block}`, 'severe',
+          `Comprar con ${block}=${llm} pero el backend espera ${block}≈${e} desde el dato (${(exp[block].basis || []).join('; ')})`);
+      }
+      if (action === 'Vender' && llm <= -1 && e >= 1) {
+        warn(`score_divergence_${block}`, 'severe',
+          `Vender con ${block}=${llm} pero el backend espera ${block}≈${e} desde el dato (${(exp[block].basis || []).join('; ')})`);
+      }
+    };
+    checkDiv('derivatives');
+    checkDiv('volume');
+  }
+
   // ── Coherencia de existencia de setup ─────────────────────────────────────
   const hasSetup = setup != null;
   if (has_executable_setup === false && hasSetup) {
