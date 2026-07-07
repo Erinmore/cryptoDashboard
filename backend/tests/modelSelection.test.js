@@ -34,25 +34,25 @@ describe('resolveModel (whitelist)', () => {
   });
 });
 
-describe('buildLlmRequest — temperatura fijada (C1, reproducibilidad)', () => {
+describe('buildLlmRequest — temperature deprecado en modelos actuales (default omitido)', () => {
   const ctx = { coin: 'BTC' };
 
-  test('todos los modelos llevan temperature = env.analysisTemperature (default 0)', () => {
-    expect(env.analysisTemperature).toBe(0);
+  test('por defecto ningún modelo envía temperature (deprecado → 400 en la API)', () => {
+    expect(env.analysisTemperature).toBeNull();
     for (const id of ['claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5']) {
-      expect(buildLlmRequest(ctx, id).temperature).toBe(0);
+      expect(buildLlmRequest(ctx, id).temperature).toBeUndefined();
     }
   });
 
-  test('Sonnet 5 combina thinking:disabled con temperature 0 (ninguno activa thinking)', () => {
+  test('Sonnet 5 lleva thinking:disabled y omite temperature', () => {
     const req = buildLlmRequest(ctx, 'claude-sonnet-5');
     expect(req.thinking).toEqual({ type: 'disabled' });
-    expect(req.temperature).toBe(0);
+    expect(req.temperature).toBeUndefined();
   });
 
-  test('Opus/Haiku no envían thinking pero sí temperature', () => {
+  test('Opus/Haiku no envían ni thinking ni temperature', () => {
     const opus = buildLlmRequest(ctx, 'claude-opus-4-8');
     expect(opus.thinking).toBeUndefined();
-    expect(opus.temperature).toBe(0);
+    expect(opus.temperature).toBeUndefined();
   });
 });

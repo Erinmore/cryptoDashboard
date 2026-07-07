@@ -854,11 +854,11 @@ function buildLlmRequest(context, modelId) {
     model: m.id,
     max_tokens: MAX_TOKENS,
     prompt_version: PROMPT_VERSION,
-    // Temperatura fijada (default 0) → reproducibilidad: el motor de decisión no debe
-    // variar entre reruns del mismo dataset. Ningún modelo aquí activa thinking, así que
-    // la API acepta temperature != 1. Se incluye en el request devuelto para que el
-    // payload descargado ("Download data") refleje exactamente lo que recibe el LLM.
-    temperature: env.analysisTemperature,
+    // `temperature` está DEPRECADO en los modelos actuales (Claude 5 / Opus 4.8 →
+    // la API responde 400 si se envía). Por defecto env.analysisTemperature es null y
+    // el campo se OMITE. Solo se incluye si se define ANALYSIS_TEMPERATURE (escape hatch
+    // para un modelo que sí lo soporte); se refleja en el payload descargado tal cual.
+    ...(env.analysisTemperature != null ? { temperature: env.analysisTemperature } : {}),
     // thinking sólo se desactiva donde hace falta (Sonnet 5 activa adaptive al
     // omitirlo → gasta tokens y puede truncar). Opus/Haiku van sin `thinking`.
     ...(m.disableThinking ? { thinking: { type: 'disabled' } } : {}),
@@ -888,7 +888,8 @@ export async function analyzeMarket(context, modelId) {
 
   const { model, max_tokens, temperature, thinking, system, messages } = buildLlmRequest(context, modelId);
   const response = await client.messages.create({
-    model, max_tokens, temperature, system, messages,
+    model, max_tokens, system, messages,
+    ...(temperature != null ? { temperature } : {}), // deprecado en modelos actuales → omitir salvo opt-in
     ...(thinking ? { thinking } : {}), // sólo se envía en modelos que lo requieren (Sonnet 5)
   });
 

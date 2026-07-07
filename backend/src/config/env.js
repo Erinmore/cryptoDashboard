@@ -17,14 +17,15 @@ const env = {
   // APIs de IA
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
 
-  // Temperatura del análisis LLM. Default 0 → decisiones reproducibles (mismo dataset
-  // ⟹ misma acción/scores). Ninguno de los modelos de ANALYSIS_MODELS envía
-  // thinking:{type:'enabled'} (Sonnet 5 lo desactiva explícitamente; Opus/Haiku no lo
-  // usan), por lo que la Messages API acepta temperature != 1 en todos. Configurable
-  // vía ANALYSIS_TEMPERATURE por si se quiere reintroducir algo de estocasticidad.
+  // Temperatura del análisis LLM. Los modelos de ANALYSIS_MODELS (Opus 4.8, Sonnet 5,
+  // Haiku 4.5 — generación Claude 5) DEPRECAN el parámetro `temperature`: la Messages
+  // API responde 400 `temperature is deprecated for this model` si se envía. Por eso el
+  // default es `null` → NO se manda temperature (el modelo usa su comportamiento fijo).
+  // Solo se envía si ANALYSIS_TEMPERATURE se define explícitamente (escape hatch para un
+  // modelo futuro que sí lo acepte); buildLlmRequest omite el campo cuando es null.
   analysisTemperature: (() => {
     const t = parseFloat(process.env.ANALYSIS_TEMPERATURE);
-    return Number.isFinite(t) && t >= 0 && t <= 1 ? t : 0;
+    return Number.isFinite(t) && t >= 0 && t <= 1 ? t : null;
   })(),
 
   // APIs de datos de mercado
