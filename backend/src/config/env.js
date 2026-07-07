@@ -17,6 +17,16 @@ const env = {
   // APIs de IA
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
 
+  // Temperatura del análisis LLM. Default 0 → decisiones reproducibles (mismo dataset
+  // ⟹ misma acción/scores). Ninguno de los modelos de ANALYSIS_MODELS envía
+  // thinking:{type:'enabled'} (Sonnet 5 lo desactiva explícitamente; Opus/Haiku no lo
+  // usan), por lo que la Messages API acepta temperature != 1 en todos. Configurable
+  // vía ANALYSIS_TEMPERATURE por si se quiere reintroducir algo de estocasticidad.
+  analysisTemperature: (() => {
+    const t = parseFloat(process.env.ANALYSIS_TEMPERATURE);
+    return Number.isFinite(t) && t >= 0 && t <= 1 ? t : 0;
+  })(),
+
   // APIs de datos de mercado
   coingeckoApiKey: process.env.COINGECKO_API_KEY || '',
 

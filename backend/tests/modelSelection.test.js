@@ -7,8 +7,9 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { resolveModel } from '../src/services/anthropicService.js';
+import { resolveModel, buildLlmRequest } from '../src/services/anthropicService.js';
 import { DEFAULT_ANALYSIS_MODEL } from '../src/config/constants.js';
+import env from '../src/config/env.js';
 
 describe('resolveModel (whitelist)', () => {
   test('id válido → esa entrada', () => {
@@ -30,5 +31,28 @@ describe('resolveModel (whitelist)', () => {
     expect(resolveModel('claude-sonnet-5').disableThinking).toBe(true);
     expect(resolveModel('claude-opus-4-8').disableThinking).toBe(false);
     expect(resolveModel('claude-haiku-4-5').disableThinking).toBe(false);
+  });
+});
+
+describe('buildLlmRequest — temperatura fijada (C1, reproducibilidad)', () => {
+  const ctx = { coin: 'BTC' };
+
+  test('todos los modelos llevan temperature = env.analysisTemperature (default 0)', () => {
+    expect(env.analysisTemperature).toBe(0);
+    for (const id of ['claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5']) {
+      expect(buildLlmRequest(ctx, id).temperature).toBe(0);
+    }
+  });
+
+  test('Sonnet 5 combina thinking:disabled con temperature 0 (ninguno activa thinking)', () => {
+    const req = buildLlmRequest(ctx, 'claude-sonnet-5');
+    expect(req.thinking).toEqual({ type: 'disabled' });
+    expect(req.temperature).toBe(0);
+  });
+
+  test('Opus/Haiku no envían thinking pero sí temperature', () => {
+    const opus = buildLlmRequest(ctx, 'claude-opus-4-8');
+    expect(opus.thinking).toBeUndefined();
+    expect(opus.temperature).toBe(0);
   });
 });

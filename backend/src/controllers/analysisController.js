@@ -383,6 +383,43 @@ export function computeHistorySummaries(histories) {
   return { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, vwapSummary };
 }
 
+/**
+ * Contexto estructural de BTC para el BTC DOMINANCE OVERRIDE del prompt.
+ *
+ * Bug que corrige (auditoría C3): el prompt pedía inferir la estructura de BTC de
+ * `technical["1D"].trend`, pero en un análisis de ETH/SOL ese campo es el trend del
+ * ALT, no de BTC → el guardrail se alimentaba del activo equivocado. Aquí se calcula
+ * el trend REAL de BTC (1D/1W) y se inyecta como bloque `btc_context`.
+ *
+ * - coin === 'BTC': se reutiliza el `technical` ya calculado (source:'self'), sin fetch extra.
+ * - alts: fetch de BTC 1D/1W + computeIndicators. Degraded mode: null en fallo (nunca rompe).
+ *
+ * @param {string} coin
+ * @param {object} technical - bloque technical del activo analizado (para el caso BTC).
+ * @returns {Promise<{trend_1d:string|null, trend_1w:string|null, source:string}|null>}
+ */
+async function buildBtcContext(coin, technical) {
+  if (coin === 'BTC') {
+    return {
+      trend_1d: technical?.['1D']?.trend ?? null,
+      trend_1w: technical?.['1W']?.trend ?? null,
+      source: 'self',
+    };
+  }
+  try {
+    const [btc1D, btc1W] = await Promise.allSettled([fetchOHLC('BTC', '1D'), fetchOHLC('BTC', '1W')]);
+    const c1D = btc1D.status === 'fulfilled' ? btc1D.value : null;
+    const c1W = btc1W.status === 'fulfilled' ? btc1W.value : null;
+    const trend1d = c1D?.length ? computeIndicators(c1D, '1D')?.trend ?? null : null;
+    const trend1w = c1W?.length ? computeIndicators(c1W, '1W')?.trend ?? null : null;
+    if (trend1d == null && trend1w == null) return null;
+    return { trend_1d: trend1d, trend_1w: trend1w, source: 'btc_klines' };
+  } catch (err) {
+    logger.warn({ coin, err: err.message }, 'buildBtcContext: fallo obteniendo contexto BTC');
+    return null;
+  }
+}
+
 async function buildAnalyzeContext(coin, primaryTf) {
   logger.info({ coin, primaryTf }, 'Building analysis payload');
 
@@ -464,6 +501,9 @@ async function buildAnalyzeContext(coin, primaryTf) {
       technical[tf] = { ...indicators, ...distances };
     }
   }
+
+  // Contexto estructural de BTC (real, no el del alt) para el BTC DOMINANCE OVERRIDE (C3).
+  const btcContext = await buildBtcContext(coin, technical);
 
   const histories = getHistories(coin);
   const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, vwapSummary } =
@@ -585,6 +625,10 @@ async function buildAnalyzeContext(coin, primaryTf) {
     },
 
     technical,
+
+    // Estructura real de BTC (1D/1W) para el BTC DOMINANCE OVERRIDE del prompt. Para BTC
+    // es source:'self'; para alts se calcula desde klines de BTC (no del alt). Ver C3.
+    btc_context: btcContext,
 
     timeframe_analysis: tfConflicts,
 

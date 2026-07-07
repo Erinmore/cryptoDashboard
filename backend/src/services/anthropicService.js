@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_0_backend_gating';
+export const PROMPT_VERSION = 'v6_1_btc_context';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -520,7 +520,7 @@ BTC DOMINANCE OVERRIDE (para ETH y SOL)
 
 Si el activo analizado es ETH o SOL:
 
-Infiere el Structure Score de BTC a partir de technical["1D"].trend del dataset. Si trend="strongly_bearish" o trend="bearish", aplica esta regla:
+Infiere el Structure Score de BTC a partir de btc_context.trend_1d del dataset (el trend REAL de BTC en 1D; btc_context.trend_1w da el contexto semanal). NO uses technical["1D"].trend para esto: ese campo es la estructura del propio alt, no la de BTC. Si btc_context.trend_1d="strongly_bearish" o "bearish", aplica esta regla:
 
 Degradar cualquier señal de COMPRAR a ESPERAR, salvo que el activo muestre divergencia de fuerza relativa extrema Y explícita (precio del alt subiendo mientras BTC cae en el mismo TF).
 
@@ -768,11 +768,77 @@ function buildPrompt(ctx) {
  */
 function extractJson(raw) {
   const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence && fence[1].includes('{')) return fence[1].trim();
-  const first = raw.indexOf('{');
-  const last = raw.lastIndexOf('}');
-  if (first !== -1 && last > first) return raw.slice(first, last + 1);
-  return raw;
+  const body = fence && fence[1].includes('{') ? fence[1].trim() : raw;
+  const balanced = firstBalancedObject(body);
+  if (balanced != null) return balanced;
+  // Fallback: substring del primer '{' al último '}' (comportamiento previo). Solo se
+  // alcanza si el escaneo balanceado no cerró (JSON truncado) → deja fallar a JSON.parse.
+  const first = body.indexOf('{');
+  const last = body.lastIndexOf('}');
+  if (first !== -1 && last > first) return body.slice(first, last + 1);
+  return body;
+}
+
+/**
+ * Devuelve el primer objeto JSON de nivel superior balanceado (`{ ... }`) de `s`,
+ * ignorando llaves dentro de strings JSON y escapes. Robustece frente a un `}` espurio
+ * en el narrative: el `slice(first, last)` greedy anterior podía recortar de más/menos.
+ * @param {string} s
+ * @returns {string|null} substring balanceado, o null si no hay objeto cerrado.
+ */
+function firstBalancedObject(s) {
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null; // nunca se cerró (truncado)
+}
+
+const REQUIRED_STRUCTURED_FIELDS = ['action', 'confidence', 'risk_score', 'conviction'];
+const REQUIRED_SCORE_FIELDS = ['derivatives', 'structure', 'volume', 'total'];
+
+/**
+ * Verifica que el `structured` del LLM trae los campos mínimos que el pipeline persiste
+ * y valida (§ analysisValidator + buildAnalysisHeader). Sin esto, un campo ausente se
+ * persistía como `undefined` (degradación silenciosa). Lanza AppError 502 con la lista
+ * de campos que faltan. No valida rangos/coherencia (eso es analysisValidator).
+ * @param {object} structured
+ * @throws {AppError} 502 UPSTREAM_SCHEMA_ERROR
+ */
+function assertStructuredShape(structured) {
+  const missing = [];
+  for (const f of REQUIRED_STRUCTURED_FIELDS) {
+    if (structured[f] === undefined || structured[f] === null) missing.push(f);
+  }
+  const scores = structured.scores;
+  if (scores == null || typeof scores !== 'object') {
+    missing.push('scores');
+  } else {
+    for (const f of REQUIRED_SCORE_FIELDS) {
+      if (scores[f] === undefined || scores[f] === null) missing.push(`scores.${f}`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new AppError(
+      `Anthropic response missing required structured fields: ${missing.join(', ')}`,
+      502,
+      'UPSTREAM_SCHEMA_ERROR',
+    );
+  }
 }
 
 /**
@@ -785,6 +851,11 @@ function buildLlmRequest(context, modelId) {
     model: m.id,
     max_tokens: MAX_TOKENS,
     prompt_version: PROMPT_VERSION,
+    // Temperatura fijada (default 0) → reproducibilidad: el motor de decisión no debe
+    // variar entre reruns del mismo dataset. Ningún modelo aquí activa thinking, así que
+    // la API acepta temperature != 1. Se incluye en el request devuelto para que el
+    // payload descargado ("Download data") refleje exactamente lo que recibe el LLM.
+    temperature: env.analysisTemperature,
     // thinking sólo se desactiva donde hace falta (Sonnet 5 activa adaptive al
     // omitirlo → gasta tokens y puede truncar). Opus/Haiku van sin `thinking`.
     ...(m.disableThinking ? { thinking: { type: 'disabled' } } : {}),
@@ -812,9 +883,9 @@ export async function analyzeMarket(context, modelId) {
   const Anthropic = (await import('@anthropic-ai/sdk')).default;
   const client = new Anthropic({ apiKey: env.anthropicApiKey });
 
-  const { model, max_tokens, thinking, system, messages } = buildLlmRequest(context, modelId);
+  const { model, max_tokens, temperature, thinking, system, messages } = buildLlmRequest(context, modelId);
   const response = await client.messages.create({
-    model, max_tokens, system, messages,
+    model, max_tokens, temperature, system, messages,
     ...(thinking ? { thinking } : {}), // sólo se envía en modelos que lo requieren (Sonnet 5)
   });
 
@@ -863,6 +934,9 @@ export async function analyzeMarket(context, modelId) {
     );
   }
 
+  // Schema mínimo: rechazar 502 antes de persistir campos undefined (degradación silenciosa).
+  assertStructuredShape(parsed.structured);
+
   return {
     structured: parsed.structured,
     narrative: parsed.narrative,
@@ -875,4 +949,4 @@ export async function analyzeMarket(context, modelId) {
   };
 }
 
-export { buildPrompt, buildLlmRequest, extractJson, resolveModel };
+export { buildPrompt, buildLlmRequest, extractJson, resolveModel, assertStructuredShape };

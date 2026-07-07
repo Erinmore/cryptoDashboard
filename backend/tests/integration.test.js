@@ -403,6 +403,18 @@ describe('GET /api/analyze/payload', () => {
     expect(res.body.payload.primary_tf).toBe('1h');
   });
 
+  test('payload.btc_context: source=self for BTC, btc_klines for alts (C3)', async () => {
+    const btc = await request.get('/api/analyze/payload?coin=BTC&primary_tf=4h');
+    expect(btc.body.payload.btc_context).toBeDefined();
+    expect(btc.body.payload.btc_context.source).toBe('self');
+
+    const eth = await request.get('/api/analyze/payload?coin=ETH&primary_tf=4h');
+    // El contexto de BTC para el alt existe y NO es 'self' (se calcula desde klines de BTC).
+    expect(eth.body.payload.btc_context).toBeDefined();
+    expect(eth.body.payload.btc_context.source).toBe('btc_klines');
+    expect(eth.body.payload.btc_context).toHaveProperty('trend_1d');
+  });
+
   test('payload.technical has all four TFs with smc and volume_profile', async () => {
     const res = await request.get('/api/analyze/payload?coin=BTC&primary_tf=4h');
     const tech = res.body.payload.technical;
