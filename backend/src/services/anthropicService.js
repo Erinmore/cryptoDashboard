@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_3_scoring_integrity';
+export const PROMPT_VERSION = 'v6_4_correlation_notes';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -357,17 +357,15 @@ cumulative_net_inflow_usd refleja adopción estructural; no usarlo como señal t
 
 Si data_freshness="stale" (data_lag_days > 2): usar ETF flows exclusivamente como contexto estructural, no como señal táctica de corto plazo. El dato está desactualizado para timing intradía.
 
-INTERACCIÓN ETF FLOWS × FUNDING (señal de co-ocurrencia):
+INTERACCIÓN ETF FLOWS × FUNDING (señal de co-ocurrencia — CUALITATIVA):
 
-La co-ocurrencia de flujos institucionales y presión de funding es estadísticamente más significativa que la suma aritmética de dos señales independientes.
+La co-ocurrencia de flujos institucionales y presión de funding es un contexto a señalar, NO un ajuste numérico fijo. (Nota: la magnitud del efecto no está validada contra el backtesting — ver scripts/auditStats.mjs. No apliques un +0.5/-0.5 mecánico; el número anterior no tenía respaldo cuantitativo.)
 
 Si etf_flows.trend_7d="accumulating" Y funding_rate.severity_negative ∈ {"high_short_overload", "extreme_short_overload"}:
-→ Añadir +0.5 adicional al conviction global (no al Derivatives Score, sino al conviction del output final).
-→ Señalar en el análisis como "confluencia institucional + presión de short squeeze".
+→ Señalar en el análisis como "confluencia institucional + presión de short squeeze" y considerarlo un refuerzo cualitativo del bias alcista, sin sumar un valor fijo.
 
 Si etf_flows.trend_7d="distributing" Y funding_rate.severity ∈ {"high", "extreme"} (funding positivo extremo):
-→ Restar -0.5 adicional al conviction global.
-→ Señalar como "presión de distribución institucional + riesgo de liquidation cascade".
+→ Señalar como "presión de distribución institucional + riesgo de liquidation cascade" y tratarlo como cautela cualitativa adicional, sin restar un valor fijo.
 
 F3. Volatility Index — DVOL (solo BTC y ETH):
 
@@ -644,6 +642,10 @@ entrada óptima
 invalidación
 TP1
 TP2
+
+ANTI-DOUBLE-COUNT RULE (señales de crowding correlacionadas)
+
+Funding Rate, Long/Short Ratio, Fear & Greed y (para el squeeze) ETF Flows miden facetas CORRELACIONADAS del mismo fenómeno: el posicionamiento/crowding del mercado. NO las trates como confirmaciones independientes ni sumes convicción una vez por cada una — es contar el mismo hecho varias veces. Cuando apunten en la misma dirección, repórtalas como UNA lectura de crowding (más robusta), no como N señales que se apilan. La confluencia real exige señales de bloques DISTINTOS (p.ej. estructura + volumen + derivados), no varias métricas del mismo eje.
 
 ANTI-BIAS RULE
 
