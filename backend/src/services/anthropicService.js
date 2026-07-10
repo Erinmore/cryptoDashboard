@@ -750,7 +750,12 @@ construye hipótesis probabilística, nunca certeza.`;
  * @returns {string}
  */
 function buildPrompt(ctx) {
-  return '# DATASET\n' + JSON.stringify(ctx, null, 2);
+  // `expected_scores` es la guardia de divergencia del validador (C2): si el LLM la ve,
+  // puede copiar el score esperado y la guardia deja de ser un chequeo independiente
+  // (auditoría #2, hallazgo 1). Se excluye del dataset que recibe el modelo; sigue en el
+  // payload de /api/analyze/payload y persistida en el header para telemetría.
+  const { expected_scores, ...llmCtx } = ctx ?? {};
+  return '# DATASET\n' + JSON.stringify(llmCtx, null, 2);
 }
 
 /**

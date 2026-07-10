@@ -156,7 +156,9 @@ function renderCard(a) {
     row.appendChild(el('span', 'hist-outcome-label', 'Resultado'));
     for (const [lbl, o] of horizons) {
       let txt = `${lbl}: ${o}`;
-      if (lbl === '24h' && a.pnl_pct_24h != null) txt += ` (${fmtSignedPct(a.pnl_pct_24h)})`;
+      // Direccionales: PnL de la estrategia (firmado por dirección); resto: movimiento crudo.
+      const pnl24 = a.pnl_signed_pct_24h ?? a.pnl_pct_24h;
+      if (lbl === '24h' && pnl24 != null) txt += ` (${fmtSignedPct(pnl24)})`;
       row.appendChild(el('span', `hist-outcome-badge ${outcomeClass(o)}`, txt));
     }
     if (hasSetupOutcome) {
@@ -260,8 +262,8 @@ function renderStats(s) {
     metric('IC 95% (Wilson)', `${s.win_rate_ci_low}–${s.win_rate_ci_high}%`);
   }
   metric('PnL medio 24h',
-    s.avg_pnl_pct_24h != null ? fmtSignedPct(s.avg_pnl_pct_24h) : '—',
-    s.avg_pnl_pct_24h == null ? '' : s.avg_pnl_pct_24h >= 0 ? 'win' : 'loss');
+    s.avg_pnl_signed_pct_24h != null ? fmtSignedPct(s.avg_pnl_signed_pct_24h) : '—',
+    s.avg_pnl_signed_pct_24h == null ? '' : s.avg_pnl_signed_pct_24h >= 0 ? 'win' : 'loss');
   metric('W / L 24h (n=' + (s.directional_n ?? 0) + ')', `${s.win_24h ?? 0} / ${s.loss_24h ?? 0}`);
   metric('Setups TP / Stop', `${s.setup_tp ?? 0} / ${s.setup_stop ?? 0}`);
   if (s.setup_fill_rate != null) metric('Setup fill-rate', `${s.setup_fill_rate}%`);

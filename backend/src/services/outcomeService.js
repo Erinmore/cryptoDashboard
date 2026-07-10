@@ -73,6 +73,14 @@ async function processAnalysis(a, now) {
   out.pnl_pct_24h = (priceAt && out.price_24h_later != null)
     ? parseFloat((((out.price_24h_later - priceAt) / priceAt) * 100).toFixed(2))
     : null;
+  // PnL FIRMADO por dirección (auditoría #2, hallazgo 3): pnl_pct_24h es el movimiento
+  // crudo del precio (drift de referencia) — para un Vender ganador sale negativo. El
+  // firmado (× dir) es el PnL de la estrategia; solo tiene sentido en direccionales
+  // (Comprar/Vender), null para Esperar/Preparar.
+  const dir = a.action === 'Comprar' ? 1 : a.action === 'Vender' ? -1 : 0;
+  out.pnl_signed_pct_24h = (dir !== 0 && out.pnl_pct_24h != null)
+    ? parseFloat((out.pnl_pct_24h * dir).toFixed(2))
+    : null;
 
   // Barrier del setup (solo si hay setup ejecutable y aún no está resuelto).
   // Terminal = outcome no nulo y distinto de 'open' (tp1/tp2/stop/expired/not_triggered/invalid).

@@ -551,7 +551,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
   // El validador compara el score del LLM contra este esperado y degrada si contradice
   // flagrantemente el dato → la puerta deja de validarse solo contra el auto-reporte del LLM.
   const expectedScores = computeExpectedScores(
-    { derivatives: { funding_rate: fr, long_short_ratio: lsr }, technical, order_book: orderBook },
+    { derivatives: { funding_rate: fr, long_short_ratio: lsr }, technical },
     primaryTf,
   );
 
@@ -637,9 +637,10 @@ async function buildAnalyzeContext(coin, primaryTf) {
 
     gating,
 
-    // Scores esperados por el backend (guardia de divergencia, C2). El LLM no los ve como
-    // instrucción; el validador los usa para detectar que su score de la puerta contradice
-    // el dato. Se persisten para calibración (LLM vs backend).
+    // Scores esperados por el backend (guardia de divergencia, C2). buildPrompt los EXCLUYE
+    // del dataset que recibe el LLM (si los viera podría copiarlos y anular la guardia —
+    // auditoría #2, hallazgo 1); el validador los usa para detectar que el score de la
+    // puerta contradice el dato. Se persisten para calibración (LLM vs backend).
     expected_scores: expectedScores,
 
     derivatives: {

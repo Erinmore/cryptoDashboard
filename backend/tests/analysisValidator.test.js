@@ -167,13 +167,41 @@ describe('validateAnalysis — coherencia de setup', () => {
     expect(validateAnalysis(bad).hasSevere).toBe(true);
   });
 
-  test('setup long con tp1 por debajo de entry → minor setup_tp_side', () => {
+  // Auditoría #2 (hallazgo 18): geometría incoherente en setup EJECUTABLE → severe
+  // (se muestra al usuario con niveles operables); no ejecutable → minor (telemetría).
+  test('setup ejecutable con tp1 en el lado equivocado → SEVERE setup_tp_side', () => {
     const bad = base({
       action: 'Preparar',
       has_executable_setup: true,
       setup: { entry_price: 100, stop_price: 95, tp1_price: 98, tp2_price: 110, validity_candles: 8, tf_execution: '4h' },
     });
-    expect(rules(bad)).toContain('setup_tp_side');
+    const v = validateAnalysis(bad);
+    expect(v.warnings.find(w => w.rule === 'setup_tp_side')?.severity).toBe('severe');
+    expect(v.hasSevere).toBe(true);
+  });
+
+  test('setup NO ejecutable con tp1 en el lado equivocado → minor setup_tp_side', () => {
+    const bad = base({
+      action: 'Esperar',
+      has_executable_setup: false,
+      setup: { entry_price: 100, stop_price: 95, tp1_price: 98, tp2_price: 110, validity_candles: 8, tf_execution: '4h' },
+    });
+    expect(validateAnalysis(bad).warnings.find(w => w.rule === 'setup_tp_side')?.severity).toBe('minor');
+  });
+
+  test('setup ejecutable con stop==entry → SEVERE setup_stop_eq_entry', () => {
+    const bad = base({
+      action: 'Preparar',
+      has_executable_setup: true,
+      setup: { entry_price: 100, stop_price: 100, tp1_price: 110, tp2_price: 120, validity_candles: 8, tf_execution: '4h' },
+    });
+    const v = validateAnalysis(bad);
+    expect(v.warnings.find(w => w.rule === 'setup_stop_eq_entry')?.severity).toBe('severe');
+  });
+
+  test('primary_driver fuera del enum → minor primary_driver_enum', () => {
+    expect(rules(base({ primary_driver: 'vibes' }))).toContain('primary_driver_enum');
+    expect(rules(base({ primary_driver: 'macro' }))).not.toContain('primary_driver_enum');
   });
 });
 

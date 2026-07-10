@@ -249,7 +249,8 @@ function runMigrations(db) {
       setup_hit_stop INTEGER,
       setup_outcome TEXT,
 
-      pnl_pct_24h REAL
+      pnl_pct_24h REAL,        -- movimiento crudo del precio (drift, sin dirección)
+      pnl_signed_pct_24h REAL  -- PnL de la estrategia (× dir); solo Comprar/Vender
     );
 
     -- ── Table 4: analysis_liquidation_snapshot (up to 10 rows per analysis) ───
@@ -321,6 +322,10 @@ function runMigrations(db) {
   ensureColumn(db, 'analyses', 'score_total_backend', 'REAL');
   ensureColumn(db, 'analyses', 'score_derivatives_expected', 'INTEGER');
   ensureColumn(db, 'analyses', 'score_volume_expected', 'INTEGER');
+  // Auditoría #2, hallazgo 3: PnL firmado por dirección (pnl_pct_24h era el movimiento
+  // crudo del precio — un Vender ganador aportaba negativo al promedio). Filas viejas →
+  // NULL; el job las rellena al reprocesar (mientras price_7d_later siga pendiente).
+  ensureColumn(db, 'analysis_outcome', 'pnl_signed_pct_24h', 'REAL');
 }
 
 export function closeDb() {

@@ -156,7 +156,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
 
       -- Resultado a posteriori (analysis_outcome), null si aún no evaluado
       o.outcome_1h, o.outcome_24h, o.outcome_7d,
-      o.pnl_pct_24h, o.price_24h_later,
+      o.pnl_pct_24h, o.pnl_signed_pct_24h, o.price_24h_later,
       o.setup_outcome, o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop
     FROM analyses a
     LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
@@ -223,12 +223,14 @@ export function upsertOutcome(o) {
       analysis_id, price_at_analysis,
       price_1h_later, price_4h_later, price_24h_later, price_7d_later,
       outcome_1h, outcome_24h, outcome_7d,
-      setup_hit_tp1, setup_hit_tp2, setup_hit_stop, setup_outcome, pnl_pct_24h
+      setup_hit_tp1, setup_hit_tp2, setup_hit_stop, setup_outcome, pnl_pct_24h,
+      pnl_signed_pct_24h
     ) VALUES (
       @analysis_id, @price_at_analysis,
       @price_1h_later, @price_4h_later, @price_24h_later, @price_7d_later,
       @outcome_1h, @outcome_24h, @outcome_7d,
-      @setup_hit_tp1, @setup_hit_tp2, @setup_hit_stop, @setup_outcome, @pnl_pct_24h
+      @setup_hit_tp1, @setup_hit_tp2, @setup_hit_stop, @setup_outcome, @pnl_pct_24h,
+      @pnl_signed_pct_24h
     )
     ON CONFLICT(analysis_id) DO UPDATE SET
       price_at_analysis = excluded.price_at_analysis,
@@ -237,7 +239,8 @@ export function upsertOutcome(o) {
       outcome_1h = excluded.outcome_1h, outcome_24h = excluded.outcome_24h, outcome_7d = excluded.outcome_7d,
       setup_hit_tp1 = excluded.setup_hit_tp1, setup_hit_tp2 = excluded.setup_hit_tp2,
       setup_hit_stop = excluded.setup_hit_stop, setup_outcome = excluded.setup_outcome,
-      pnl_pct_24h = excluded.pnl_pct_24h
+      pnl_pct_24h = excluded.pnl_pct_24h,
+      pnl_signed_pct_24h = excluded.pnl_signed_pct_24h
   `).run({
     analysis_id:       o.analysis_id,
     price_at_analysis: o.price_at_analysis ?? null,
@@ -252,7 +255,8 @@ export function upsertOutcome(o) {
     setup_hit_tp2:     o.setup_hit_tp2 ?? null,
     setup_hit_stop:    o.setup_hit_stop ?? null,
     setup_outcome:     o.setup_outcome ?? null,
-    pnl_pct_24h:       o.pnl_pct_24h ?? null,
+    pnl_pct_24h:        o.pnl_pct_24h ?? null,
+    pnl_signed_pct_24h: o.pnl_signed_pct_24h ?? null,
   });
 }
 
@@ -267,7 +271,10 @@ const OUTCOME_AGG_COLS = `
     SUM(CASE WHEN o.outcome_24h = 'win'  THEN 1 ELSE 0 END)     AS win_24h,
     SUM(CASE WHEN o.outcome_24h = 'loss' THEN 1 ELSE 0 END)     AS loss_24h,
     SUM(CASE WHEN o.outcome_24h = 'flat' THEN 1 ELSE 0 END)     AS flat_24h,
-    ROUND(AVG(o.pnl_pct_24h), 2)                                AS avg_pnl_pct_24h,
+    -- PnL de la estrategia: firmado por dirección y SOLO direccionales. El promedio del
+    -- pnl crudo sobre todas las acciones era la deriva del mercado, no rendimiento.
+    ROUND(AVG(CASE WHEN a.action IN ('Comprar','Vender')
+      THEN o.pnl_signed_pct_24h END), 2)                        AS avg_pnl_signed_pct_24h,
     SUM(CASE WHEN o.setup_outcome IN ('tp1','tp2') THEN 1 ELSE 0 END) AS setup_tp,
     SUM(CASE WHEN o.setup_outcome = 'stop' THEN 1 ELSE 0 END)   AS setup_stop,
     SUM(CASE WHEN o.setup_outcome = 'open' THEN 1 ELSE 0 END)   AS setup_open,

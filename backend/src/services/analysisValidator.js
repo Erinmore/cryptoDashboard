@@ -22,6 +22,7 @@
 
 const ACTIONS = ['Comprar', 'Vender', 'Preparar', 'Esperar'];
 const CONFIDENCES = ['Alta', 'Media', 'Baja'];
+const DRIVERS = ['derivatives', 'structure', 'macro', 'volume', 'onchain'];
 const SCORE_KEYS = ['derivatives', 'structure', 'volume', 'onchain'];
 
 const isInt    = (v) => Number.isInteger(v);
@@ -59,6 +60,9 @@ export function validateAnalysis(structured, opts = {}) {
   }
   if (!CONFIDENCES.includes(confidence)) {
     warn('confidence_enum', 'minor', `confidence="${confidence}" no es uno de ${CONFIDENCES.join('|')}`);
+  }
+  if (structured.primary_driver != null && !DRIVERS.includes(structured.primary_driver)) {
+    warn('primary_driver_enum', 'minor', `primary_driver="${structured.primary_driver}" no es uno de ${DRIVERS.join('|')}`);
   }
 
   // ── Rangos numéricos ──────────────────────────────────────────────────────
@@ -166,17 +170,22 @@ export function validateAnalysis(structured, opts = {}) {
   }
 
   // ── Dirección del setup coherente con la acción ───────────────────────────
+  // Auditoría #2, hallazgo 18: una geometría incoherente (stop==entry: dirección
+  // indeterminable; TP en el lado de la pérdida) en un setup EJECUTABLE se muestra al
+  // usuario con niveles operables → severe (degrada y neutraliza el setup). Si el LLM
+  // no lo declaró ejecutable, queda en minor (telemetría).
+  const geomSeverity = has_executable_setup === true ? 'severe' : 'minor';
   if (hasSetup) {
     const { entry_price, stop_price, tp1_price } = setup;
     if (isNum(entry_price) && isNum(stop_price) && isNum(tp1_price)) {
       if (stop_price === entry_price) {
-        warn('setup_stop_eq_entry', 'minor', `setup stop_price==entry_price (${entry_price})`);
+        warn('setup_stop_eq_entry', geomSeverity, `setup stop_price==entry_price (${entry_price})`);
       } else {
         const dir = stop_price < entry_price ? 'long' : 'short';
         // TP1 debe estar en el lado del beneficio según la dirección.
         const tpOk = dir === 'long' ? tp1_price > entry_price : tp1_price < entry_price;
         if (!tpOk) {
-          warn('setup_tp_side', 'minor', `setup ${dir}: tp1=${tp1_price} en el lado equivocado de entry=${entry_price}`);
+          warn('setup_tp_side', geomSeverity, `setup ${dir}: tp1=${tp1_price} en el lado equivocado de entry=${entry_price}`);
         }
         // La acción debe coincidir con la dirección geométrica del setup.
         if (action === 'Comprar' && dir !== 'long') {

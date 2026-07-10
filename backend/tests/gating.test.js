@@ -320,6 +320,26 @@ describe('computeGating — dedupe veto↔contradicciones (H4)', () => {
     expect(g.contradiction_count).toBeLessThan(g.contradictions_raw_count);
   });
 
+  // Auditoría #2 (hallazgo 6): el OI es la tercera pata del veto (oi_not_expanding con
+  // change<+1% subsume el <0 de la contradicción) — con veto activo tampoco se recuenta.
+  test('con veto activo y OI cayendo → oi_flat_or_falling también se descuenta', () => {
+    const ctx = longVetoContext();
+    ctx.openInterest = { change_24h_pct: -2 }; // <0: contradicción; <+1%: pata del veto
+    const g = computeGating(ctx);
+    expect(g.veto_long).toBe(true);
+    expect(g.contradictions.map((c) => c.code)).not.toContain('oi_flat_or_falling');
+    expect(g.deduped_by_veto).toContain('oi_flat_or_falling');
+  });
+
+  test('SIN veto, OI cayendo → oi_flat_or_falling sí cuenta (el dedupe es solo con veto)', () => {
+    const ctx = longVetoContext();
+    ctx.technical['1D'].cvd.divergence = 'none'; // rompe la pata CVD → sin veto
+    ctx.openInterest = { change_24h_pct: -2 };
+    const g = computeGating(ctx);
+    expect(g.veto_long).toBe(false);
+    expect(g.contradictions.map((c) => c.code)).toContain('oi_flat_or_falling');
+  });
+
   test('propaga data_insufficient y missing_structural_confirmation', () => {
     const ctx = longVetoContext();
     ctx.openInterest = null;

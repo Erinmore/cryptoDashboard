@@ -23,7 +23,8 @@
  *    cercanía a cualquier pivote.
  *  - H4 · DEDUPE veto↔contradicciones: si un veto está activo, no se recuentan como
  *    contradicciones "independientes" los hechos que ya construyeron ese veto
- *    (CVD 1D, cercanía a nivel) — evita sobre-determinar la decisión con datos correlados.
+ *    (CVD 1D, cercanía a nivel, OI sin expandir) — evita sobre-determinar la decisión
+ *    con datos correlados.
  */
 
 const NEAR_LEVEL_PCT = 1.5; // "precio dentro del 1.5% de una S/R"
@@ -269,7 +270,8 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
  * conteo que gobierna la regla de >=3 → Esperar:
  *
  *  1. DEDUPE veto↔contradicciones (H4): si un veto está activo, los hechos que ya lo
- *     construyeron (CVD 1D, cercanía a nivel) no se recuentan como evidencia independiente.
+ *     construyeron (CVD 1D, cercanía a nivel, OI sin expandir) no se recuentan como
+ *     evidencia independiente.
  *  2. DEDUPE por BLOQUE (B1 / ANTI-DOUBLE-COUNT): `contradiction_count` cuenta bloques
  *     analíticos DISTINTOS (volume/derivatives/structure), no señales sueltas — varias
  *     señales del mismo bloque son el mismo eje. Máximo 3.
@@ -286,7 +288,10 @@ export function computeGating(args) {
   const contra = computeContradictions(args);
 
   const vetoActive = vetos.veto_long || vetos.veto_short;
-  const DEDUPE_CODES = new Set(['cvd_1d_divergence', 'price_near_key_level']);
+  // Las TRES patas del veto se descuentan: CVD 1D, cercanía a nivel y también el OI
+  // (auditoría #2, hallazgo 6 — `oi_not_expanding` con change<+1% subsume el <0 de la
+  // contradicción; con veto activo, recontar el OI era recontar un hecho constituyente).
+  const DEDUPE_CODES = new Set(['cvd_1d_divergence', 'price_near_key_level', 'oi_flat_or_falling']);
 
   let contradictions = contra.contradictions;
   let deduped = [];

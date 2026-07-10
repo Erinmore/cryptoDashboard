@@ -131,3 +131,36 @@ describe('runOutcomeJob — contraste: setup con entry_price válido sí corre e
     expect(out.setup_outcome).toBe('tp1');
   });
 });
+
+describe('runOutcomeJob — PnL firmado por dirección (auditoría #2, hallazgo 3)', () => {
+  test('Vender con precio cayendo → pnl crudo negativo, pnl firmado positivo (win)', async () => {
+    const now = Date.now();
+    fetchHistoricalClose.mockResolvedValue(90); // -10% a todos los horizontes vencidos
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Vender',
+      timestamp: iso(now - 25 * HOUR), // 24h vencido, 7d no
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.pnl_pct_24h).toBe(-10);        // drift crudo del precio
+    expect(out.pnl_signed_pct_24h).toBe(10);  // PnL de la estrategia (short ganador)
+    expect(out.outcome_24h).toBe('win');
+  });
+
+  test('Esperar → pnl firmado null (no direccional), crudo se conserva', async () => {
+    const now = Date.now();
+    fetchHistoricalClose.mockResolvedValue(105);
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar',
+      timestamp: iso(now - 25 * HOUR),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.pnl_pct_24h).toBe(5);
+    expect(out.pnl_signed_pct_24h).toBeNull();
+  });
+});
