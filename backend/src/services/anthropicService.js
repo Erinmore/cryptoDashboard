@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_6_cvd_veto_semantics';
+export const PROMPT_VERSION = 'v6_7_prepare_gate';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -442,7 +442,7 @@ gating.veto_short=true: prohibido recomendar VENDER. El output es ESPERAR.
 
 Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish divergence con fuerza no marginal (cvd_strength moderate/strong) + OI sin expandir + resistencia fuerte (3+ toques) a <=1.5%; VETO SHORT = el espejo exacto (CVD 1D bullish divergence con fuerza no marginal + OI sin expandir + soporte fuerte a <=1.5%). Una divergencia con cvd_strength="marginal" NO arma el veto (es ruido de fondo). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
 
-FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Puedes usar PREPARAR/ESPERAR y señalar qué dato falta.
+FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Puedes usar ESPERAR, o un PREPARAR SIN setup ejecutable (has_executable_setup=false), señalando qué dato falta — un Preparar con niveles ejecutables también queda bloqueado con datos críticos ausentes.
 
 Cuando un veto esté activo o data_insufficient: pon gating_active=true y refleja el motivo en gating_reason del output, y explica en el análisis qué tendría que cambiar para levantarlo.
 
@@ -488,6 +488,8 @@ Derivatives Score >= +1 Y condición de squeeze identificada (funding negativo e
 Structure Score >= 0 (estructura no es adversa)
 No hay trigger de entrada confirmado
 El setup puede activarse en la ventana de validez definida
+
+La puerta de PREPARAR con setup ejecutable SE VALIDA en el backend igual que las de Comprar/Vender: un Preparar con has_executable_setup=true que no cumpla Derivatives >= +1 y Structure >= 0 será degradado a Esperar. Si el setup no cumple la puerta, emite Preparar SIN setup (has_executable_setup=false) describiendo qué falta, o directamente Esperar.
 
 Output de PREPARAR incluye:
 - Condición exacta de activación (precio de ruptura, cierre de vela, volumen mínimo)

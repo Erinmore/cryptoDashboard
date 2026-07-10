@@ -73,7 +73,8 @@ const MOCK_DERIVATIVES = {
     predicted_rate_pct: 0.012,
   },
   open_interest: {
-    value_usd: 25e9,
+    value_coins: 260000, // Coinalyze reporta en monedas base (auditoria #2, hallazgo 4)
+    unit: 'base_coin',
     change_24h_pct: 1.5,
     signal: 'neutral',
   },
@@ -106,6 +107,12 @@ jest.unstable_mockModule('../src/services/fearGreedService.js', () => ({
 
 jest.unstable_mockModule('../src/services/coinalyzeService.js', () => ({
   fetchDerivativesData: jest.fn(async () => MOCK_DERIVATIVES),
+  // Réplica del helper real (pura): deriva el USD del OI sin mutar el cacheado.
+  withDerivedOiUsd: (derivatives, price) => {
+    const oi = derivatives?.open_interest;
+    if (!oi || oi.value_coins == null || !price) return derivatives;
+    return { ...derivatives, open_interest: { ...oi, value_usd: Math.round(oi.value_coins * price), value_usd_basis: 'derived_coins_x_spot' } };
+  },
 }));
 
 jest.unstable_mockModule('../src/services/binanceOrderBookService.js', () => ({

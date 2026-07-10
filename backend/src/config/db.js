@@ -326,6 +326,11 @@ function runMigrations(db) {
   // crudo del precio — un Vender ganador aportaba negativo al promedio). Filas viejas →
   // NULL; el job las rellena al reprocesar (mientras price_7d_later siga pendiente).
   ensureColumn(db, 'analysis_outcome', 'pnl_signed_pct_24h', 'REAL');
+  // Auditoría #2, hallazgo 4: el OI de Coinalyze viene en monedas base, no USD. La
+  // medida canónica se persiste en oi_value_coins; oi_value_usd pasa a guardar el USD
+  // real DERIVADO (coins × spot). Filas viejas: oi_value_usd contiene monedas
+  // mal etiquetadas (pre-fix) — distinguibles por oi_value_coins NULL.
+  ensureColumn(db, 'analyses', 'oi_value_coins', 'REAL');
 }
 
 export function closeDb() {

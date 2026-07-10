@@ -183,7 +183,13 @@ export async function fetchOpenInterest(coin) {
     }
 
     const result = {
-      value_usd: current,
+      // Coinalyze devuelve el OI en UNIDADES BASE del instrumento (BTC/ETH/SOL), no en
+      // USD — verificado contra convert_to_usd=true (auditoría #2, hallazgo 4). Se
+      // mantiene como medida canónica (independiente del precio → change_24h_pct mide
+      // posicionamiento real, no rallies); los controllers derivan el USD real con
+      // withDerivedOiUsd (value_coins × precio spot) para display/LLM.
+      value_coins: current,
+      unit: 'base_coin',
       change_24h_pct,
       signal,
       // Timestamp del propio dato de Coinalyze (`entry.update`, epoch ms) — cache TTL 5min.
@@ -368,6 +374,28 @@ export async function fetchLiquidations(coin) {
 }
 
 // ─── Fetch todo junto ─────────────────────────────────────────────────────────
+
+/**
+ * Deriva el OI en USD real (value_coins × precio spot) SIN mutar el objeto cacheado
+ * (cacheGet devuelve la misma referencia). `value_usd` es DERIVADO, no viene del
+ * exchange: value_usd_basis lo declara para que el LLM/consumidores conozcan la
+ * procedencia. Función pura.
+ * @param {object|null} derivatives - resultado de fetchDerivativesData
+ * @param {number|null} price - precio spot actual
+ * @returns {object|null}
+ */
+export function withDerivedOiUsd(derivatives, price) {
+  const oi = derivatives?.open_interest;
+  if (!oi || oi.value_coins == null || !price) return derivatives;
+  return {
+    ...derivatives,
+    open_interest: {
+      ...oi,
+      value_usd: Math.round(oi.value_coins * price),
+      value_usd_basis: 'derived_coins_x_spot',
+    },
+  };
+}
 
 export async function fetchDerivativesData(coin) {
   if (!env.hasDerivativesData) return null;

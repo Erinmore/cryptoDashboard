@@ -29,11 +29,15 @@ import { validateAnalysis, applyFailSafe } from './analysisValidator.js';
  */
 export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failClosedOnMissing = true, expectedScores = null, currentPrice = null) {
   const vetoActive = !!(gating?.veto_long || gating?.veto_short);
-  // H2 · Fail-closed: datos críticos ausentes bloquean trades DIRECCIONALES (Comprar/Vender).
-  // No bloquea Preparar/Esperar (no abren posición inmediata). Es un hard gate del backend.
-  const directional = rawStructured?.action === 'Comprar' || rawStructured?.action === 'Vender';
+  // H2 · Fail-closed: datos críticos ausentes bloquean trades DIRECCIONALES (Comprar/Vender)
+  // y también un Preparar ACCIONABLE (con setup ejecutable: emite niveles operables
+  // condicionales que no deben nacer a ciegas — auditoría #2, hallazgo 5). Un Preparar
+  // contemplativo (sin setup) y Esperar no se bloquean.
+  const action = rawStructured?.action;
+  const directional = action === 'Comprar' || action === 'Vender';
+  const preparesSetup = action === 'Preparar' && rawStructured?.has_executable_setup === true;
   const dataInsufficientGate =
-    !!failClosedOnMissing && !!gating?.data_insufficient && directional;
+    !!failClosedOnMissing && !!gating?.data_insufficient && (directional || preparesSetup);
 
   if (vetoActive || dataInsufficientGate) {
     // Autoritativo: imponer gating_active=true ANTES de validar → el validador dispara

@@ -177,6 +177,9 @@ export async function fetchCurrentPrice(coin) {
     const result = {
       price: data[coinId].usd,
       change_24h_pct: data[coinId].usd_24h_change ?? 0,
+      // Momento REAL del fetch: sobrevive al TTL de cache para que price_timestamp_utc
+      // refleje la frescura verdadera del dato, no el momento de construir el payload.
+      fetched_at: new Date().toISOString(),
     };
 
     cacheSet(cacheKey, result, 30); // 30 seg

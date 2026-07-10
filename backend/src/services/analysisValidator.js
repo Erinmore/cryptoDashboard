@@ -113,6 +113,15 @@ export function validateAnalysis(structured, opts = {}) {
     warn('sell_gate', 'severe',
       `Vender exige derivatives<=-1 y volume<=-1 (derivatives=${s.derivatives}, volume=${s.volume})`);
   }
+  // Puerta de PREPARAR (auditoría #2, hallazgo 5): el prompt la define (Derivatives>=+1,
+  // Structure>=0) pero nadie la validaba — era la vía de escape del gating: mismos niveles
+  // ejecutables en pantalla sin pasar ninguna puerta de score. Solo aplica al Preparar
+  // ACCIONABLE (con setup ejecutable); un Preparar contemplativo sin setup no bloquea.
+  if (action === 'Preparar' && has_executable_setup === true
+      && !(isInt(s.derivatives) && s.derivatives >= 1 && isInt(s.structure) && s.structure >= 0)) {
+    warn('prepare_gate', 'severe',
+      `Preparar con setup ejecutable exige derivatives>=+1 y structure>=0 (derivatives=${s.derivatives}, structure=${s.structure})`);
+  }
 
   // ── Guardia de divergencia de scores (C2) ─────────────────────────────────
   // La puerta de arriba compara el score del LLM contra sí misma (circular). Aquí lo
@@ -122,17 +131,27 @@ export function validateAnalysis(structured, opts = {}) {
   // deliberadamente conservador: no micro-gestiona, solo caza contradicciones flagrantes.
   const exp = opts.expectedScores;
   if (exp) {
+    // Dirección efectiva del análisis: Comprar/Vender por la acción; Preparar por la
+    // geometría de su setup ejecutable (long si stop<entry) — sin esto, Preparar era
+    // una vía de escape de la guardia (auditoría #2, hallazgo 5).
+    const geomDir = (setup != null && isNum(setup.entry_price) && isNum(setup.stop_price)
+      && setup.stop_price !== setup.entry_price)
+      ? (setup.stop_price < setup.entry_price ? 'long' : 'short') : null;
+    const effDir = action === 'Comprar' ? 'long'
+      : action === 'Vender' ? 'short'
+      : (action === 'Preparar' && has_executable_setup === true) ? geomDir
+      : null;
     const checkDiv = (block) => {
       const llm = s[block];
       const e = exp[block]?.score;
-      if (!isInt(llm) || !isNum(e)) return;
-      if (action === 'Comprar' && llm >= 1 && e <= -1) {
+      if (!isInt(llm) || !isNum(e) || !effDir) return;
+      if (effDir === 'long' && llm >= 1 && e <= -1) {
         warn(`score_divergence_${block}`, 'severe',
-          `Comprar con ${block}=${llm} pero el backend espera ${block}≈${e} desde el dato (${(exp[block].basis || []).join('; ')})`);
+          `${action} (long) con ${block}=${llm} pero el backend espera ${block}≈${e} desde el dato (${(exp[block].basis || []).join('; ')})`);
       }
-      if (action === 'Vender' && llm <= -1 && e >= 1) {
+      if (effDir === 'short' && llm <= -1 && e >= 1) {
         warn(`score_divergence_${block}`, 'severe',
-          `Vender con ${block}=${llm} pero el backend espera ${block}≈${e} desde el dato (${(exp[block].basis || []).join('; ')})`);
+          `${action} (short) con ${block}=${llm} pero el backend espera ${block}≈${e} desde el dato (${(exp[block].basis || []).join('; ')})`);
       }
     };
     checkDiv('derivatives');

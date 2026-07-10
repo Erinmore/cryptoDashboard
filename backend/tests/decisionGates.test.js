@@ -156,3 +156,35 @@ describe('applyDecisionGates — fail-safe de observación (reglas del prompt, n
     expect(applyDecisionGates(buyStructured(), noGating, true).degraded).toBe(false);
   });
 });
+
+describe('applyDecisionGates — fail-closed cubre Preparar accionable (auditoría #2, hallazgo 5)', () => {
+  const gatingInsufficient = {
+    veto_long: false, veto_short: false, veto_reason: null,
+    data_insufficient: true, missing_inputs: ['cvd_1d'], contradiction_count: 0,
+  };
+
+  test('data_insufficient + Preparar CON setup ejecutable → degradado a Esperar', () => {
+    const raw = {
+      action: 'Preparar', confidence: 'Media', risk_score: 5, conviction: 0.5,
+      has_executable_setup: true, gating_active: false,
+      scores: { derivatives: 1, structure: 0, volume: 0, onchain: 0, total: 0.5 },
+      setup: { entry_price: 105, stop_price: 100, tp1_price: 115 },
+    };
+    const r = applyDecisionGates(raw, gatingInsufficient, false, true);
+    expect(r.hardGate).toBe(true);
+    expect(r.structured.action).toBe('Esperar');
+    expect(r.structured.setup).toBeNull();
+  });
+
+  test('data_insufficient + Preparar SIN setup → no se bloquea', () => {
+    const raw = {
+      action: 'Preparar', confidence: 'Media', risk_score: 5, conviction: 0.5,
+      has_executable_setup: false, gating_active: false,
+      scores: { derivatives: 1, structure: 0, volume: 0, onchain: 0, total: 0.5 },
+      setup: null,
+    };
+    const r = applyDecisionGates(raw, gatingInsufficient, false, true);
+    expect(r.hardGate).toBe(false);
+    expect(r.structured.action).toBe('Preparar');
+  });
+});

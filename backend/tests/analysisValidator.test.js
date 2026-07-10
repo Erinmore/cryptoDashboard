@@ -323,3 +323,45 @@ describe('applyFailSafe — Fase 2 (degradar a Esperar ante violación severa)',
     expect(structured.missing_confirmations).toEqual(['expansión de Open Interest']);
   });
 });
+
+describe('validateAnalysis — puerta de PREPARAR (auditoría #2, hallazgo 5)', () => {
+  // El prompt define la puerta (Derivatives >= +1, Structure >= 0) pero nadie la
+  // validaba: Preparar con setup ejecutable era la vía de escape del gating.
+  const prepSetup = { entry_price: 105, stop_price: 100, tp1_price: 115, tp2_price: 125, validity_candles: 8, tf_execution: '4h' };
+
+  test('Preparar accionable sin cumplir la puerta → severe prepare_gate', () => {
+    const bad = base({
+      action: 'Preparar', has_executable_setup: true, setup: prepSetup,
+      scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
+    });
+    const v = validateAnalysis(bad);
+    expect(v.warnings.find(w => w.rule === 'prepare_gate')?.severity).toBe('severe');
+  });
+
+  test('Preparar accionable con derivatives>=+1 y structure>=0 → sin prepare_gate', () => {
+    const ok = base({
+      action: 'Preparar', has_executable_setup: true, setup: prepSetup,
+      scores: { derivatives: 1, structure: 0, volume: 0, onchain: 0, total: 0.5 },
+    });
+    expect(rules(ok)).not.toContain('prepare_gate');
+  });
+
+  test('Preparar contemplativo (sin setup ejecutable) no exige la puerta', () => {
+    const ok = base({
+      action: 'Preparar', has_executable_setup: false, setup: null,
+      scores: { derivatives: 0, structure: -1, volume: 0, onchain: 0, total: -0.3 },
+    });
+    expect(rules(ok)).not.toContain('prepare_gate');
+  });
+
+  test('guardia de divergencia cubre Preparar accionable (dirección por geometría)', () => {
+    const bad = base({
+      action: 'Preparar', has_executable_setup: true, setup: prepSetup, // long (stop<entry)
+      scores: { derivatives: 1, structure: 0, volume: 1, onchain: 0, total: 0.7 },
+    });
+    const v = validateAnalysis(bad, {
+      expectedScores: { derivatives: { score: -1, basis: ['funding high'] }, volume: { score: 0, basis: [] } },
+    });
+    expect(v.warnings.find(w => w.rule === 'score_divergence_derivatives')?.severity).toBe('severe');
+  });
+});

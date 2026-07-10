@@ -226,11 +226,14 @@ export function computeHistorySummaries(histories) {
     const last6Open  = has24h ? last6.at(0)?.o ?? null : null;
     const last6Close = last6.at(-1)?.c ?? null;
     const change24hPct = has24h && last6Open ? ((last6Close - last6Open) / last6Open) * 100 : null;
+    // Los candles de OI de Coinalyze vienen en MONEDAS BASE, no USD (hallazgo 4 de la
+    // auditoría #2) — los campos lo declaran; los % de cambio son invariantes a la unidad.
     openInterestSummary = {
-      open_7d_usd:    open7d,
-      current_usd:    close7d,
-      high_7d_usd:    has7d ? Math.max(...oiHistory.map(e => e.h)) : null,
-      low_7d_usd:     has7d ? Math.min(...oiHistory.map(e => e.l)) : null,
+      unit:            'base_coin',
+      open_7d_coins:   open7d,
+      current_coins:   close7d,
+      high_7d_coins:   has7d ? Math.max(...oiHistory.map(e => e.h)) : null,
+      low_7d_coins:    has7d ? Math.min(...oiHistory.map(e => e.l)) : null,
       change_7d_pct:  change7dPct  !== null ? parseFloat(change7dPct.toFixed(2))  : null,
       change_24h_pct: change24hPct !== null ? parseFloat(change24hPct.toFixed(2)) : null,
       trend_7d:       change7dPct === null ? null : change7dPct > 5 ? 'increasing' : change7dPct < -5 ? 'decreasing' : 'stable',
@@ -521,7 +524,9 @@ async function buildAnalyzeContext(coin, primaryTf) {
   // de nuevo capital entrando (squeeze risk / late-cycle trap). Mismo patrón que ya
   // aplica el FUNDING PERSISTENCE FILTER del SYSTEM_PROMPT, expuesto aquí como campo
   // explícito para consumidores fuera del LLM (frontend, futuro backtesting).
-  const oiNotExpanding = openInterestSummary?.trend_7d == null || openInterestSummary.trend_7d !== 'increasing';
+  // Fail-closed (auditoría #2, hallazgo 14): sin dato de OI el flag NO se afirma —
+  // mismo criterio H2 que el gating (antes trend_7d=null activaba "crowded" a ciegas).
+  const oiNotExpanding = openInterestSummary?.trend_7d != null && openInterestSummary.trend_7d !== 'increasing';
   const crowdedLong  = ['high', 'extreme'].includes(fr?.severity) && oiNotExpanding;
   const crowdedShort = ['high_short_overload', 'extreme_short_overload'].includes(fr?.severity_negative) && oiNotExpanding;
   const crowdedTradeFlag = {
@@ -555,9 +560,11 @@ async function buildAnalyzeContext(coin, primaryTf) {
     primaryTf,
   );
 
-  // D22: fuente del precio de referencia
+  // D22: fuente del precio de referencia. El timestamp es el del FETCH real del precio
+  // (sobrevive al TTL de cache de 30s) — antes se fabricaba con new Date() al construir
+  // el payload, fingiendo frescura (auditoría #2, hallazgo 19).
   const priceSource = 'binance_spot';
-  const priceTimestampUtc = new Date().toISOString();
+  const priceTimestampUtc = price?.fetched_at ?? new Date().toISOString();
 
   // D8: calcular lag de ETF flows desde as_of hasta hoy
   // #9: cuando etf_flows es null distinguimos "no aplica al activo" (SOL no
@@ -657,7 +664,12 @@ async function buildAnalyzeContext(coin, primaryTf) {
       } : null,
 
       open_interest: oi ? {
-        value_usd:      oi.value_usd,
+        value_coins:    oi.value_coins,
+        unit:           oi.unit ?? 'base_coin',
+        // USD real derivado (coins × spot); el exchange reporta en monedas base.
+        value_usd:      currentPrice != null && oi.value_coins != null
+          ? Math.round(oi.value_coins * currentPrice) : null,
+        value_usd_basis: 'derived_coins_x_spot',
         change_24h_pct: oi.change_24h_pct,
         signal:         oi.signal,
         history:        openInterestSummary,
@@ -769,7 +781,8 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     funding_severity_negative: fr?.severity_negative ?? null,
     funding_trend:             fr?.trend ?? null,
     predicted_rate_pct:        fr?.predicted_rate_pct ?? null,
-    oi_value_usd:              oi?.value_usd ?? null,
+    oi_value_usd:              oi?.value_usd ?? null,   // USD real DERIVADO (coins × spot)
+    oi_value_coins:            oi?.value_coins ?? null, // medida canónica del exchange
     oi_change_24h_pct:         oi?.change_24h_pct ?? null,
     oi_trend_7d:               oi?.history?.trend_7d ?? null,
     long_pct:                  lsr?.long_pct ?? null,
