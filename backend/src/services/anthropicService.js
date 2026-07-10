@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_4_correlation_notes';
+export const PROMPT_VERSION = 'v6_5_block_dedup';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -538,16 +538,18 @@ no ejecutar compra.
 
 CONVICTION DECAY — PENALIZACIÓN POR CONTRADICCIONES
 
-El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[] (con gating.contradiction_count, ya deduplicado contra el veto activo). Cubren:
-- CVD 1D en divergencia con el precio
-- OI plano o cayendo (change_24h_pct < 0)
-- Precio pegado (<=1.5%) a un nivel S/R con historial (2+ toques) del TF primario
-- Conflicto entre 1W y 1D (tendencias opuestas)
-- CONFLICTO estructural activo: BOS y CHoCH ambos "active" y en direcciones OPUESTAS
+El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[]. Cubren:
+- CVD 1D en divergencia con el precio (bloque VOLUMEN)
+- OI plano o cayendo (change_24h_pct < 0) (bloque DERIVADOS)
+- Precio pegado (<=1.5%) a un nivel S/R con historial (2+ toques) del TF primario (bloque ESTRUCTURA)
+- Conflicto entre 1W y 1D (tendencias opuestas) (bloque ESTRUCTURA)
+- CONFLICTO estructural activo: BOS y CHoCH ambos "active" y en direcciones OPUESTAS (bloque ESTRUCTURA)
+
+CONTEO POR BLOQUES (ANTI-DOUBLE-COUNT): gating.contradiction_count NO es el número de señales sueltas — es el número de BLOQUES analíticos DISTINTOS (volumen/derivados/estructura) con al menos una contradicción, ya deduplicado contra el veto activo. Varias señales del mismo bloque (p.ej. precio en nivel + conflicto 1W/1D + conflicto SMC = todas ESTRUCTURA) cuentan como UNA. Máximo 3. La confluencia real exige bloques distintos, no varias métricas del mismo eje. gating.contradiction_blocks[] lista los bloques presentes.
 
 IMPORTANTE (cambio de criterio): la mera AUSENCIA de estructura SMC activa ya NO es una contradicción — es falta de confirmación, no evidencia en contra. El backend la entrega como gating.missing_structural_confirmation=true; úsala para poblar missing_confirmations[] (qué falta para operar), no para el conteo de contradicciones.
 
-Añade UNA contradicción más al conteo si aplica según tus scores internos (el backend no la puede conocer):
+Añade UNA contradicción más al conteo SOLO si aplica según tus scores internos (el backend no la puede conocer). Es un eje CRUZADO entre bloques, así que no solapa con los de arriba:
 - Conflicto Volume Flow ↔ Structure: Volume negativo con Structure positivo, O Volume positivo con Structure negativo
 
 Si el total (gating.contradiction_count + la sexta si aplica) es 3 o más, la convicción cae a nivel donde no se permite trade y el output es ESPERAR.

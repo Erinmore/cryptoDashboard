@@ -194,14 +194,26 @@ describe('computeContradictions', () => {
     };
   }
 
-  test('detecta las 4 contradicciones deterministas (sin la estructural)', () => {
+  test('detecta las 4 señales deterministas (sin la estructural) → 3 bloques distintos', () => {
     const r = computeContradictions(fourContradictions());
     const codes = r.contradictions.map((c) => c.code);
     expect(codes).toEqual(expect.arrayContaining([
       'cvd_1d_divergence', 'oi_flat_or_falling', 'price_near_key_level', 'htf_conflict_1w_1d',
     ]));
     expect(codes).not.toContain('smc_structural_conflict');
-    expect(r.contradiction_count).toBe(4);
+    // 4 señales pero solo 3 bloques (volume + derivatives + structure): price_near_key_level
+    // y htf_conflict son ambos 'structure' → cuentan como uno (ANTI-DOUBLE-COUNT / B1).
+    expect(r.contradiction_count).toBe(3);
+  });
+
+  test('B1 · dos señales estructurales (nivel + HTF) cuentan como UN bloque', () => {
+    const ctx = fourContradictions();
+    ctx.openInterest = { change_24h_pct: 3 };            // quita oi_flat (derivatives)
+    ctx.technical['1D'].cvd = { divergence: 'none' };    // quita cvd_1d (volume)
+    const r = computeContradictions(ctx);
+    // Quedan price_near_key_level + htf_conflict_1w_1d (ambos 'structure').
+    expect(r.contradictions.length).toBe(2);
+    expect(r.contradiction_count).toBe(1);
   });
 
   test('H1 · ausencia de estructura NO es contradicción, sí missing_structural_confirmation', () => {

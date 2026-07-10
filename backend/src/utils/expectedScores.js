@@ -40,33 +40,55 @@ export function expectedDerivativesScore(derivatives) {
 }
 
 /**
- * Score de Volume Flow esperado desde el delta taker real (buy_pressure_pct) y el
- * imbalance del order book. Se apoya en buy_pressure_pct (delta taker, inequívoco) y NO
- * en la lectura de absorción del CVD (deliberadamente — esa interpretación es del LLM y
- * no queremos falsos positivos de divergencia).
- * @param {object|null} volumeDelta - technical[primaryTf].volume_delta
- * @param {object|null} orderBook - bloque `order_book`
+ * Score de Volume Flow esperado desde el CVD del TF PRIMARIO — la señal táctica que el
+ * prompt puntúa de verdad.
+ *
+ * Motivación (revisión interna post-auditoría): la versión previa derivaba el score de
+ * `buy_pressure_pct`, que `calculateVolumeDelta` acumula sobre TODA la ventana del TF
+ * (168–180 velas) → se queda pegado a ~50 en casi cualquier mercado → el término
+ * redondeaba a 0 y la guardia de divergencia de volumen (C2) prácticamente nunca se
+ * disparaba: no daba el chequeo independiente que prometía y, cuando saltaba, chocaba con
+ * la lectura de absorción del propio prompt. Ahora se apoya en `technical[primaryTf].cvd`.
+ *
+ * CARVE-OUT de absorción: una divergencia CVD↔precio es AMBIGUA por diseño — el prompt lee
+ * "precio↑ + CVD↓" como ABSORCIÓN institucional ALCISTA (no bajista) y "precio↓ + CVD↑"
+ * como absorción bajista. Por eso la guardia se ABSTIENE (score 0) ante cualquier
+ * `divergence != "none"`: solo puntúa el caso ALINEADO (sin divergencia), donde el signo
+ * del flujo es inequívoco (agresión/FOMO alcista o capitulación/distribución bajista). Así
+ * caza contradicciones flagrantes sin penalizar la tesis de absorción del prompt.
+ *
+ * @param {object|null} cvd - technical[primaryTf].cvd (trend/divergence/cvd_strength/source)
  * @returns {{score:number, basis:string[]}}
  */
-export function expectedVolumeScore(volumeDelta, orderBook) {
-  const basis = [];
-  let s = 0;
+export function expectedVolumeScore(cvd) {
+  if (!cvd) return { score: 0, basis: ['sin CVD del TF primario'] };
 
-  const bp = volumeDelta?.buy_pressure_pct;
-  if (typeof bp === 'number') {
-    // 50 = equilibrio; ~±8 pts por nivel de score.
-    const term = clamp(Math.round((bp - 50) / 8), -2, 2);
-    s += term;
-    if (term !== 0) basis.push(`buy_pressure_pct=${bp} (${term > 0 ? '+' : ''}${term})`);
-  } else {
-    basis.push('sin volume_delta');
+  const strength = cvd.cvd_strength ?? null;
+  // Marginal = ruido de fondo (regla del prompt): sin convicción aunque haya trend.
+  if (strength == null || strength === 'marginal') {
+    return { score: 0, basis: [`cvd_strength=${strength ?? 'null'} → sin convicción`] };
   }
 
-  const imb = orderBook?.imbalance_signal;
-  if (imb === 'buy_pressure') { s += 0.5; basis.push('order book buy_pressure (+0.5)'); }
-  else if (imb === 'sell_pressure') { s -= 0.5; basis.push('order book sell_pressure (-0.5)'); }
+  // Divergencia (absorción/agotamiento): interpretación del LLM → la guardia se abstiene.
+  if (cvd.divergence && cvd.divergence !== 'none') {
+    return { score: 0, basis: [`divergencia CVD "${cvd.divergence}" (absorción/agotamiento) → guardia se abstiene`] };
+  }
 
-  return { score: clamp(Math.round(s), -2, 2), basis };
+  // Alineado: el signo del flujo es inequívoco. moderate → ±1, strong → ±2.
+  const mag = strength === 'strong' ? 2 : 1;
+  const basis = [];
+  let score = 0;
+  if (cvd.trend === 'rising')       { score =  mag; basis.push(`CVD alineado al alza (strength=${strength}) → +${mag}`); }
+  else if (cvd.trend === 'falling') { score = -mag; basis.push(`CVD alineado a la baja (strength=${strength}) → -${mag}`); }
+  else                              { basis.push('CVD trend=flat → 0'); }
+
+  // source="heuristic" es una estimación (sin taker real de Binance): nunca ±2.
+  if (cvd.source === 'heuristic' && Math.abs(score) === 2) {
+    score = score > 0 ? 1 : -1;
+    basis.push('source=heuristic → magnitud reducida a ±1');
+  }
+
+  return { score: clamp(score, -2, 2), basis };
 }
 
 // Ponderación jerárquica declarada en el DECISION ENGINE del prompt
@@ -95,14 +117,16 @@ export function backendScoreTotal(scores) {
 
 /**
  * Calcula ambos scores esperados desde el contexto completo del análisis.
- * @param {object} context - contexto de mercado (con derivatives, technical, order_book).
+ * Volumen se apoya en el CVD del TF primario (no en el order book ni en la fracción taker
+ * acumulada de toda la ventana — ver expectedVolumeScore).
+ * @param {object} context - contexto de mercado (con derivatives, technical).
  * @param {string} primaryTf
  * @returns {{ derivatives:{score,basis}, volume:{score,basis} }}
  */
 export function computeExpectedScores(context, primaryTf) {
-  const volumeDelta = context?.technical?.[primaryTf]?.volume_delta ?? null;
+  const cvd = context?.technical?.[primaryTf]?.cvd ?? null;
   return {
     derivatives: expectedDerivativesScore(context?.derivatives ?? null),
-    volume: expectedVolumeScore(volumeDelta, context?.order_book ?? null),
+    volume: expectedVolumeScore(cvd),
   };
 }

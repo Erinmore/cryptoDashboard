@@ -31,6 +31,25 @@ const MIN_TOUCHES = 3;      // veto: nivel fuerte = 3+ toques
 const CONTRADICTION_MIN_TOUCHES = 2; // contradicción: nivel con algo de historial (>=2)
 const OI_EXPANSION_PCT = 1; // "OI no está expandiendo" = change_24h_pct < +1%
 
+// Bloque analítico de cada contradicción determinista. La ANTI-DOUBLE-COUNT RULE (B1) exige
+// que la confluencia venga de bloques DISTINTOS: varias señales del MISMO bloque (p.ej. dos
+// conflictos estructurales — HTF y SMC) son el mismo eje y NO son evidencia independiente.
+// `contradiction_count` mide bloques distintos, no señales sueltas, para que la puerta de
+// >=3 → Esperar no se dispare por hechos correlacionados del mismo bloque (mismo criterio
+// que el dedupe veto↔contradicciones de H4, aplicado también a la ruta sin veto).
+const CONTRADICTION_BLOCK = {
+  cvd_1d_divergence:       'volume',
+  oi_flat_or_falling:      'derivatives',
+  price_near_key_level:    'structure',
+  htf_conflict_1w_1d:      'structure',
+  smc_structural_conflict: 'structure',
+};
+
+/** Nº de bloques analíticos DISTINTOS representados en una lista de contradicciones. */
+function countBlocks(list) {
+  return new Set(list.map((c) => c.block ?? CONTRADICTION_BLOCK[c.code])).size;
+}
+
 // ¿La tendencia (string tipo "strongly_bullish"/"bearish"/"neutral") es alcista/bajista?
 function trendDir(t) {
   if (!t) return null;
@@ -182,13 +201,13 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
   // 1. CVD 1D en divergencia con el precio.
   const cvd1DDiv = technical?.['1D']?.cvd?.divergence ?? null;
   if (cvd1DDiv && cvd1DDiv !== 'none') {
-    contradictions.push({ code: 'cvd_1d_divergence', detail: `CVD 1D divergence="${cvd1DDiv}"` });
+    contradictions.push({ code: 'cvd_1d_divergence', block: 'volume', detail: `CVD 1D divergence="${cvd1DDiv}"` });
   }
 
   // 2. OI plano o cayendo (change_24h_pct < 0).
   const oiChange = openInterest?.change_24h_pct ?? null;
   if (oiChange != null && oiChange < 0) {
-    contradictions.push({ code: 'oi_flat_or_falling', detail: `OI change_24h_pct=${oiChange}%` });
+    contradictions.push({ code: 'oi_flat_or_falling', block: 'derivatives', detail: `OI change_24h_pct=${oiChange}%` });
   }
 
   // 3. Precio pegado a un nivel S/R con historial (>=2 toques) a <=1.5% (TF primario).
@@ -200,6 +219,7 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
     const near = nearSup.found ? nearSup : nearRes;
     contradictions.push({
       code: 'price_near_key_level',
+      block: 'structure',
       detail: `precio a ${near.distance_pct}% de un nivel S/R (${primaryTf}) con ${near.level.touches} toques`,
     });
   }
@@ -210,6 +230,7 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
   if (d1W && d1D && d1W !== 'neutral' && d1D !== 'neutral' && d1W !== d1D) {
     contradictions.push({
       code: 'htf_conflict_1w_1d',
+      block: 'structure',
       detail: `1W (${technical['1W'].trend}) vs 1D (${technical['1D'].trend}) opuestos`,
     });
   }
@@ -227,6 +248,7 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
   if (structuralConflict) {
     contradictions.push({
       code: 'smc_structural_conflict',
+      block: 'structure',
       detail: `BOS (${bos.direction}) vs CHoCH (${choch.direction}) activos y opuestos en ${primaryTf}`,
     });
   }
@@ -234,18 +256,27 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
 
   return {
     contradictions,
-    contradiction_count: contradictions.length,
+    // Conteo por BLOQUES distintos (no señales sueltas): varias contradicciones del mismo
+    // bloque (p.ej. price_near_key_level + htf_conflict + smc_conflict = todas 'structure')
+    // cuentan como UNA. Máximo 3 (volume/derivatives/structure).
+    contradiction_count: countBlocks(contradictions),
     missing_structural_confirmation,
   };
 }
 
 /**
- * Orquestador: combina vetos + contradicciones y aplica el DEDUPE (H4).
+ * Orquestador: combina vetos + contradicciones y aplica DOS deduplicaciones sobre el
+ * conteo que gobierna la regla de >=3 → Esperar:
  *
- * Si un veto está activo, los hechos que ya lo construyeron (CVD 1D, cercanía a nivel)
- * no se recuentan como contradicciones independientes — la decisión no debe aparentar
- * más evidencia de la que hay a partir de datos correlacionados. `contradiction_count`
- * refleja el conteo DEDUPLICADO (el que gobierna la regla de >=3 → Esperar).
+ *  1. DEDUPE veto↔contradicciones (H4): si un veto está activo, los hechos que ya lo
+ *     construyeron (CVD 1D, cercanía a nivel) no se recuentan como evidencia independiente.
+ *  2. DEDUPE por BLOQUE (B1 / ANTI-DOUBLE-COUNT): `contradiction_count` cuenta bloques
+ *     analíticos DISTINTOS (volume/derivatives/structure), no señales sueltas — varias
+ *     señales del mismo bloque son el mismo eje. Máximo 3.
+ *
+ * `contradiction_count` refleja el conteo tras ambas deduplicaciones (el que consume el
+ * validador para la puerta CONVICTION DECAY). `contradictions_raw_count` es el conteo de
+ * bloques ANTES del dedupe por veto (para telemetría de cuánto descuenta el veto).
  *
  * @param {object} args - { technical, openInterest, currentPrice, primaryTf }
  * @returns {object} bloque `gating` completo para el payload.
@@ -267,8 +298,9 @@ export function computeGating(args) {
   return {
     ...vetos,
     contradictions,
-    contradiction_count: contradictions.length,
-    contradictions_raw_count: contra.contradictions.length,
+    contradiction_count: countBlocks(contradictions),
+    contradiction_blocks: [...new Set(contradictions.map((c) => c.block ?? CONTRADICTION_BLOCK[c.code]))],
+    contradictions_raw_count: countBlocks(contra.contradictions),
     deduped_by_veto: deduped,
     missing_structural_confirmation: contra.missing_structural_confirmation,
   };

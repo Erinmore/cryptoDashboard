@@ -90,10 +90,13 @@ async function processAnalysis(a, now) {
   const horizonElapsed = now >= tMs + 7 * 24 * HOUR_MS;
   if (a.has_executable_setup && !setupResolved) {
     if (a.setup_entry_price == null) {
-      // has_executable_setup=1 pero sin entry_price: geometría irreconstruible. Sin esto
-      // el barrier no corre nunca y el análisis se re-seleccionaría en cada ciclo para
-      // siempre (fuga: setup_outcome quedaba NULL indefinidamente). Sólo terminal al vencer.
-      if (horizonElapsed) markInvalidSetup(); else preserveSetup();
+      // has_executable_setup=1 pero sin entry_price: geometría irreconstruible y PERMANENTE
+      // (la columna se fija en el análisis y nunca se rellena a posteriori). Marcar 'invalid'
+      // terminal DE INMEDIATO — esperar al horizonte de 7d no cambiaba el resultado y
+      // re-evaluaba el barrier en cada ciclo en balde. Los precios por horizonte se siguen
+      // rellenando aparte (el análisis puede seguir seleccionándose por price_7d_later NULL,
+      // pero ya sin reintentar el barrier). Cierra el churn del setup en el 1er ciclo.
+      markInvalidSetup();
     } else {
       const toMs = Math.min(now, tMs + 7 * 24 * HOUR_MS);
       try {

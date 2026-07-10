@@ -39,25 +39,39 @@ describe('expectedDerivativesScore', () => {
   });
 });
 
-describe('expectedVolumeScore', () => {
-  test('buy_pressure alta → score positivo', () => {
-    expect(expectedVolumeScore({ buy_pressure_pct: 66 }, null).score).toBe(2);
-    expect(expectedVolumeScore({ buy_pressure_pct: 58 }, null).score).toBe(1);
+describe('expectedVolumeScore (CVD del TF primario + carve-out de absorción)', () => {
+  test('CVD alineado al alza: strong → +2, moderate → +1', () => {
+    expect(expectedVolumeScore({ trend: 'rising', divergence: 'none', cvd_strength: 'strong' }).score).toBe(2);
+    expect(expectedVolumeScore({ trend: 'rising', divergence: 'none', cvd_strength: 'moderate' }).score).toBe(1);
   });
 
-  test('sell pressure → score negativo', () => {
-    expect(expectedVolumeScore({ buy_pressure_pct: 34 }, null).score).toBe(-2);
+  test('CVD alineado a la baja: strong → -2, moderate → -1 (capitulación/distribución)', () => {
+    expect(expectedVolumeScore({ trend: 'falling', divergence: 'none', cvd_strength: 'strong' }).score).toBe(-2);
+    expect(expectedVolumeScore({ trend: 'falling', divergence: 'none', cvd_strength: 'moderate' }).score).toBe(-1);
   });
 
-  test('equilibrio (49.6) → 0', () => {
-    expect(expectedVolumeScore({ buy_pressure_pct: 49.6 }, null).score).toBe(0);
+  test('CARVE-OUT: divergencia (absorción) → 0 aunque el CVD caiga con fuerza', () => {
+    // precio↑ + CVD↓ = absorción ALCISTA según el prompt: la guardia NO debe penalizarlo.
+    expect(expectedVolumeScore({ trend: 'falling', divergence: 'bearish', cvd_strength: 'strong' }).score).toBe(0);
+    expect(expectedVolumeScore({ trend: 'rising', divergence: 'bullish', cvd_strength: 'strong' }).score).toBe(0);
   });
 
-  test('imbalance del order book ajusta', () => {
-    const up = expectedVolumeScore({ buy_pressure_pct: 55 }, { imbalance_signal: 'buy_pressure' });
-    const down = expectedVolumeScore({ buy_pressure_pct: 45 }, { imbalance_signal: 'sell_pressure' });
-    expect(up.score).toBeGreaterThanOrEqual(1);
-    expect(down.score).toBeLessThanOrEqual(-1);
+  test('marginal / sin strength → 0 (ruido de fondo)', () => {
+    expect(expectedVolumeScore({ trend: 'falling', divergence: 'none', cvd_strength: 'marginal' }).score).toBe(0);
+    expect(expectedVolumeScore({ trend: 'rising', divergence: 'none', cvd_strength: null }).score).toBe(0);
+  });
+
+  test('source=heuristic → magnitud limitada a ±1 (sin taker real)', () => {
+    expect(expectedVolumeScore({ trend: 'falling', divergence: 'none', cvd_strength: 'strong', source: 'heuristic' }).score).toBe(-1);
+    expect(expectedVolumeScore({ trend: 'rising', divergence: 'none', cvd_strength: 'strong', source: 'taker_real' }).score).toBe(2);
+  });
+
+  test('sin CVD → 0', () => {
+    expect(expectedVolumeScore(null).score).toBe(0);
+  });
+
+  test('trend=flat alineado → 0', () => {
+    expect(expectedVolumeScore({ trend: 'flat', divergence: 'none', cvd_strength: 'strong' }).score).toBe(0);
   });
 });
 
@@ -80,15 +94,14 @@ describe('backendScoreTotal (B2 — reproducible)', () => {
 });
 
 describe('computeExpectedScores', () => {
-  test('extrae volume_delta del TF primario y devuelve ambos bloques', () => {
+  test('extrae el CVD del TF primario y devuelve ambos bloques', () => {
     const ctx = {
       derivatives: { funding_rate: { severity_negative: 'extreme_short_overload' }, long_short_ratio: {} },
-      technical: { '4h': { volume_delta: { buy_pressure_pct: 60 } } },
-      order_book: { imbalance_signal: 'buy_pressure' },
+      technical: { '4h': { cvd: { trend: 'rising', divergence: 'none', cvd_strength: 'moderate', source: 'taker_real' } } },
     };
     const r = computeExpectedScores(ctx, '4h');
     expect(r.derivatives.score).toBe(2);
-    expect(r.volume.score).toBeGreaterThanOrEqual(1);
+    expect(r.volume.score).toBe(1);
     expect(Array.isArray(r.derivatives.basis)).toBe(true);
   });
 });
