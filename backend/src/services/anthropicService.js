@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_5_block_dedup';
+export const PROMPT_VERSION = 'v6_6_cvd_veto_semantics';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -166,6 +166,8 @@ CVD del TF primario (campo technical[primary_tf].cvd): es la señal táctica. Es
 
 CVD 1D (campo technical["1D"].cvd): es contexto de tendencia. No puntúa directamente en el Volume Flow Score. Sin embargo, si su divergence es "bearish" y el precio sube, activa una bandera de advertencia que reduce la convicción global un nivel. Si su divergence es "bullish" y el precio cae, activa la bandera equivalente bajista.
 
+ANTI-DOBLE-DESCUENTO DE LA BANDERA CVD 1D: si gating.contradictions[] ya incluye el código cvd_1d_divergence, esa bandera YA está contada en el conteo determinista de contradicciones del backend. En ese caso NO apliques además la reducción de convicción de un nivel — sería descontar el mismo hecho dos veces. Aplica la bandera solo cuando la divergencia NO aparece en gating.contradictions[] (p. ej. porque su fuerza es marginal).
+
 CVD 1h (campo technical["1h"].cvd): es confirmación de entrada únicamente. No construye tesis. Solo se usa para afinar timing una vez que el bias ya está definido por el TF primario.
 
 CVD volume_history (campo volume_history.cvd): refleja el CVD 1D acumulado histórico. Úsalo exclusivamente como contexto de ciclo, no como señal táctica. Si contradice el CVD del TF primario, no invalida la señal táctica pero añade una nota de cautela al Risk Score.
@@ -200,7 +202,9 @@ Precio ↑ + CVD ↑ (alineación): AGRESIÓN / FOMO. Compras a mercado dominan.
 Precio ↓ + CVD ↑ (divergencia): ABSORCIÓN BAJISTA. Ventas institucionalizadas absorbiendo compradores retail. Señal muy bajista.
 Precio ↓ + CVD ↓ (alineación): CAPITULACIÓN / DISTRIBUCIÓN AGRESIVA. Vendedores a mercado dominan. Momentum bajista puro.
 
-El campo source="taker_real" indica datos reales de Binance klines — máxima confianza. source="heuristic" = estimación — reducir convicción un nivel.
+DESAMBIGUACIÓN ESTRUCTURAL DE LA DIVERGENCIA (regla de precedencia con el gating):
+
+La lectura de ABSORCIÓN alcista (precio ↑ + CVD ↓) solo es válida SOBRE soporte estructural o lejos de resistencia relevante. La MISMA divergencia empujando contra una resistencia probada (3+ toques) sin expansión de Open Interest es la lectura opuesta: rally débil / distribución en resistencia. El backend ya aplica esta desambiguación en el bloque gating (el VETO LONG se activa exactamente en esa conjunción, y solo con cvd_strength no marginal). Por tanto: NUNCA uses la tesis de absorción para argumentar en contra de un veto activo — si gating.veto_long=true, la conjunción completa ya descartó la lectura de absorción. Fuera de esa conjunción, la interpretación de la divergencia es tuya según la tabla de arriba.
 
 MAGNITUD DEL CVD — campo cvd_strength (precalculado):
 
@@ -436,7 +440,7 @@ El backend evalúa los vetos de forma determinista y los entrega en el bloque ga
 gating.veto_long=true: prohibido recomendar COMPRAR. El output es ESPERAR.
 gating.veto_short=true: prohibido recomendar VENDER. El output es ESPERAR.
 
-Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish + OI sin expandir + resistencia fuerte (3+ toques) a <=1.5%; VETO SHORT = el espejo exacto (CVD 1D bullish + OI sin expandir + soporte fuerte a <=1.5%). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
+Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish divergence con fuerza no marginal (cvd_strength moderate/strong) + OI sin expandir + resistencia fuerte (3+ toques) a <=1.5%; VETO SHORT = el espejo exacto (CVD 1D bullish divergence con fuerza no marginal + OI sin expandir + soporte fuerte a <=1.5%). Una divergencia con cvd_strength="marginal" NO arma el veto (es ruido de fondo). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
 
 FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Puedes usar PREPARAR/ESPERAR y señalar qué dato falta.
 
@@ -539,7 +543,7 @@ no ejecutar compra.
 CONVICTION DECAY — PENALIZACIÓN POR CONTRADICCIONES
 
 El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[]. Cubren:
-- CVD 1D en divergencia con el precio (bloque VOLUMEN)
+- CVD 1D en divergencia con el precio, solo con cvd_strength moderate/strong — una divergencia marginal es ruido y no cuenta (bloque VOLUMEN)
 - OI plano o cayendo (change_24h_pct < 0) (bloque DERIVADOS)
 - Precio pegado (<=1.5%) a un nivel S/R con historial (2+ toques) del TF primario (bloque ESTRUCTURA)
 - Conflicto entre 1W y 1D (tendencias opuestas) (bloque ESTRUCTURA)

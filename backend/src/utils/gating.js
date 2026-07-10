@@ -25,7 +25,22 @@
  *    contradicciones "independientes" los hechos que ya construyeron ese veto
  *    (CVD 1D, cercanía a nivel, OI sin expandir) — evita sobre-determinar la decisión
  *    con datos correlados.
+ *
+ * Auditoría #2 (2026-07-10, hallazgo 2 — semántica CVD/absorción):
+ *  - La divergencia CVD 1D solo afirma veto/contradicción con cvd_strength no-marginal.
+ *    Racional: precio↑+CVD↓ es AMBIGUO (el prompt lo lee como absorción ALCISTA sobre
+ *    soporte); la desambiguación bajista del veto es la CONJUNCIÓN con resistencia
+ *    probada + OI estancado (rally débil/distribución), y exige un desequilibrio real
+ *    (moderate/strong), no ruido marginal. Ver INTERPRETACIÓN CVD del SYSTEM_PROMPT.
  */
+
+// Fuerzas de CVD que afirman una divergencia como señal (auditoría #2, hallazgo 2):
+// una divergencia precio↔CVD es AMBIGUA (el prompt lee precio↑+CVD↓ como absorción
+// ALCISTA sobre soporte) y con cvd_strength="marginal" es además ruido de fondo según
+// el propio prompt. El veto y la contradicción solo la cuentan con fuerza no-marginal:
+// la conjunción con resistencia probada + OI estancado es la desambiguación bajista
+// (rally débil/distribución), pero exige que el desequilibrio sea real, no marginal.
+const CVD_AFFIRMING_STRENGTHS = new Set(['moderate', 'strong']);
 
 const NEAR_LEVEL_PCT = 1.5; // "precio dentro del 1.5% de una S/R"
 const MIN_TOUCHES = 3;      // veto: nivel fuerte = 3+ toques
@@ -133,24 +148,29 @@ export function computeVetos({ technical, openInterest, currentPrice, primaryTf 
 
   const oiNotExpanding = oiPresent && oiChange < OI_EXPANSION_PCT;
 
+  // La divergencia solo afirma la pata CVD con fuerza no-marginal (ver
+  // CVD_AFFIRMING_STRENGTHS). cvd_strength ausente = no se puede afirmar → sin veto
+  // (misma filosofía que el resto de condiciones: el dato debe estar para AFIRMARSE).
+  const cvdStrengthOk = CVD_AFFIRMING_STRENGTHS.has(cvd1D?.cvd_strength);
+
   // --- VETO LONG ---
-  const cvd1DBearish = cvd1D?.divergence === 'bearish';
+  const cvd1DBearish = cvd1D?.divergence === 'bearish' && cvdStrengthOk;
   const nearResistance = nearStrongLevel(primarySr?.resistances, currentPrice);
   const vetoLong = cvd1DBearish && oiNotExpanding && nearResistance.found;
 
   // --- VETO SHORT (espejo) ---
-  const cvd1DBullish = cvd1D?.divergence === 'bullish';
+  const cvd1DBullish = cvd1D?.divergence === 'bullish' && cvdStrengthOk;
   const nearSupport = nearStrongLevel(primarySr?.supports, currentPrice);
   const vetoShort = cvd1DBullish && oiNotExpanding && nearSupport.found;
 
   let veto_reason = null;
   if (vetoLong) {
     veto_reason =
-      `VETO LONG: CVD 1D bearish divergence + OI sin expandir (change_24h_pct=${oiChange}%) ` +
+      `VETO LONG: CVD 1D bearish divergence (strength=${cvd1D.cvd_strength}) + OI sin expandir (change_24h_pct=${oiChange}%) ` +
       `+ resistencia ${primaryTf} a ${nearResistance.distance_pct}% con ${nearResistance.level.touches} toques`;
   } else if (vetoShort) {
     veto_reason =
-      `VETO SHORT: CVD 1D bullish divergence + OI sin expandir (change_24h_pct=${oiChange}%) ` +
+      `VETO SHORT: CVD 1D bullish divergence (strength=${cvd1D.cvd_strength}) + OI sin expandir (change_24h_pct=${oiChange}%) ` +
       `+ soporte ${primaryTf} a ${nearSupport.distance_pct}% con ${nearSupport.level.touches} toques`;
   }
 
@@ -199,10 +219,16 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
   const contradictions = [];
   const pTf = technical?.[primaryTf] ?? null;
 
-  // 1. CVD 1D en divergencia con el precio.
+  // 1. CVD 1D en divergencia con el precio — solo con fuerza no-marginal (mismo criterio
+  //    que el veto: una divergencia marginal es ruido, no un bloque de contradicción).
   const cvd1DDiv = technical?.['1D']?.cvd?.divergence ?? null;
-  if (cvd1DDiv && cvd1DDiv !== 'none') {
-    contradictions.push({ code: 'cvd_1d_divergence', block: 'volume', detail: `CVD 1D divergence="${cvd1DDiv}"` });
+  const cvd1DStrength = technical?.['1D']?.cvd?.cvd_strength ?? null;
+  if (cvd1DDiv && cvd1DDiv !== 'none' && CVD_AFFIRMING_STRENGTHS.has(cvd1DStrength)) {
+    contradictions.push({
+      code: 'cvd_1d_divergence',
+      block: 'volume',
+      detail: `CVD 1D divergence="${cvd1DDiv}" (strength=${cvd1DStrength})`,
+    });
   }
 
   // 2. OI plano o cayendo (change_24h_pct < 0).

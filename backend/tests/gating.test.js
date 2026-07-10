@@ -17,7 +17,7 @@ import { computeVetos, computeContradictions, computeGating, nearStrongLevel } f
 function longVetoContext() {
   return {
     technical: {
-      '1D': { cvd: { divergence: 'bearish' } },
+      '1D': { cvd: { divergence: 'bearish', cvd_strength: 'moderate' } },
       '4h': {
         support_resistance: {
           supports: [{ price: 90, touches: 5 }],
@@ -35,7 +35,7 @@ function longVetoContext() {
 function shortVetoContext() {
   return {
     technical: {
-      '1D': { cvd: { divergence: 'bullish' } },
+      '1D': { cvd: { divergence: 'bullish', cvd_strength: 'moderate' } },
       '4h': {
         support_resistance: {
           supports: [{ price: 99, touches: 3 }],
@@ -181,7 +181,7 @@ describe('computeContradictions', () => {
   function fourContradictions() {
     return {
       technical: {
-        '1D': { cvd: { divergence: 'bearish' }, trend: 'bullish' },
+        '1D': { cvd: { divergence: 'bearish', cvd_strength: 'strong' }, trend: 'bullish' },
         '1W': { trend: 'bearish' },
         '4h': {
           support_resistance: { supports: [{ price: 99.2, touches: 3 }], resistances: [{ price: 130, touches: 2 }] },
@@ -294,7 +294,7 @@ describe('computeGating — dedupe veto↔contradicciones (H4)', () => {
   test('sin veto → contradicciones intactas', () => {
     const ctx = {
       technical: {
-        '1D': { cvd: { divergence: 'bearish' }, trend: 'bullish' },
+        '1D': { cvd: { divergence: 'bearish', cvd_strength: 'strong' }, trend: 'bullish' },
         '1W': { trend: 'bearish' },
         '4h': { support_resistance: { supports: [{ price: 99.2, touches: 3 }], resistances: [{ price: 130, touches: 2 }] }, smc: null },
       },
@@ -346,5 +346,48 @@ describe('computeGating — dedupe veto↔contradicciones (H4)', () => {
     const g = computeGating(ctx);
     expect(g.data_insufficient).toBe(true);
     expect(g).toHaveProperty('missing_structural_confirmation');
+  });
+});
+
+describe('semántica CVD del veto (auditoría #2, hallazgo 2)', () => {
+  // La divergencia precio↔CVD es ambigua (absorción vs distribución) y con
+  // cvd_strength="marginal" es ruido: no arma veto ni cuenta como contradicción.
+  test('divergencia bearish con cvd_strength=marginal → NO arma el veto long', () => {
+    const ctx = longVetoContext();
+    ctx.technical['1D'].cvd.cvd_strength = 'marginal';
+    const r = computeVetos(ctx);
+    expect(r.veto_long).toBe(false);
+    expect(r.conditions.long.cvd_1d_bearish).toBe(false);
+    // El dato CVD está presente → no es data_insufficient.
+    expect(r.data_insufficient).toBe(false);
+  });
+
+  test('divergencia bullish marginal → NO arma el veto short (espejo)', () => {
+    const ctx = shortVetoContext();
+    ctx.technical['1D'].cvd.cvd_strength = 'marginal';
+    expect(computeVetos(ctx).veto_short).toBe(false);
+  });
+
+  test('cvd_strength ausente → no se puede afirmar la pata → sin veto', () => {
+    const ctx = longVetoContext();
+    delete ctx.technical['1D'].cvd.cvd_strength;
+    expect(computeVetos(ctx).veto_long).toBe(false);
+  });
+
+  test('divergencia strong sí arma el veto y el reason incluye la fuerza', () => {
+    const ctx = longVetoContext();
+    ctx.technical['1D'].cvd.cvd_strength = 'strong';
+    const r = computeVetos(ctx);
+    expect(r.veto_long).toBe(true);
+    expect(r.veto_reason).toMatch(/strength=strong/);
+  });
+
+  test('contradicción cvd_1d_divergence exige fuerza no-marginal', () => {
+    const ctx = longVetoContext();
+    ctx.technical['1D'].cvd.cvd_strength = 'marginal';
+    ctx.openInterest.change_24h_pct = -2; // deja viva la de OI
+    const codes = computeContradictions(ctx).contradictions.map((c) => c.code);
+    expect(codes).not.toContain('cvd_1d_divergence');
+    expect(codes).toContain('oi_flat_or_falling');
   });
 });
