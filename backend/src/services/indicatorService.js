@@ -1,5 +1,6 @@
 import {
   calculateRSI,
+  calculateATR,
   calculateMACD,
   calculateBollingerBands,
   calculateStochRSI,
@@ -159,6 +160,17 @@ export function computeIndicators(candles, timeframe) {
       : null;
   }
 
+  // ── ATR (volatilidad realizada del TF) ───────────────────────
+  // Auditoría #2 (hallazgos 7/14/16): expone la volatilidad del TF para (a) normalizar
+  // el umbral de cercanía a niveles del gating (antes 1.5% fijo para BTC y SOL por igual)
+  // y (b) dar un proxy de régimen de volatilidad a activos sin DVOL (SOL).
+  const atrValue = calculateATR(candles);
+  const atr = atrValue !== null ? {
+    value: atrValue,
+    pct: currentPrice ? parseFloat((atrValue / currentPrice * 100).toFixed(2)) : null,
+    period: 14,
+  } : null;
+
   // ── Market Regime ────────────────────────────────────────────
   const regime = detectMarketRegime(candles, closes);
 
@@ -188,6 +200,7 @@ export function computeIndicators(candles, timeframe) {
     macd,
     wave_trend: waveTrend,
     adx,
+    atr,
     bollinger_bands: bb,
     super_trend: superTrend,
     volume_delta: volumeDelta,

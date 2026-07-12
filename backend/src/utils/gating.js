@@ -42,7 +42,29 @@
 // (rally débil/distribución), pero exige que el desequilibrio sea real, no marginal.
 const CVD_AFFIRMING_STRENGTHS = new Set(['moderate', 'strong']);
 
-const NEAR_LEVEL_PCT = 1.5; // "precio dentro del 1.5% de una S/R"
+const NEAR_LEVEL_PCT = 1.5; // fallback fijo si no hay ATR del TF primario
+// Umbral de cercanía NORMALIZADO POR VOLATILIDAD (auditoría #2, hallazgos 7/14): 1.5%
+// fijo hacía que la contradicción/veto "precio en nivel" disparara con frecuencias
+// estructuralmente distintas por activo (la vol diaria de SOL dobla la de BTC) y por TF
+// (en 1h casi siempre hay un nivel a <1.5%; en 1W casi nunca). k=1.5 × ATR% del TF
+// primario ≈ el 1.5% histórico para BTC 4h (ATR%≈1), acotado para no degenerar.
+const NEAR_LEVEL_ATR_MULT = 1.5;
+const NEAR_LEVEL_MIN_PCT = 0.5;
+const NEAR_LEVEL_MAX_PCT = 3.0;
+
+// Tolerancias de zona BORDERLINE (telemetría, hallazgo 9): un veto que se activa o se
+// queda a un tick de activarse por décimas es una decisión de borde — se señala en
+// gating.borderline[] para poder auditar cuántas decisiones viven pegadas al umbral.
+// (Una histéresis real exigiría estado entre requests; el sistema es stateless.)
+const OI_BORDERLINE_PT = 0.25;      // |change_24h_pct − umbral| <= 0.25 puntos
+const LEVEL_BORDERLINE_FACTOR = 1.25; // nivel fuerte entre 1× y 1.25× del umbral
+
+/** Umbral efectivo de cercanía a nivel para un ATR% dado (fallback al fijo). */
+export function dynamicNearLevelPct(atrPct) {
+  if (!Number.isFinite(atrPct) || atrPct <= 0) return NEAR_LEVEL_PCT;
+  const v = NEAR_LEVEL_ATR_MULT * atrPct;
+  return parseFloat(Math.max(NEAR_LEVEL_MIN_PCT, Math.min(NEAR_LEVEL_MAX_PCT, v)).toFixed(2));
+}
 const MIN_TOUCHES = 3;      // veto: nivel fuerte = 3+ toques
 const CONTRADICTION_MIN_TOUCHES = 2; // contradicción: nivel con algo de historial (>=2)
 const OI_EXPANSION_PCT = 1; // "OI no está expandiendo" = change_24h_pct < +1%
@@ -90,16 +112,17 @@ function smcDir(d) {
  * @param {Array<{price:number, touches?:number}>} levels
  * @param {number} price
  * @param {number} [minTouches=MIN_TOUCHES]
+ * @param {number} [maxDistPct=NEAR_LEVEL_PCT] - umbral efectivo (normalizado por ATR).
  * @returns {{ found: boolean, level: object|null, distance_pct: number|null }}
  */
-export function nearStrongLevel(levels, price, minTouches = MIN_TOUCHES) {
+export function nearStrongLevel(levels, price, minTouches = MIN_TOUCHES, maxDistPct = NEAR_LEVEL_PCT) {
   if (!Array.isArray(levels) || !price) {
     return { found: false, level: null, distance_pct: null };
   }
   for (const lvl of levels) {
     if (lvl?.price == null) continue;
     const distPct = (Math.abs(price - lvl.price) / price) * 100;
-    if (distPct <= NEAR_LEVEL_PCT && (lvl.touches ?? 0) >= minTouches) {
+    if (distPct <= maxDistPct && (lvl.touches ?? 0) >= minTouches) {
       return { found: true, level: lvl, distance_pct: parseFloat(distPct.toFixed(2)) };
     }
   }
@@ -135,6 +158,7 @@ export function nearStrongLevel(levels, price, minTouches = MIN_TOUCHES) {
 export function computeVetos({ technical, openInterest, currentPrice, primaryTf }) {
   const cvd1D = technical?.['1D']?.cvd ?? null;
   const primarySr = technical?.[primaryTf]?.support_resistance ?? null;
+  const nearPct = dynamicNearLevelPct(technical?.[primaryTf]?.atr?.pct);
 
   const oiChange = openInterest?.change_24h_pct ?? null;
   const cvd1DPresent = cvd1D?.divergence != null;
@@ -155,13 +179,29 @@ export function computeVetos({ technical, openInterest, currentPrice, primaryTf 
 
   // --- VETO LONG ---
   const cvd1DBearish = cvd1D?.divergence === 'bearish' && cvdStrengthOk;
-  const nearResistance = nearStrongLevel(primarySr?.resistances, currentPrice);
+  const nearResistance = nearStrongLevel(primarySr?.resistances, currentPrice, MIN_TOUCHES, nearPct);
   const vetoLong = cvd1DBearish && oiNotExpanding && nearResistance.found;
 
   // --- VETO SHORT (espejo) ---
   const cvd1DBullish = cvd1D?.divergence === 'bullish' && cvdStrengthOk;
-  const nearSupport = nearStrongLevel(primarySr?.supports, currentPrice);
+  const nearSupport = nearStrongLevel(primarySr?.supports, currentPrice, MIN_TOUCHES, nearPct);
   const vetoShort = cvd1DBullish && oiNotExpanding && nearSupport.found;
+
+  // --- Telemetría BORDERLINE (hallazgo 9): condiciones pegadas al umbral ---
+  // Señala decisiones de borde: el OI a <=0.25 puntos de flipear su condición, o un
+  // nivel fuerte justo fuera del umbral (entre 1× y 1.25×). No altera los vetos.
+  const borderline = [];
+  if (oiPresent && Math.abs(oiChange - OI_EXPANSION_PCT) <= OI_BORDERLINE_PT) {
+    borderline.push(`oi_change_near_threshold (${oiChange}% vs ${OI_EXPANSION_PCT}%)`);
+  }
+  const nearResWide = nearStrongLevel(primarySr?.resistances, currentPrice, MIN_TOUCHES, nearPct * LEVEL_BORDERLINE_FACTOR);
+  if (!nearResistance.found && nearResWide.found) {
+    borderline.push(`resistance_just_outside_threshold (${nearResWide.distance_pct}% vs ${nearPct}%)`);
+  }
+  const nearSupWide = nearStrongLevel(primarySr?.supports, currentPrice, MIN_TOUCHES, nearPct * LEVEL_BORDERLINE_FACTOR);
+  if (!nearSupport.found && nearSupWide.found) {
+    borderline.push(`support_just_outside_threshold (${nearSupWide.distance_pct}% vs ${nearPct}%)`);
+  }
 
   let veto_reason = null;
   if (vetoLong) {
@@ -180,6 +220,8 @@ export function computeVetos({ technical, openInterest, currentPrice, primaryTf 
     veto_reason,
     data_insufficient,
     missing_inputs,
+    near_level_pct_used: nearPct,
+    borderline,
     conditions: {
       sr_timeframe: primaryTf,
       long: {
@@ -237,17 +279,19 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
     contradictions.push({ code: 'oi_flat_or_falling', block: 'derivatives', detail: `OI change_24h_pct=${oiChange}%` });
   }
 
-  // 3. Precio pegado a un nivel S/R con historial (>=2 toques) a <=1.5% (TF primario).
+  // 3. Precio pegado a un nivel S/R con historial (>=2 toques) dentro del umbral
+  //    normalizado por ATR del TF primario (antes 1.5% fijo — hallazgos 7/14).
   //    H1: exigir toques evita que cualquier pivote menor cercano dispare la contradicción.
   const sr = pTf?.support_resistance ?? null;
-  const nearSup = nearStrongLevel(sr?.supports, currentPrice, CONTRADICTION_MIN_TOUCHES);
-  const nearRes = nearStrongLevel(sr?.resistances, currentPrice, CONTRADICTION_MIN_TOUCHES);
+  const nearPct = dynamicNearLevelPct(pTf?.atr?.pct);
+  const nearSup = nearStrongLevel(sr?.supports, currentPrice, CONTRADICTION_MIN_TOUCHES, nearPct);
+  const nearRes = nearStrongLevel(sr?.resistances, currentPrice, CONTRADICTION_MIN_TOUCHES, nearPct);
   if (nearSup.found || nearRes.found) {
     const near = nearSup.found ? nearSup : nearRes;
     contradictions.push({
       code: 'price_near_key_level',
       block: 'structure',
-      detail: `precio a ${near.distance_pct}% de un nivel S/R (${primaryTf}) con ${near.level.touches} toques`,
+      detail: `precio a ${near.distance_pct}% de un nivel S/R (${primaryTf}) con ${near.level.touches} toques (umbral ${nearPct}%)`,
     });
   }
 

@@ -11,7 +11,7 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { computeVetos, computeContradictions, computeGating, nearStrongLevel } from '../src/utils/gating.js';
+import { computeVetos, computeContradictions, computeGating, nearStrongLevel, dynamicNearLevelPct } from '../src/utils/gating.js';
 
 // Contexto que dispara VETO LONG: CVD 1D bearish + OI plano + resistencia 4h <1.5% con 3+ toques.
 function longVetoContext() {
@@ -389,5 +389,69 @@ describe('semántica CVD del veto (auditoría #2, hallazgo 2)', () => {
     const codes = computeContradictions(ctx).contradictions.map((c) => c.code);
     expect(codes).not.toContain('cvd_1d_divergence');
     expect(codes).toContain('oi_flat_or_falling');
+  });
+});
+
+describe('umbral de cercanía normalizado por ATR (auditoría #2, hallazgos 7/14)', () => {
+  test('dynamicNearLevelPct: 1.5 × ATR%, acotado [0.5, 3.0], fallback 1.5 sin ATR', () => {
+    expect(dynamicNearLevelPct(1.0)).toBe(1.5);   // BTC 4h típico ≈ el histórico
+    expect(dynamicNearLevelPct(0.2)).toBe(0.5);   // clamp inferior
+    expect(dynamicNearLevelPct(4.0)).toBe(3.0);   // clamp superior (SOL volátil)
+    expect(dynamicNearLevelPct(null)).toBe(1.5);  // sin ATR → fijo histórico
+    expect(dynamicNearLevelPct(undefined)).toBe(1.5);
+    expect(dynamicNearLevelPct(0)).toBe(1.5);
+  });
+
+  test('con ATR bajo el umbral se estrecha: nivel a 1.2% deja de armar el veto', () => {
+    const ctx = longVetoContext(); // resistencia a 1% del precio
+    ctx.technical['4h'].atr = { value: 0.3, pct: 0.3, period: 14 }; // umbral → 0.5%
+    ctx.technical['4h'].support_resistance.resistances = [{ price: 101.2, touches: 4 }]; // 1.2%
+    const r = computeVetos(ctx);
+    expect(r.veto_long).toBe(false);
+    expect(r.near_level_pct_used).toBe(0.5);
+  });
+
+  test('con ATR alto el umbral se ensancha: nivel a 2.5% sí arma el veto', () => {
+    const ctx = longVetoContext();
+    ctx.technical['4h'].atr = { value: 2, pct: 2, period: 14 }; // umbral → 3.0
+    ctx.technical['4h'].support_resistance.resistances = [{ price: 102.5, touches: 4 }]; // 2.5%
+    const r = computeVetos(ctx);
+    expect(r.veto_long).toBe(true);
+    expect(r.near_level_pct_used).toBe(3);
+  });
+
+  test('la contradicción price_near_key_level usa el mismo umbral dinámico', () => {
+    const ctx = longVetoContext();
+    ctx.technical['4h'].atr = { value: 0.3, pct: 0.3, period: 14 }; // umbral → 0.5%
+    // Nivel a 1% con 2 toques: dentro del 1.5% fijo antiguo, fuera del 0.5% dinámico.
+    ctx.technical['4h'].support_resistance.resistances = [{ price: 101, touches: 2 }];
+    ctx.technical['4h'].support_resistance.supports = [{ price: 90, touches: 5 }];
+    const codes = computeContradictions(ctx).contradictions.map((c) => c.code);
+    expect(codes).not.toContain('price_near_key_level');
+  });
+});
+
+describe('telemetría borderline (auditoría #2, hallazgo 9)', () => {
+  test('OI pegado al umbral de expansión → flag borderline', () => {
+    const ctx = longVetoContext();
+    ctx.openInterest.change_24h_pct = 1.1; // |1.1 − 1| = 0.1 <= 0.25
+    const r = computeVetos(ctx);
+    expect(r.borderline.some((b) => b.startsWith('oi_change_near_threshold'))).toBe(true);
+  });
+
+  test('nivel fuerte justo fuera del umbral (1×–1.25×) → flag borderline, sin veto', () => {
+    const ctx = longVetoContext();
+    // umbral fijo 1.5% (sin ATR); resistencia a 1.7% → fuera, pero < 1.875% (1.25×)
+    ctx.technical['4h'].support_resistance.resistances = [{ price: 101.7, touches: 4 }];
+    const r = computeVetos(ctx);
+    expect(r.veto_long).toBe(false);
+    expect(r.borderline.some((b) => b.startsWith('resistance_just_outside_threshold'))).toBe(true);
+  });
+
+  test('sin condiciones de borde → borderline vacío', () => {
+    const ctx = longVetoContext();
+    ctx.openInterest.change_24h_pct = 0.3; // lejos del 1% (0.7 > 0.25)
+    const r = computeVetos(ctx);
+    expect(r.borderline.some((b) => b.startsWith('oi_change'))).toBe(false);
   });
 });

@@ -1579,6 +1579,37 @@ Implementados más servicios de los planificados originalmente:
 
 ## 📝 NOTAS IMPORTANTES
 
+### Inventario hechos → consumidores del pipeline de decisión (auditoría #2, 2026-07-12)
+
+Regla estructural surgida de la 2ª auditoría red-team: **cada hecho de mercado tiene UN dueño
+por capa** y no debe votar dos veces dentro de la misma capa. Esta tabla es el mapa canónico —
+al añadir una regla nueva (prompt, gating, validador), comprobar aquí si el hecho ya vota en
+esa capa. Los dedupes existentes (H4 veto↔contradicciones, B1 por bloques, anti-doble-descuento
+de la bandera CVD 1D) son consecuencias de este principio.
+
+| Hecho | Score del LLM (prompt) | Gating determinista | Contradicción (bloque) | Otros consumidores |
+|-------|------------------------|--------------------|------------------------|--------------------|
+| Funding severity (+/−) | Derivatives Score (severity rules) + PERSISTENCE FILTER | — | — | `crowded_trade_flag` (contexto, no vota) |
+| OI expansión/contracción | Derivatives (convicción, no signo) | Pata de AMBOS vetos (<+1%) | `oi_flat_or_falling` (derivados, <0%) — **deduplicada si hay veto** | `crowded_trade_flag` (fail-closed) |
+| Long/Short ratio | Derivatives (subordinado a funding) | — | — | `expected_scores.derivatives` (guardia C2) |
+| CVD del TF primario | Volume Flow (señal primaria) | — | — | `expected_scores.volume` (guardia C2, se abstiene en divergencia) |
+| CVD 1D divergencia (fuerza no-marginal) | Bandera de convicción **solo si NO está en gating.contradictions** | Pata de ambos vetos | `cvd_1d_divergence` (volume) — deduplicada si hay veto | — |
+| Precio cerca de nivel S/R fuerte | Structure (niveles tácticos) | Pata de ambos vetos (3+ toques, umbral ~1.5×ATR%) | `price_near_key_level` (estructura, 2+ toques) — deduplicada si hay veto | `borderline[]` (telemetría de borde) |
+| Conflicto 1W vs 1D | Structure (jerarquía TFs) | — | `htf_conflict_1w_1d` (estructura) | `timeframe_analysis.conflict` |
+| Conflicto SMC (BOS vs CHoCH activos) | Structure (reglas SMC) | — | `smc_structural_conflict` (estructura) | — |
+| Volume↔Structure scores en conflicto | — (es la 6ª contradicción, la suma el LLM) | — | 6ª del validador (simétrica M4) | — |
+| Fear & Greed | Contexto (solo extremos <15/>85) | — | — | ANTI-DOUBLE-COUNT: crowding correlacionado con funding/LSR |
+| ETF flows | Ajuste conviction (±cualitativo, B3) | — | — | ANTI-DOUBLE-COUNT con funding (co-ocurrencia cualitativa) |
+| Order book imbalance | Ajuste Volume (±0.5) — **pendiente de validar con backtest (mismo caso que B3)** | — | — | — |
+
+Notas:
+- El conteo `contradiction_count` es por BLOQUES (volume/derivatives/structure, máx 3), no por señales.
+- `expected_scores` NO llega al LLM (se excluye en `buildPrompt`) — es la guardia independiente del validador.
+- Doble conteo residual conocido: el mismo OI/funding puede influir score del LLM (capa prompt) Y una
+  contradicción (capa gating). Es *inter-capa* y deliberado (el score gradúa, la contradicción cuenta
+  ejes); lo prohibido es votar dos veces en la MISMA capa.
+
+
 ### Costo & Control
 - **Timer 60seg:** 100% gratis (cálculos locales + CoinGecko + alternative.me + Coinalyze)
 - **Botón "⚡ Analizar":** ~$0.003 por análisis (usuario decide cuándo)

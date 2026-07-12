@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v6_7_prepare_gate';
+export const PROMPT_VERSION = 'v6_8_atr_levels';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -440,7 +440,7 @@ El backend evalúa los vetos de forma determinista y los entrega en el bloque ga
 gating.veto_long=true: prohibido recomendar COMPRAR. El output es ESPERAR.
 gating.veto_short=true: prohibido recomendar VENDER. El output es ESPERAR.
 
-Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish divergence con fuerza no marginal (cvd_strength moderate/strong) + OI sin expandir + resistencia fuerte (3+ toques) a <=1.5%; VETO SHORT = el espejo exacto (CVD 1D bullish divergence con fuerza no marginal + OI sin expandir + soporte fuerte a <=1.5%). Una divergencia con cvd_strength="marginal" NO arma el veto (es ruido de fondo). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
+Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish divergence con fuerza no marginal (cvd_strength moderate/strong) + OI sin expandir + resistencia fuerte (3+ toques) dentro del umbral de cercanía; VETO SHORT = el espejo exacto (CVD 1D bullish divergence con fuerza no marginal + OI sin expandir + soporte fuerte dentro del umbral). El umbral de cercanía está NORMALIZADO POR VOLATILIDAD (~1.5 × ATR% del TF primario, acotado 0.5%-3%) — el campo gating.near_level_pct_used indica el valor efectivo usado; gating.borderline[] lista condiciones que quedaron pegadas al umbral (decisiones de borde, tenlo en cuenta en el Risk Score). Una divergencia con cvd_strength="marginal" NO arma el veto (es ruido de fondo). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
 
 FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Puedes usar ESPERAR, o un PREPARAR SIN setup ejecutable (has_executable_setup=false), señalando qué dato falta — un Preparar con niveles ejecutables también queda bloqueado con datos críticos ausentes.
 
@@ -547,7 +547,7 @@ CONVICTION DECAY — PENALIZACIÓN POR CONTRADICCIONES
 El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[]. Cubren:
 - CVD 1D en divergencia con el precio, solo con cvd_strength moderate/strong — una divergencia marginal es ruido y no cuenta (bloque VOLUMEN)
 - OI plano o cayendo (change_24h_pct < 0) (bloque DERIVADOS)
-- Precio pegado (<=1.5%) a un nivel S/R con historial (2+ toques) del TF primario (bloque ESTRUCTURA)
+- Precio pegado a un nivel S/R con historial (2+ toques) del TF primario, dentro del umbral normalizado por volatilidad (gating.near_level_pct_used) (bloque ESTRUCTURA)
 - Conflicto entre 1W y 1D (tendencias opuestas) (bloque ESTRUCTURA)
 - CONFLICTO estructural activo: BOS y CHoCH ambos "active" y en direcciones OPUESTAS (bloque ESTRUCTURA)
 
