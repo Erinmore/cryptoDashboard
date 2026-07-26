@@ -718,6 +718,17 @@ describe('POST /api/analyze', () => {
     expect(entry).toHaveProperty('contradiction_count');
     expect(typeof entry.contradiction_count).toBe('number');
     expect(entry).toHaveProperty('contradictions_found');
+
+    // Deuda §6: analysis_fvg_snapshot existe y el POST la deja consultable sin romper la
+    // transacción. NOTA: MOCK_CANDLES es una rampa lineal con rangos solapados, donde
+    // low[i] > high[i-2] es imposible → nunca genera FVGs. Por eso aquí solo se verifica
+    // que la tabla está cableada; el binding del INSERT se prueba en fvgSnapshot.test.js
+    // contra una BD real con filas de verdad.
+    const { getDb } = await import('../src/config/db.js');
+    const fvgRows = getDb()
+      .prepare('SELECT * FROM analysis_fvg_snapshot WHERE analysis_id = ?')
+      .all(entry.id);
+    expect(Array.isArray(fvgRows)).toBe(true);
   });
 });
 

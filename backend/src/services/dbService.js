@@ -11,10 +11,11 @@ import { wilsonInterval } from '../utils/stats.js';
  *   data.header     — fields for `analyses`
  *   data.tfSnapshots — array of up to 4 objects for `analysis_tf_snapshot`
  *   data.clusters   — array of up to 10 objects for `analysis_liquidation_snapshot`
+ *   data.fvgs       — array of up to 40 objects for `analysis_fvg_snapshot` (5 × 2 dir × 4 TFs)
  */
 export function saveAnalysis(data) {
   const db = getDb();
-  const { header, tfSnapshots = [], clusters = [] } = data;
+  const { header, tfSnapshots = [], clusters = [], fvgs = [] } = data;
 
   const insertHeader = db.prepare(`
     INSERT INTO analyses (
@@ -108,10 +109,21 @@ export function saveAnalysis(data) {
     )
   `);
 
+  const insertFvg = db.prepare(`
+    INSERT INTO analysis_fvg_snapshot (
+      analysis_id, tf, fvg_type, fvg_rank, zone_low, zone_high, size_pct,
+      mitigation_pct, candles_ago, signal_status, formed_t, distance_pct
+    ) VALUES (
+      @analysis_id, @tf, @fvg_type, @fvg_rank, @zone_low, @zone_high, @size_pct,
+      @mitigation_pct, @candles_ago, @signal_status, @formed_t, @distance_pct
+    )
+  `);
+
   const transaction = db.transaction(() => {
     insertHeader.run(header);
     for (const snap of tfSnapshots) insertSnapshot.run(snap);
     for (const cluster of clusters) insertCluster.run(cluster);
+    for (const fvg of fvgs) insertFvg.run(fvg);
   });
 
   transaction();
@@ -358,6 +370,7 @@ function pruneOldAnalyses(coin) {
     const placeholders = ids.map(() => '?').join(',');
     db.prepare(`DELETE FROM analysis_tf_snapshot WHERE analysis_id IN (${placeholders})`).run(...ids);
     db.prepare(`DELETE FROM analysis_liquidation_snapshot WHERE analysis_id IN (${placeholders})`).run(...ids);
+    db.prepare(`DELETE FROM analysis_fvg_snapshot WHERE analysis_id IN (${placeholders})`).run(...ids);
     db.prepare(`DELETE FROM analysis_outcome WHERE analysis_id IN (${placeholders})`).run(...ids);
     db.prepare(`DELETE FROM analyses WHERE id IN (${placeholders})`).run(...ids);
   }

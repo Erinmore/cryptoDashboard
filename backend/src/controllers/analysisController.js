@@ -920,6 +920,62 @@ function buildTfSnapshots(analysisId, technical) {
 }
 
 /**
+ * Distancia con signo (%) del precio al borde más cercano de una zona FVG.
+ *   precio por ENCIMA de la zona → negativo (hay que caer para rellenarla)
+ *   precio por DEBAJO de la zona → positivo (hay que subir)
+ *   precio DENTRO de la zona     → 0 (mitigándose ahora)
+ * Función pura, exportada para test.
+ * @returns {number|null}
+ */
+export function fvgDistancePct(price, low, high) {
+  if (price == null || low == null || high == null || !price) return null;
+  if (price > high) return parseFloat(((high - price) / price * 100).toFixed(2));
+  if (price < low)  return parseFloat(((low  - price) / price * 100).toFixed(2));
+  return 0;
+}
+
+/**
+ * Builds the FVG snapshot rows from context.technical[tf].smc.unmitigated_fvgs.
+ *
+ * Cierra la deuda §6: el TF snapshot solo guardaba el conteo, así que a posteriori no se
+ * podía comprobar si el precio llegó a rellenar el gap (la tesis del FVG como imán). Aquí
+ * persistimos la geometría de cada uno: zona, tamaño, mitigación, antigüedad, signal_status
+ * y distancia al precio en el momento del análisis.
+ *
+ * @param {string} analysisId
+ * @param {object} technical - context.technical (por TF)
+ * @param {number|null} currentPrice
+ */
+export function buildFvgRows(analysisId, technical, currentPrice) {
+  const rows = [];
+  for (const [tf, data] of Object.entries(technical ?? {})) {
+    const fvgs = data?.smc?.unmitigated_fvgs;
+    if (!fvgs) continue;
+
+    for (const type of ['bullish', 'bearish']) {
+      const list = fvgs[type] ?? [];
+      list.forEach((f, rank) => {
+        rows.push({
+          analysis_id:    analysisId,
+          tf,
+          fvg_type:       type,
+          fvg_rank:       rank,           // 0 = más reciente (detectUnmitigatedFVGs ya los ordena)
+          zone_low:       f.low ?? null,
+          zone_high:      f.high ?? null,
+          size_pct:       f.size_pct ?? null,
+          mitigation_pct: f.mitigation_pct ?? null,
+          candles_ago:    f.candles_ago ?? null,
+          signal_status:  f.signal_status ?? null,
+          formed_t:       f.t_right ?? null,
+          distance_pct:   fvgDistancePct(currentPrice, f.low, f.high),
+        });
+      });
+    }
+  }
+  return rows;
+}
+
+/**
  * Builds the liquidation cluster rows from context.derivatives.liquidation_clusters.
  */
 function buildClusterRows(analysisId, liquidationClusters) {
@@ -999,8 +1055,9 @@ export async function analyze(req, res, next) {
 
     const tfSnapshots = buildTfSnapshots(id, context.technical);
     const clusters    = buildClusterRows(id, context.derivatives?.liquidation_clusters);
+    const fvgs        = buildFvgRows(id, context.technical, context.price_current);
 
-    saveAnalysis({ header, tfSnapshots, clusters });
+    saveAnalysis({ header, tfSnapshots, clusters, fvgs });
 
     logger.info({ coin, action: structured.action, confidence: structured.confidence, ms: processingMs }, 'POST /api/analyze — done');
 

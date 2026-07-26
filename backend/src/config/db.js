@@ -268,6 +268,33 @@ function runMigrations(db) {
     CREATE INDEX IF NOT EXISTS idx_liq_snapshot_analysis
       ON analysis_liquidation_snapshot(analysis_id);
 
+    -- ── Table 5: analysis_fvg_snapshot (hasta 5 FVGs × 2 direcciones × 4 TFs) ──
+    -- Cierra la última deuda §6. La tabla analysis_tf_snapshot ya guardaba el CONTEO de FVGs
+    -- (fvg_bullish_count/fvg_bearish_count) pero no su geometría, así que no se podía
+    -- responder a posteriori "¿el precio llegó a rellenar el gap?" — que es justo lo que
+    -- valida (o refuta) la tesis de los FVGs como imanes de precio.
+    -- distance_pct: distancia con signo del precio al borde más cercano de la zona
+    -- (negativo = zona por debajo, positivo = por encima, 0 = precio dentro).
+    CREATE TABLE IF NOT EXISTS analysis_fvg_snapshot (
+      analysis_id TEXT NOT NULL,
+      tf TEXT NOT NULL,              -- '1h' | '4h' | '1D' | '1W'
+      fvg_type TEXT NOT NULL,        -- 'bullish' | 'bearish'
+      fvg_rank INTEGER NOT NULL,     -- 0 = más reciente
+      zone_low REAL,
+      zone_high REAL,
+      size_pct REAL,
+      mitigation_pct REAL,
+      candles_ago INTEGER,
+      signal_status TEXT,            -- active | context | expired
+      formed_t INTEGER,              -- timestamp de la 3ª vela del patrón (t_right)
+      distance_pct REAL,
+
+      PRIMARY KEY (analysis_id, tf, fvg_type, fvg_rank)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fvg_snapshot_analysis
+      ON analysis_fvg_snapshot(analysis_id);
+
     -- ── candles_cache (reserved, not used yet) ────────────────────────────────
     CREATE TABLE IF NOT EXISTS candles_cache (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
