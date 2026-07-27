@@ -817,6 +817,16 @@ Overrides por env: `PI_HOST` (`pi@192.168.1.250`), `PI_DIR` (`/home/pi/cryptex`)
 
 La BD de desarrollo se migró con un snapshot consistente: `VACUUM INTO` (consolida el WAL en un único fichero sin tocar el original vía better-sqlite3) → transfer → `stop` servicio → reemplazar `cryptex.db` (borrando `-wal`/`-shm`) → `start`. Se migró en vez de empezar de cero por `history_series` (CVD/VWAP). *(Nota 2026-07-27: esa razón ya no aplica — son reconstruibles con `scripts/backfillHistorySeries.mjs`.)*
 
+### Crons de recogida en la Pi — ⚠️ `CRON_TZ` NO funciona en Debian
+
+Cuatro entradas en el `crontab -l` del usuario `pi` (no están en el repo; los scripts sí, en `scripts/`): **A** recogida fija 2/día (`collect.sh`), **B** oportunista horario sin coste LLM (`collectOpportunistic.sh`), **C** backup diario (`backupDb.sh`), **D** salud de la recogida (`checkCollection.sh`, publica `.collect/health.json` → visible en `/health.collection`).
+
+**El cron de Debian (3.0pl1-162) no implementa `CRON_TZ`** — su `man 5 crontab` ni lo menciona: lo pasa al job como variable de entorno normal y **planifica siempre en hora local**. Descubierto el 2026-07-27: `CRON_TZ=UTC` + `5 8,20 * * *` disparaba en realidad a las **18:05 UTC** (= 20:05 CEST), es decir a **mitad de la vela 4h**, metiendo en el cálculo una vela medio formada (high/low/volumen a la mitad) de la que cuelgan ATR, Volume Profile, SMC y `cvd_strength`. Las velas 4h cierran a 00/04/08/12/16/20 UTC y la recogida quiere disparar 5 min después.
+
+- **Regla:** escribir las horas del crontab **en local** y anotar la equivalencia UTC en el comentario. En CEST, `5 10,22` = 08:05/20:05 UTC; en CET habría que poner `5 9,21`.
+- **Si algún día hace falta anclaje a UTC inmune al cambio de hora**, la vía es un timer de systemd (`OnCalendar=*-*-* 08,20:05:00 UTC`), no el crontab.
+- Los scripts usan `date -u` explícito en todos sus timestamps (log, marcador diario del oportunista, sello del backup), así que **no dependen de la TZ del cron**: quitar `CRON_TZ` no altera ningún dato.
+
 ### Integración kiosko (iframe) — 2 fixes de cabeceras en `security.js`
 
 CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `--kiosk` → `http://localhost:8000`). El kiosko y CRYPTEX son **orígenes distintos** (`localhost:8000` vs `192.168.1.250:8080`), lo que obligó a relajar dos cabeceras. Ambos cambios viven en el código (los propaga `deploy.sh`), no solo en la Pi:
