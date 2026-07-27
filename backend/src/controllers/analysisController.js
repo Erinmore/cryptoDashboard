@@ -193,6 +193,19 @@ export function computeHistorySummaries(histories) {
       period_min: Math.min(...values),
       period_max: Math.max(...values),
       period_avg: Math.round(values.reduce((s, v) => s + v, 0) / values.length),
+      // Posición del valor actual DENTRO DE SU PROPIO RANGO de 30 días (0 = mínimo del
+      // periodo, 100 = máximo). Los cortes absolutos <15/>85 que usaba el prompt dejan el
+      // eje de sentimiento INERTE el 87,8 % del tiempo (medido sobre 730 días de
+      // alternative.me: <15 dispara el 11,2 %, >85 el 1,0 % — rama muerta). El valor
+      // absoluto sigue importando (un 12 es miedo real, no relativo), pero sin esta
+      // posición no se distingue "30 en un mes que osciló 11-33" (arriba de su rango:
+      // alivio) de "30 en un mes que osciló 25-80" (abajo: deterioro).
+      range_position_pct: (() => {
+        const min = Math.min(...values), max = Math.max(...values);
+        const cur = current?.value ?? fgHistory.at(-1)?.value;
+        if (!Number.isFinite(cur) || max === min) return null;
+        return Math.round(((cur - min) / (max - min)) * 100);
+      })(),
       // trend_30d: null si no hay un ancla 30d distinta del valor actual (con 1 punto,
       // thirtyDaysEntry === at(-1) y la comparación era espuria → 'deteriorating' falso).
       // Banda 'stable' para no reportar dirección ante igualdad exacta.

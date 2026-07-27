@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v8_0_full_payload';
+export const PROMPT_VERSION = 'v8_1_sentiment_range';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -617,12 +617,20 @@ Usa:
 BTC Dominance
 Fear & Greed Index
 
-Fear & Greed solo pesa si extremo:
+Fear & Greed — DOS lecturas, absoluta y relativa. Nunca es trigger: modula convicción.
 
-< 15
-> 85
+1) Absoluta (el valor tiene significado propio: un 12 es miedo real, no relativo):
+   < 15 = miedo extremo · > 85 = codicia extrema. Son raros —medido sobre 730 días, 11,2 % y 1,0 % del tiempo— y cuando aparecen pesan.
 
-Nunca trigger.
+2) Relativa a su propio mes (sentiment.fear_greed_history.range_position_pct, 0-100 = posición del valor de hoy dentro del rango de 30 días):
+   Sin esta lectura el eje quedaba inerte el 88 % del tiempo. Un mismo 30 significa cosas opuestas: con el mes oscilando 11-33 está en el techo de su rango (alivio dentro del miedo); con el mes oscilando 25-80 está en el suelo (deterioro).
+   range_position_pct <= 20: sentimiento en mínimos DE SU PROPIO CONTEXTO — capitulación relativa. Refuerza tesis contrarian alcistas si la estructura acompaña.
+   range_position_pct >= 80: complacencia relativa. Añade cautela a tesis alcistas y sube el Risk Score.
+   Entre 20 y 80: sin lectura de sentimiento; no lo fuerces.
+
+Combina con trend_30d (improving/deteriorating) para saber la DIRECCIÓN del sentimiento, no solo su nivel. Miedo extremo mejorando y miedo extremo empeorando no son la misma situación.
+
+Recuerda la ANTI-DOUBLE-COUNT RULE: Fear & Greed es una faceta del crowding, igual que funding y L/S ratio. Si los tres apuntan a lo mismo, es UNA lectura, no tres confirmaciones.
 
 Adaptación
 
@@ -727,6 +735,8 @@ trade ejecutable
 OUTPUT FORMAT
 
 IMPORTANTE: Tu respuesta debe ser EXCLUSIVAMENTE un objeto JSON válido. Sin texto antes ni después. Sin markdown. Sin bloques de código. Solo el JSON.
+
+IDIOMA: todo el contenido de texto (executive_summary, gating_reason, missing_confirmations y los seis campos de narrative) va en ESPAÑOL. Las CLAVES del JSON y los valores de enumeración internos (primary_driver: derivatives/structure/macro/volume/onchain, tf_execution) se mantienen tal cual, en inglés. Los campos action y confidence usan sus valores en español (Comprar/Vender/Preparar/Esperar · Alta/Media/Baja). El texto se muestra directamente al usuario final, que lee en español.
 
 El JSON debe tener exactamente esta estructura:
 
@@ -895,12 +905,26 @@ function buildPrompt(ctx) {
   //                   umbral normalizado por ATR (`near_level_pct_used`).
   const TF_PRUNE = ['adx', 'trend_basis', 'distance_to_nearest_support_pct',
     'distance_to_nearest_resistance_pct'];
+  // Telemetría de CALIBRACIÓN: percentiles y cortes con los que el backend produjo cada
+  // etiqueta. Existen para auditar la calibración a posteriori, no para decidir — el
+  // modelo debe leer la etiqueta (`volatility_state`, `cvd_strength`), no el corte con el
+  // que se generó, o acabará re-derivando el umbral que el backend ya fijó.
+  const CALIBRATION_TELEMETRY = {
+    bollinger_bands: ['width_pctile', 'width_cuts'],
+    cvd: ['cvd_strength_pctile', 'cvd_strength_cuts'],
+    super_trend: ['adaptive_multiplier'],
+  };
   if (llmCtx.technical) {
     llmCtx.technical = Object.fromEntries(
       Object.entries(llmCtx.technical).map(([tf, data]) => {
         if (!data) return [tf, data];
         const clean = { ...data };
         for (const k of TF_PRUNE) delete clean[k];
+        for (const [sub, fields] of Object.entries(CALIBRATION_TELEMETRY)) {
+          if (!clean[sub]) continue;
+          clean[sub] = { ...clean[sub] };
+          for (const f of fields) delete clean[sub][f];
+        }
         if (clean.volume_delta) {
           const { buy_pressure_pct, sell_pressure_pct, ...vd } = clean.volume_delta;
           clean.volume_delta = vd;
@@ -914,6 +938,15 @@ function buildPrompt(ctx) {
   // (texto imperativo, y además en inglés dentro de un prompt en español). El comportamiento
   // debe cambiarse en un solo sitio: el system. Se conservan `conflict` y `reasoning`, que
   // sí son hechos observados sobre este mercado.
+  // `gating`: los campos de AUDITORÍA del dedupe no son entrada de decisión. Y
+  // `deduped_by_veto` es activamente peligroso: lista contradicciones que el backend
+  // RETIRÓ a propósito por estar ya contenidas en el veto — enseñárselas al modelo invita
+  // justo al doble conteo que el dedupe existe para evitar.
+  if (llmCtx.gating) {
+    const { deduped_by_veto, contradictions_signal_count, contradiction_blocks_pre_veto, ...g } = llmCtx.gating;
+    llmCtx.gating = g;
+  }
+
   if (llmCtx.timeframe_analysis) {
     const { guidance, hierarchy_tiers, hierarchy_recommendation, ...ta } = llmCtx.timeframe_analysis;
     llmCtx.timeframe_analysis = ta;

@@ -246,3 +246,63 @@ describe('buildSystemPrompt — las reglas nuevas consumen flags precalculados (
     expect(sys()).toContain('volume_vs_30d_median');
   });
 });
+
+describe('v8_1 — sentimiento auto-normalizado, idioma y telemetría fuera del dataset', () => {
+  const sys = () => {
+    const r = buildSystemPrompt({ coin: 'SOL', technical: {} });
+    return typeof r === 'string' ? r : r.system;
+  };
+
+  test('la regla de Fear & Greed ya no depende solo de cortes absolutos', () => {
+    const s = sys();
+    // Medido sobre 730 días: <15 dispara el 11,2 % y >85 el 1,0 % → el eje quedaba inerte
+    // el 87,8 % del tiempo. La lectura relativa a su propio mes lo reactiva.
+    expect(s).toContain('range_position_pct');
+    expect(s).toContain('trend_30d');
+  });
+
+  test('el idioma de la salida está especificado, no implícito', () => {
+    const s = sys();
+    expect(s).toContain('IDIOMA');
+    expect(s).toMatch(/ESPAÑOL/);
+  });
+
+  test('la telemetría de calibración y los campos de auditoría no llegan al LLM', () => {
+    const ctx = {
+      technical: {
+        '4h': {
+          bollinger_bands: { width_pct: 5.5, volatility_state: 'normal', width_pctile: 56.5, width_cuts: [4.5, 5.9] },
+          cvd: { trend: 'rising', cvd_strength: 'moderate', cvd_strength_pctile: 61, cvd_strength_cuts: [1, 2] },
+          super_trend: { trend: 'UP', support: 74.6, adaptive_multiplier: 2.687 },
+        },
+      },
+      gating: {
+        veto_short: true,
+        contradictions: [{ code: 'htf_conflict_1w_1d' }],
+        contradiction_count: 1,
+        deduped_by_veto: ['cvd_1d_divergence', 'oi_flat_or_falling'],
+        contradictions_signal_count: 4,
+        contradiction_blocks_pre_veto: 3,
+      },
+    };
+    const d = JSON.parse(buildPrompt(ctx).match(/\{[\s\S]*\}/)[0]);
+    const t = d.technical['4h'];
+
+    // La etiqueta se queda; el corte con el que se generó, no (si no, el modelo re-deriva
+    // el umbral que el backend ya fijó).
+    expect(t.bollinger_bands.volatility_state).toBe('normal');
+    expect(t.bollinger_bands.width_pctile).toBeUndefined();
+    expect(t.bollinger_bands.width_cuts).toBeUndefined();
+    expect(t.cvd.cvd_strength).toBe('moderate');
+    expect(t.cvd.cvd_strength_pctile).toBeUndefined();
+    expect(t.super_trend.adaptive_multiplier).toBeUndefined();
+
+    // deduped_by_veto lista contradicciones RETIRADAS a propósito: enseñárselas al modelo
+    // invita al doble conteo que el dedupe existe para evitar.
+    expect(d.gating.deduped_by_veto).toBeUndefined();
+    expect(d.gating.contradictions_signal_count).toBeUndefined();
+    expect(d.gating.contradiction_blocks_pre_veto).toBeUndefined();
+    expect(d.gating.veto_short).toBe(true);          // la decisión sí viaja
+    expect(d.gating.contradiction_count).toBe(1);
+  });
+});
