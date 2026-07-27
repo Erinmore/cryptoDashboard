@@ -1,6 +1,10 @@
 import { getDb } from '../config/db.js';
 import { MAX_ANALYSES_STORED } from '../config/constants.js';
-import { wilsonInterval } from '../utils/stats.js';
+import {
+  wilsonInterval, MIN_DIRECTIONAL_SAMPLE,
+  summarizeOpportunity, summarizePathWinRate, summarizeConviction,
+} from '../utils/stats.js';
+import { countEpisodes } from '../utils/episodes.js';
 
 // ─── Save analysis (4-table transaction) ──────────────────────────────────────
 
@@ -212,22 +216,30 @@ export function getLastAnalysis(coin) {
 export function getAnalysesNeedingOutcome(olderThanMs, limit = 100) {
   const db = getDb();
   const cutoff = new Date(olderThanMs).toISOString();
+  // Fase 5 · reintento acotado del recorrido: una fila sin métricas de path se vuelve a
+  // seleccionar solo mientras esté dentro de la ventana de 7d + 1 día de gracia. Pasado
+  // eso deja de reintentarse aunque siga a NULL — si no, un análisis cuyo ATR no se pudo
+  // reconstruir se re-pediría a Binance cada 15 minutos para siempre (el mismo churn que
+  // ya se cerró con el `setup_outcome='invalid'`).
+  const backfillCutoff = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
   return db.prepare(`
-    SELECT a.id, a.coin, a.timestamp, a.price_current, a.action,
+    SELECT a.id, a.coin, a.timestamp, a.price_current, a.action, a.primary_tf,
            a.has_executable_setup, a.setup_entry_price, a.setup_stop_price,
            a.setup_tp1_price, a.setup_tp2_price,
            o.price_at_analysis,
            o.price_1h_later, o.price_4h_later, o.price_24h_later, o.price_7d_later,
-           o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop, o.setup_outcome
+           o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop, o.setup_outcome,
+           o.atr_pct_at_analysis, o.max_up_pct_7d
     FROM analyses a
     LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
-    WHERE a.timestamp <= ?
+    WHERE a.timestamp <= @cutoff
       AND (o.analysis_id IS NULL
            OR o.price_7d_later IS NULL
-           OR (a.has_executable_setup = 1 AND (o.setup_outcome IS NULL OR o.setup_outcome = 'open')))
+           OR (a.has_executable_setup = 1 AND (o.setup_outcome IS NULL OR o.setup_outcome = 'open'))
+           OR (o.max_up_pct_7d IS NULL AND a.timestamp >= @backfillCutoff))
     ORDER BY a.timestamp ASC
-    LIMIT ?
-  `).all(cutoff, limit);
+    LIMIT @limit
+  `).all({ cutoff, backfillCutoff, limit });
 }
 
 /** Inserta o actualiza (upsert por analysis_id) una fila de analysis_outcome. */
@@ -239,13 +251,17 @@ export function upsertOutcome(o) {
       price_1h_later, price_4h_later, price_24h_later, price_7d_later,
       outcome_1h, outcome_24h, outcome_7d,
       setup_hit_tp1, setup_hit_tp2, setup_hit_stop, setup_outcome, pnl_pct_24h,
-      pnl_signed_pct_24h
+      pnl_signed_pct_24h,
+      atr_pct_at_analysis, max_up_pct_24h, max_down_pct_24h,
+      max_up_pct_7d, max_down_pct_7d, t_max_up_h, t_max_down_h, path_first_passage
     ) VALUES (
       @analysis_id, @price_at_analysis,
       @price_1h_later, @price_4h_later, @price_24h_later, @price_7d_later,
       @outcome_1h, @outcome_24h, @outcome_7d,
       @setup_hit_tp1, @setup_hit_tp2, @setup_hit_stop, @setup_outcome, @pnl_pct_24h,
-      @pnl_signed_pct_24h
+      @pnl_signed_pct_24h,
+      @atr_pct_at_analysis, @max_up_pct_24h, @max_down_pct_24h,
+      @max_up_pct_7d, @max_down_pct_7d, @t_max_up_h, @t_max_down_h, @path_first_passage
     )
     ON CONFLICT(analysis_id) DO UPDATE SET
       price_at_analysis = excluded.price_at_analysis,
@@ -255,7 +271,17 @@ export function upsertOutcome(o) {
       setup_hit_tp1 = excluded.setup_hit_tp1, setup_hit_tp2 = excluded.setup_hit_tp2,
       setup_hit_stop = excluded.setup_hit_stop, setup_outcome = excluded.setup_outcome,
       pnl_pct_24h = excluded.pnl_pct_24h,
-      pnl_signed_pct_24h = excluded.pnl_signed_pct_24h
+      pnl_signed_pct_24h = excluded.pnl_signed_pct_24h,
+      -- Fase 5: COALESCE porque el recorrido se calcula sobre las velas ya vencidas y un
+      -- ciclo con fallo transitorio de klines no debe borrar lo ya medido.
+      atr_pct_at_analysis = COALESCE(excluded.atr_pct_at_analysis, atr_pct_at_analysis),
+      max_up_pct_24h  = COALESCE(excluded.max_up_pct_24h,  max_up_pct_24h),
+      max_down_pct_24h= COALESCE(excluded.max_down_pct_24h,max_down_pct_24h),
+      max_up_pct_7d   = COALESCE(excluded.max_up_pct_7d,   max_up_pct_7d),
+      max_down_pct_7d = COALESCE(excluded.max_down_pct_7d, max_down_pct_7d),
+      t_max_up_h      = COALESCE(excluded.t_max_up_h,      t_max_up_h),
+      t_max_down_h    = COALESCE(excluded.t_max_down_h,    t_max_down_h),
+      path_first_passage = COALESCE(excluded.path_first_passage, path_first_passage)
   `).run({
     analysis_id:       o.analysis_id,
     price_at_analysis: o.price_at_analysis ?? null,
@@ -272,12 +298,19 @@ export function upsertOutcome(o) {
     setup_outcome:     o.setup_outcome ?? null,
     pnl_pct_24h:        o.pnl_pct_24h ?? null,
     pnl_signed_pct_24h: o.pnl_signed_pct_24h ?? null,
+    atr_pct_at_analysis: o.atr_pct_at_analysis ?? null,
+    max_up_pct_24h:     o.max_up_pct_24h ?? null,
+    max_down_pct_24h:   o.max_down_pct_24h ?? null,
+    max_up_pct_7d:      o.max_up_pct_7d ?? null,
+    max_down_pct_7d:    o.max_down_pct_7d ?? null,
+    t_max_up_h:         o.t_max_up_h ?? null,
+    t_max_down_h:       o.t_max_down_h ?? null,
+    path_first_passage: o.path_first_passage != null ? JSON.stringify(o.path_first_passage) : null,
   });
 }
 
-// Muestra mínima para reportar un win-rate como no-ruido (auditoría C5). Por debajo, el
-// IC de Wilson es tan ancho que la cifra puntual no informa → se marca insuficiente.
-const MIN_DIRECTIONAL_SAMPLE = 20;
+// Muestra mínima para reportar un win-rate como no-ruido (auditoría C5). Definida en
+// utils/stats.js para que el win-rate clásico y el path-aware compartan el MISMO gate.
 
 // Columnas de agregación de outcome (sin el SELECT ni el FROM — reutilizables para
 // consultas globales y segmentadas por TF/modelo).
@@ -345,11 +378,37 @@ export function getOutcomeStats(coin = null) {
      GROUP BY a.${field} ORDER BY a.${field}`,
   ).all({ coin: coinArg }).map((r) => decorateOutcomeRow(r));
 
+  // ── Fase 5 · bloques falsables ────────────────────────────────────────────
+  // Se traen las filas (no solo agregados) porque el recorrido vive en un JSON y la
+  // de-dup por episodio es lógica de agregación, no SQL. La muestra está acotada a
+  // MAX_ANALYSES_STORED por moneda, así que cabe en memoria sin problema.
+  const rows = db.prepare(`
+    SELECT a.id, a.coin, a.timestamp, a.primary_tf, a.action, a.conviction,
+           o.atr_pct_at_analysis,
+           o.max_up_pct_24h, o.max_down_pct_24h, o.max_up_pct_7d, o.max_down_pct_7d,
+           o.path_first_passage
+    ${OUTCOME_FROM}
+    WHERE (@coin IS NULL OR a.coin = @coin)
+    ORDER BY a.timestamp ASC
+  `).all({ coin: coinArg });
+
+  // El coste de oportunidad se mide sobre las ABSTENCIONES: es la salida dominante del
+  // sistema y la única que el win-rate direccional no puede evaluar.
+  const waits = rows.filter((r) => r.action === 'Esperar' || r.action === 'Preparar');
+
   return {
     ...decorateOutcomeRow(overall),
     min_directional_sample: MIN_DIRECTIONAL_SAMPLE,
     by_primary_tf: byField('primary_tf'),
     by_model: byField('model_used'),
+    opportunity_cost: {
+      '24h': summarizeOpportunity(waits, { horizonH: 24 }),
+      '7d': summarizeOpportunity(waits, { horizonH: null }),
+    },
+    path_win_rate: summarizePathWinRate(rows),
+    conviction_calibration: summarizeConviction(rows),
+    // n de análisis vs n de episodios: la diferencia es la autocorrelación de la muestra.
+    episodes: { analyses_n: rows.length, episodes_n: countEpisodes(rows) },
   };
 }
 

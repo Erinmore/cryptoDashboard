@@ -280,6 +280,46 @@ function renderStats(s) {
     return box;
   }
 
+  // Fase 5 · coste de oportunidad. Va PRIMERO y separado del win-rate a propósito: con
+  // `Esperar` como salida dominante es la única métrica con denominador, y enterrarla
+  // debajo de un "muestra insuficiente" repetiría el problema que vino a resolver.
+  const opp = s.opportunity_cost?.['24h'];
+  if (opp?.evaluable_n) {
+    const sub = el('div', 'hist-stats-sub');
+    sub.appendChild(el('span', 'hist-stats-subtitle', 'Coste de oportunidad de esperar (24h)'));
+    const g = el('div', 'hist-stats-grid');
+    const m = (label, value, cls, title) => {
+      const d = el('div', 'hist-stat');
+      if (title) d.title = title;
+      d.appendChild(el('span', 'hist-stat-label', label));
+      d.appendChild(el('span', `hist-stat-value ${cls ?? ''}`, value));
+      g.appendChild(d);
+    };
+    const k = opp.thresholds ?? {};
+    m('Mercado ofrecía', `${opp.offered_pct}% (${opp.offered_n}/${opp.evaluable_n})`,
+      opp.offered_pct >= 50 ? 'loss' : 'win',
+      `Movimiento limpio de ${k.target_k_atr}×ATR antes de ${k.adverse_k_atr}×ATR en contra. `
+      + 'Alto = se dejó pasar recorrido operable; bajo = abstenerse fue criterio.');
+    if (opp.median_hours_to_target != null) {
+      m('Mediana hasta objetivo', `${opp.median_hours_to_target} h`, '',
+        'Cuánto tardó en llegar el movimiento. Muy tarde = no era lo que el análisis miraba.');
+    }
+    if (opp.blocked_by_adverse_n) {
+      m('Latigazos', String(opp.blocked_by_adverse_n), '',
+        'Llegó al objetivo, pero después de irse en contra: no era operable.');
+    }
+    if (opp.avg_max_excursion_atr != null) {
+      m('Excursión media', `${opp.avg_max_excursion_atr}×ATR`, '',
+        'Magnitud cruda del recorrido, sin exigir que fuera limpio.');
+    }
+    if (s.episodes && s.episodes.episodes_n < s.episodes.analyses_n) {
+      m('Episodios', `${s.episodes.episodes_n} de ${s.episodes.analyses_n}`, '',
+        'Análisis de la misma vela del TF primario cuentan como una sola observación.');
+    }
+    sub.appendChild(g);
+    box.appendChild(sub);
+  }
+
   const grid = el('div', 'hist-stats-grid');
   const metric = (label, value, cls) => {
     const m = el('div', 'hist-stat');

@@ -13,6 +13,8 @@
 import { fetchHistoricalClose, fetchHistoricalKlines } from './coingeckoService.js';
 import { getAnalysesNeedingOutcome, upsertOutcome } from './dbService.js';
 import { classifyOutcome, evaluateSetupBarrier } from '../utils/outcome.js';
+import { computePathMetrics, computeAtrPct } from '../utils/pathMetrics.js';
+import { calculateATR } from '../utils/indicators.js';
 import env from '../config/env.js';
 import logger from '../middleware/logger.js';
 
@@ -24,7 +26,39 @@ const HORIZONS = [
   ['7d',  7 * 24 * HOUR_MS],
 ];
 
+// TF primario del análisis → intervalo de Binance y su duración.
+const TF_SPEC = {
+  '1h': { interval: '1h', ms: HOUR_MS },
+  '4h': { interval: '4h', ms: 4 * HOUR_MS },
+  '1D': { interval: '1d', ms: 24 * HOUR_MS },
+  '1W': { interval: '1w', ms: 7 * 24 * HOUR_MS },
+};
+const ATR_PERIOD = 14;
+
 let timer = null;
+
+/**
+ * ATR% del TF primario en el instante del análisis — el normalizador de volatilidad de
+ * todas las métricas de recorrido. Sin él, "el precio se movió un 3 %" no distingue
+ * oportunidad de ruido.
+ *
+ * Se reconstruye desde klines en vez de persistirse en el momento del análisis para que
+ * sea RETROACTIVO: los análisis ya guardados también lo obtienen. Cuesta una petición por
+ * análisis UNA sola vez (después se lee de `atr_pct_at_analysis`).
+ *
+ * @returns {Promise<number|null>}
+ */
+async function fetchAtrPctAt(coin, primaryTf, tMs) {
+  const spec = TF_SPEC[primaryTf];
+  if (!spec) return null;
+  // Velas CERRADAS antes del análisis: la que contiene tMs aún no existía al decidir.
+  const need = ATR_PERIOD + 5;
+  const raw = await fetchHistoricalKlines(
+    coin, spec.interval, tMs - need * spec.ms, tMs - 1, need,
+  );
+  const closed = (raw ?? []).filter((c) => c.t + spec.ms <= tMs);
+  return computeAtrPct(closed, calculateATR, ATR_PERIOD);
+}
 
 /**
  * Procesa un análisis: rellena precios vencidos, outcomes y barrier del setup.
@@ -82,6 +116,36 @@ async function processAnalysis(a, now) {
     ? parseFloat((out.pnl_pct_24h * dir).toFixed(2))
     : null;
 
+  // ── Velas del recorrido (compartidas: métricas de path + barrier del setup) ──
+  // Antes solo se pedían cuando había setup ejecutable. Ahora se piden SIEMPRE porque el
+  // recorrido posterior a un `Esperar` es justo lo que faltaba para poder refutarlo.
+  const toMs = Math.min(now, tMs + 7 * 24 * HOUR_MS);
+  let pathCandles = null;
+  try {
+    pathCandles = await fetchHistoricalKlines(a.coin, '1h', tMs, toMs, 1000);
+  } catch (err) {
+    logger.warn({ id: a.id, err: err.message }, 'outcomeJob: fallo fetch klines del recorrido');
+  }
+
+  // ── Métricas de recorrido (Fase 5) ──
+  // El ATR se calcula una sola vez y se conserva; el recorrido se recalcula mientras la
+  // ventana de 7d siga creciendo. Si el fetch falla, se dejan a null y el COALESCE del
+  // upsert preserva lo ya medido en ciclos anteriores.
+  let atrPct = a.atr_pct_at_analysis ?? null;
+  if (atrPct == null) {
+    try {
+      atrPct = await fetchAtrPctAt(a.coin, a.primary_tf, tMs);
+    } catch (err) {
+      logger.warn({ id: a.id, err: err.message }, 'outcomeJob: fallo ATR del análisis');
+    }
+  }
+  out.atr_pct_at_analysis = atrPct;
+  if (pathCandles?.length) {
+    Object.assign(out, computePathMetrics({
+      candles: pathCandles, priceAt, atrPct, tMs, intervalMs: HOUR_MS,
+    }));
+  }
+
   // Barrier del setup (solo si hay setup ejecutable y aún no está resuelto).
   // Terminal = outcome no nulo y distinto de 'open' (tp1/tp2/stop/expired/not_triggered/invalid).
   const preserveSetup = () => {
@@ -105,44 +169,35 @@ async function processAnalysis(a, now) {
       // rellenando aparte (el análisis puede seguir seleccionándose por price_7d_later NULL,
       // pero ya sin reintentar el barrier). Cierra el churn del setup en el 1er ciclo.
       markInvalidSetup();
+    } else if (!pathCandles?.length) {
+      // Fetch vacío o fallido = fallo transitorio (las klines históricas de Binance son
+      // permanentes), NO geometría inválida: preservar y reintentar, no marcar 'invalid'.
+      preserveSetup();
     } else {
-      const toMs = Math.min(now, tMs + 7 * 24 * HOUR_MS);
-      try {
-        const candles = await fetchHistoricalKlines(a.coin, '1h', tMs, toMs, 1000);
-        // Fetch vacío = fallo transitorio (las klines históricas de Binance son permanentes),
-        // NO geometría inválida: preservar y reintentar, no marcar 'invalid' terminal.
-        if (!candles?.length) {
-          preserveSetup();
-        } else {
-          const bar = evaluateSetupBarrier({
-            entry_price: a.setup_entry_price,
-            stop_price:  a.setup_stop_price,
-            tp1_price:   a.setup_tp1_price,
-            tp2_price:   a.setup_tp2_price,
-          }, candles);
-          if (bar) {
-            out.setup_hit_tp1  = bar.hit_tp1 ? 1 : 0;
-            out.setup_hit_tp2  = bar.hit_tp2 ? 1 : 0;
-            out.setup_hit_stop = bar.hit_stop ? 1 : 0;
-            // Finalizar estados no terminales cuando ya venció el horizonte de 7d
-            // (evita reprocesar el mismo setup indefinidamente — A4).
-            let oc = bar.outcome;
-            if (!horizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
-              oc = 'open';               // aún dentro del horizonte: la entrada puede llenarse/resolverse
-            } else if (horizonElapsed && oc === 'open') {
-              oc = 'expired';            // entrada llenada pero sin tocar TP/stop en 7d
-            }                            // horizonElapsed && 'not_triggered' → terminal (nunca se llenó)
-            out.setup_outcome = oc;
-          } else if (horizonElapsed) {
-            // bar null con velas presentes = geometría inválida (p.ej. entry==stop): terminal.
-            markInvalidSetup();
-          } else {
-            preserveSetup();
-          }
-        }
-      } catch (err) {
-        logger.warn({ id: a.id, err: err.message }, 'outcomeJob: fallo barrier del setup');
-        preserveSetup(); // no pisar con null lo ya calculado ante un fallo transitorio de fetch
+      const bar = evaluateSetupBarrier({
+        entry_price: a.setup_entry_price,
+        stop_price:  a.setup_stop_price,
+        tp1_price:   a.setup_tp1_price,
+        tp2_price:   a.setup_tp2_price,
+      }, pathCandles);
+      if (bar) {
+        out.setup_hit_tp1  = bar.hit_tp1 ? 1 : 0;
+        out.setup_hit_tp2  = bar.hit_tp2 ? 1 : 0;
+        out.setup_hit_stop = bar.hit_stop ? 1 : 0;
+        // Finalizar estados no terminales cuando ya venció el horizonte de 7d
+        // (evita reprocesar el mismo setup indefinidamente — A4).
+        let oc = bar.outcome;
+        if (!horizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
+          oc = 'open';               // aún dentro del horizonte: la entrada puede llenarse/resolverse
+        } else if (horizonElapsed && oc === 'open') {
+          oc = 'expired';            // entrada llenada pero sin tocar TP/stop en 7d
+        }                            // horizonElapsed && 'not_triggered' → terminal (nunca se llenó)
+        out.setup_outcome = oc;
+      } else if (horizonElapsed) {
+        // bar null con velas presentes = geometría inválida (p.ej. entry==stop): terminal.
+        markInvalidSetup();
+      } else {
+        preserveSetup();
       }
     }
   } else {

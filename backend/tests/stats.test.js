@@ -3,7 +3,10 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { wilsonInterval } from '../src/utils/stats.js';
+import {
+  wilsonInterval, classifyOpportunity, maxExcursionAtr,
+  classifyPathOutcome, convictionBucket,
+} from '../src/utils/stats.js';
 
 describe('wilsonInterval', () => {
   test('n=0 → todo null', () => {
@@ -36,5 +39,140 @@ describe('wilsonInterval', () => {
       expect(r.low).toBeGreaterThanOrEqual(0);
       expect(r.high).toBeLessThanOrEqual(100);
     }
+  });
+});
+
+// ─── Fase 5 · coste de oportunidad y win-rate path-aware ─────────────────────
+
+describe('classifyOpportunity', () => {
+  /** Fila de outcome con la rejilla de primeros cruces ya hidratada. */
+  const fila = (up, down, atr = 1) => ({
+    atr_pct_at_analysis: atr,
+    path_first_passage: { atr_pct: atr, multiples: [0.5, 1, 1.5, 2, 3, 4], up, down },
+  });
+
+  test('recorrido limpio al alza → oportunidad ofrecida', () => {
+    const r = classifyOpportunity(fila({ 2: 6 }, {}));
+    expect(r.offered).toBe(true);
+    expect(r.direction).toBe('up');
+    expect(r.hours_to).toBe(6);
+  });
+
+  test('adverso ANTES del objetivo → no era operable (era latigazo)', () => {
+    // Llegó a +2xATR en la hora 10, pero antes se fue -1xATR en la hora 3.
+    const r = classifyOpportunity(fila({ 2: 10 }, { 1: 3 }));
+    expect(r.offered).toBe(false);
+    expect(r.blocked_by_adverse).toBe(true);
+  });
+
+  test('adverso DESPUÉS del objetivo no invalida la oportunidad', () => {
+    const r = classifyOpportunity(fila({ 2: 3 }, { 1: 10 }));
+    expect(r.offered).toBe(true);
+    expect(r.hours_to).toBe(3);
+  });
+
+  test('empate en la misma vela → se asume el adverso primero (conservador)', () => {
+    const r = classifyOpportunity(fila({ 2: 5 }, { 1: 5 }));
+    expect(r.offered).toBe(false);
+    expect(r.blocked_by_adverse).toBe(true);
+  });
+
+  test('mercado plano → evaluable y sin oportunidad (abstención acertada)', () => {
+    const r = classifyOpportunity(fila({}, {}));
+    expect(r.evaluable).toBe(true);
+    expect(r.offered).toBe(false);
+    expect(r.blocked_by_adverse).toBe(false);
+  });
+
+  test('sin rejilla → NO evaluable, distinto de "no ofreció"', () => {
+    const r = classifyOpportunity({ path_first_passage: null });
+    expect(r.evaluable).toBe(false);
+    expect(r.offered).toBe(false);
+  });
+
+  test('el horizonte descarta lo que llegó demasiado tarde', () => {
+    const f = fila({ 2: 100 }, {});
+    expect(classifyOpportunity(f).offered).toBe(true);              // ventana 7d
+    expect(classifyOpportunity(f, { horizonH: 24 }).offered).toBe(false); // en 24h, no
+  });
+
+  test('elige el sentido que llegó antes cuando ambos son limpios', () => {
+    const r = classifyOpportunity(fila({ 2: 20 }, { 2: 4 }), { adverseK: 3 });
+    expect(r.direction).toBe('down');
+    expect(r.hours_to).toBe(4);
+  });
+
+  test('acepta el JSON crudo de SQLite', () => {
+    const raw = JSON.stringify({ up: { 2: 6 }, down: {} });
+    expect(classifyOpportunity({ path_first_passage: raw }).offered).toBe(true);
+    expect(classifyOpportunity({ path_first_passage: '{roto' }).evaluable).toBe(false);
+  });
+
+  test('un objetivo más exigente reduce las oportunidades contadas', () => {
+    const f = fila({ 2: 6, 3: null }, {});
+    expect(classifyOpportunity(f, { targetK: 2 }).offered).toBe(true);
+    expect(classifyOpportunity(f, { targetK: 3 }).offered).toBe(false);
+  });
+});
+
+describe('maxExcursionAtr', () => {
+  test('normaliza el mayor de los dos lados por el ATR', () => {
+    const row = { atr_pct_at_analysis: 2, max_up_pct_24h: 3, max_down_pct_24h: -5 };
+    expect(maxExcursionAtr(row)).toBe(2.5); // 5 / 2
+  });
+
+  test('sin ATR no hay escala → null', () => {
+    expect(maxExcursionAtr({ max_up_pct_24h: 3 })).toBeNull();
+    expect(maxExcursionAtr({ atr_pct_at_analysis: 0, max_up_pct_24h: 3 })).toBeNull();
+  });
+
+  test('el horizonte selecciona las columnas correctas', () => {
+    const row = {
+      atr_pct_at_analysis: 1,
+      max_up_pct_24h: 2, max_down_pct_24h: -1,
+      max_up_pct_7d: 9, max_down_pct_7d: -1,
+    };
+    expect(maxExcursionAtr(row, '24h')).toBe(2);
+    expect(maxExcursionAtr(row, '7d')).toBe(9);
+  });
+});
+
+describe('classifyPathOutcome', () => {
+  const fila = (up, down) => ({ path_first_passage: { up, down } });
+
+  test('Comprar que toca objetivo antes que stop → win', () => {
+    expect(classifyPathOutcome('Comprar', fila({ 2: 5 }, { 1: 20 }))).toBe('win');
+  });
+
+  test('Comprar que toca el stop antes → loss aunque el precio recupere después', () => {
+    // Es justo lo que outcome_24h no ve: mira el destino, no el camino.
+    expect(classifyPathOutcome('Comprar', fila({ 2: 20 }, { 1: 3 }))).toBe('loss');
+  });
+
+  test('Vender invierte los sentidos', () => {
+    expect(classifyPathOutcome('Vender', fila({ 1: 20 }, { 2: 5 }))).toBe('win');
+    expect(classifyPathOutcome('Vender', fila({ 1: 3 }, { 2: 20 }))).toBe('loss');
+  });
+
+  test('sin resolver por ningún lado → flat', () => {
+    expect(classifyPathOutcome('Comprar', fila({}, {}))).toBe('flat');
+  });
+
+  test('no direccional o sin rejilla → null', () => {
+    expect(classifyPathOutcome('Esperar', fila({ 2: 5 }, {}))).toBeNull();
+    expect(classifyPathOutcome('Comprar', { path_first_passage: null })).toBeNull();
+  });
+});
+
+describe('convictionBucket', () => {
+  test('reparte en baja/media/alta', () => {
+    expect(convictionBucket(0.3)).toBe('baja');
+    expect(convictionBucket(0.4)).toBe('media');
+    expect(convictionBucket(0.69)).toBe('media');
+    expect(convictionBucket(0.7)).toBe('alta');
+  });
+  test('valor ausente → null', () => {
+    expect(convictionBucket(null)).toBeNull();
+    expect(convictionBucket(undefined)).toBeNull();
   });
 });

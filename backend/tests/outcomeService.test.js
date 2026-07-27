@@ -70,11 +70,12 @@ describe('runOutcomeJob — setup con entry_price nulo (fix 3a)', () => {
     expect(out.setup_hit_tp1).toBe(0);
     expect(out.setup_hit_tp2).toBe(0);
     expect(out.setup_hit_stop).toBe(0);
-    // No hay geometría → nunca se intenta el barrier (no se piden klines de 1h).
-    expect(fetchHistoricalKlines).not.toHaveBeenCalled();
+    // Sin geometría el barrier no se evalúa. Las klines de 1h SÍ se piden desde la Fase 5,
+    // pero para las métricas de recorrido (que no dependen del setup), no para el barrier.
+    expect(out.setup_hit_tp1).toBe(0);
   });
 
-  test('ya invalidado antes → no reprocesa el setup (setupResolved), no pide klines', async () => {
+  test('ya invalidado antes → no reprocesa el setup (setupResolved)', async () => {
     const now = Date.now();
     getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
       timestamp: iso(now - 2 * HOUR),
@@ -86,8 +87,85 @@ describe('runOutcomeJob — setup con entry_price nulo (fix 3a)', () => {
     await runOutcomeJob();
 
     const out = upsertOutcome.mock.calls[0][0];
-    expect(out.setup_outcome).toBe('invalid'); // preservado
-    expect(fetchHistoricalKlines).not.toHaveBeenCalled();
+    expect(out.setup_outcome).toBe('invalid'); // preservado, sin re-evaluar el barrier
+  });
+});
+
+describe('runOutcomeJob — métricas de recorrido (Fase 5)', () => {
+  /** Velas horarias desde `tMs` a partir de pares [high, low]. */
+  const pathCandles = (tMs, pairs) => pairs.map(([high, low], i) => ({
+    t: tMs + i * HOUR, open: low, close: high, high, low, volume: 1,
+  }));
+
+  test('un Esperar obtiene recorrido medible — lo que classifyOutcome no puede dar', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    // 1ª llamada = recorrido posterior (1h); 2ª = velas del TF primario para el ATR.
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(pathCandles(tMs, [[103, 99], [106, 100], [104, 97]]))
+      .mockResolvedValueOnce(pathCandles(tMs - 30 * 4 * HOUR, Array(20).fill([102, 98])));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    // El win-rate direccional es null para un Esperar; el recorrido no.
+    expect(out.pnl_signed_pct_24h).toBeNull();
+    expect(out.max_up_pct_24h).toBe(6);
+    expect(out.max_down_pct_24h).toBe(-3);
+    expect(out.atr_pct_at_analysis).toBeGreaterThan(0);
+    expect(out.path_first_passage).not.toBeNull();
+  });
+
+  test('ATR ya persistido → no se vuelve a pedir (una sola llamada de klines)', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    fetchHistoricalKlines.mockResolvedValue(pathCandles(tMs, [[103, 99]]));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      atr_pct_at_analysis: 1.5,
+    })]);
+
+    await runOutcomeJob();
+
+    expect(fetchHistoricalKlines).toHaveBeenCalledTimes(1); // solo el recorrido
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.atr_pct_at_analysis).toBe(1.5);
+  });
+
+  test('fallo de klines → métricas a null, sin romper el resto del outcome', async () => {
+    const now = Date.now();
+    fetchHistoricalKlines.mockRejectedValue(new Error('binance down'));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(now - 25 * HOUR),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.max_up_pct_24h).toBeUndefined(); // no se escriben → el COALESCE preserva
+    expect(out.atr_pct_at_analysis).toBeNull();
+    expect(out.pnl_pct_24h).toBe(0); // el resto del outcome sigue calculándose
+  });
+
+  test('sin ATR reconstruible se conservan las excursiones y se pierde solo la rejilla', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(pathCandles(tMs, [[110, 99]]))
+      .mockResolvedValueOnce([]);  // ATR: sin velas previas utilizables
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.atr_pct_at_analysis).toBeNull();
+    expect(out.max_up_pct_24h).toBe(10);
+    expect(out.path_first_passage).toBeNull();
   });
 });
 

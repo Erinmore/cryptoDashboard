@@ -1087,6 +1087,18 @@ html, body {
   gap: var(--sp-2xl);
   margin-top: var(--sp-md);
 }
+/* Fase 5 — bloque del coste de oportunidad, separado del win-rate clásico. */
+.hist-stats-sub {
+  margin-top: var(--sp-md);
+  padding-top: var(--sp-md);
+  border-top: 1px solid var(--accent-dim);
+}
+.hist-stats-subtitle {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 .hist-stat { display: flex; flex-direction: column; gap: var(--sp-xs); }
 .hist-stat-label {
   font-size: var(--fs-xs);

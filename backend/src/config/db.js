@@ -384,6 +384,26 @@ function runMigrations(db) {
   // real DERIVADO (coins × spot). Filas viejas: oi_value_usd contiene monedas
   // mal etiquetadas (pre-fix) — distinguibles por oi_value_coins NULL.
   ensureColumn(db, 'analyses', 'oi_value_coins', 'REAL');
+  // ── Fase 5 · métricas de RECORRIDO del precio (backtest falsable) ───────────
+  // `classifyOutcome` compara precio-del-análisis contra precio-al-horizonte, así que
+  // solo clasifica direccionales: con `Esperar` como salida dominante el win-rate tiene
+  // denominador estructuralmente 0. Estas columnas miden lo que sí se puede medir para
+  // un `Esperar` — si el mercado ofreció un movimiento operable, cuánto y cuándo.
+  // Se persisten HECHOS del recorrido, no una interpretación: la definición de "coste de
+  // oportunidad" vive en stats.js y se puede cambiar sin volver a pedir datos a Binance.
+  // Filas viejas → NULL; el job las rellena retroactivamente al reprocesar.
+  ensureColumn(db, 'analysis_outcome', 'atr_pct_at_analysis', 'REAL');
+  ensureColumn(db, 'analysis_outcome', 'max_up_pct_24h', 'REAL');
+  ensureColumn(db, 'analysis_outcome', 'max_down_pct_24h', 'REAL');
+  ensureColumn(db, 'analysis_outcome', 'max_up_pct_7d', 'REAL');
+  ensureColumn(db, 'analysis_outcome', 'max_down_pct_7d', 'REAL');
+  ensureColumn(db, 'analysis_outcome', 't_max_up_h', 'REAL');
+  ensureColumn(db, 'analysis_outcome', 't_max_down_h', 'REAL');
+  // Horas hasta el primer cruce de cada múltiplo de ATR, al alza y a la baja (JSON).
+  // Ventana ÚNICA de 7d: el horizonte de 24h se obtiene filtrando por hora en lectura,
+  // no duplicando columnas. Los máximos sí necesitan su versión de 24h — un máximo a 7d
+  // no acota el de 24h.
+  ensureColumn(db, 'analysis_outcome', 'path_first_passage', 'TEXT');
 }
 
 export function closeDb() {
