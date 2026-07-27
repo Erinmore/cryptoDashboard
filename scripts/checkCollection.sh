@@ -30,6 +30,7 @@ STATE_FILE="${STATE_FILE:-$COLLECT_DIR/health.json}"
 NODE_BIN="${NODE_BIN:-$HOME/.nvm/versions/node/v18.20.8/bin/node}"
 COIN="${COIN:-SOL}"
 MAX_ANALYSIS_AGE_H="${MAX_ANALYSIS_AGE_H:-26}"   # 2 disparos/día → 12h; 26h tolera uno perdido
+PAUSE_FILE="${PAUSE_FILE:-$COLLECT_DIR/PAUSED}"
 QUIET=0
 [ "${1:-}" = "--quiet" ] && QUIET=1
 
@@ -71,8 +72,19 @@ OUTCOMES="$(field outcomes)"
 
 say "── Salud de la recogida ($(date -u +%Y-%m-%dT%H:%MZ)) ──"
 
+# 0 · ¿Recogida pausada a propósito? Sin esto, una pausa deliberada se reportaría como
+# "degraded" por falta de análisis recientes — una falsa alarma que enseña a ignorar el
+# indicador, que es la peor forma de perder una alerta.
+PAUSED=0
+if [ -f "$PAUSE_FILE" ]; then
+  PAUSED=1
+  say "  ⏸  recogida PAUSADA: $(cat "$PAUSE_FILE")"
+fi
+
 # 1 · Frescura del último análisis
-if [ -z "$ANALYSES" ]; then
+if [ "$PAUSED" = "1" ]; then
+  say "  · frescura del análisis: no se comprueba (pausada)"
+elif [ -z "$ANALYSES" ]; then
   PROBLEMS+=("no se pudo leer la BBDD")
   say "  ✗ BBDD ilegible"
 elif [ "$ANALYSES" = "0" ]; then
@@ -120,6 +132,7 @@ fi
 
 # ── Veredicto + estado legible por el backend ────────────────────────────────
 STATUS="ok"
+[ "$PAUSED" = "1" ] && STATUS="paused"
 [ "${#PROBLEMS[@]}" -gt 0 ] && STATUS="degraded"
 
 # JSON a mano: son 6 campos y evita depender de node para escribirlo.
@@ -133,8 +146,10 @@ STATUS="ok"
   printf ']}\n'
 } > "$STATE_FILE"
 
-if [ "$STATUS" = "ok" ]; then
-  say "  ✅ todo correcto"
+# `paused` sale limpio igual que `ok`: es un estado deseado, no un fallo. Sin esto el cron
+# devolvería 1 cada día y llenaría cron.err de ruido.
+if [ "$STATUS" = "ok" ] || [ "$STATUS" = "paused" ]; then
+  say "  $([ "$STATUS" = "paused" ] && echo "⏸  pausada, sin incidencias" || echo "✅ todo correcto")"
   exit 0
 fi
 
