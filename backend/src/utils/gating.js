@@ -80,8 +80,24 @@ export function dynamicNearLevelPct(atrPct, tf = null) {
   return parseFloat(Math.max(NEAR_LEVEL_MIN_PCT, Math.min(maxPct, v)).toFixed(2));
 }
 const MIN_TOUCHES = 3;      // veto: nivel fuerte = 3+ toques
-const CONTRADICTION_MIN_TOUCHES = 2; // contradicción: nivel con algo de historial (>=2)
-const OI_EXPANSION_PCT = 1; // "OI no está expandiendo" = change_24h_pct < +1%
+// Un único criterio de "nivel clave", compartido por veto y contradicción. Antes la
+// contradicción se conformaba con >=2 toques y disparaba el 77,4 % del tiempo (medido
+// 2026-07-27): con el bloque `structure` casi siempre activo, `contradiction_count` medía
+// de facto solo "derivados + volumen". Con >=3 baja al ~22 % y deja de ser un fondo fijo.
+const CONTRADICTION_MIN_TOUCHES = MIN_TOUCHES;
+
+// Banda muerta del Open Interest, en % de cambio a 24h. Fuera de ella hay señal; dentro,
+// ruido. Medida el 2026-07-27 sobre 90 días de Coinalyze (n=534 por moneda, velas 4h): la
+// MEDIANA del cambio 24h es ~0 (SOL −0,16 · BTC −0,26 · ETH +0,06), así que el viejo corte
+// de la contradicción (`< 0 %`) caía justo encima y disparaba el 49-54 % — moneda al aire,
+// el mismo fallo que el ADX=25 de la auditoría T2. Con la banda, "contrayéndose" pasa a ser
+// `< −1 %` → 30-38 %, que sí discrimina.
+const OI_FLAT_BAND_PCT = 1;
+// El veto pregunta otra cosa que la contradicción y por eso usa el otro borde de la MISMA
+// banda: para confirmar una ruptura hace falta expansión real (`> +1 %`), no basta con que
+// el OI no caiga. No es una definición redundante — es la simétrica.
+const OI_EXPANSION_PCT = OI_FLAT_BAND_PCT;   // "no expande" = change_24h_pct < +1%
+const OI_CONTRACTION_PCT = -OI_FLAT_BAND_PCT; // "se contrae"  = change_24h_pct < −1%
 
 // Bloque analítico de cada contradicción determinista. La ANTI-DOUBLE-COUNT RULE (B1) exige
 // que la confluencia venga de bloques DISTINTOS: varias señales del MISMO bloque (p.ej. dos
@@ -287,9 +303,10 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
     });
   }
 
-  // 2. OI plano o cayendo (change_24h_pct < 0).
+  // 2. OI CONTRAYÉNDOSE (change_24h_pct < −1%, fuera de la banda muerta). El corte
+  //    anterior (`< 0`) caía sobre la mediana de la distribución → no discriminaba.
   const oiChange = openInterest?.change_24h_pct ?? null;
-  if (oiChange != null && oiChange < 0) {
+  if (oiChange != null && oiChange < OI_CONTRACTION_PCT) {
     contradictions.push({ code: 'oi_flat_or_falling', block: 'derivatives', detail: `OI change_24h_pct=${oiChange}%` });
   }
 

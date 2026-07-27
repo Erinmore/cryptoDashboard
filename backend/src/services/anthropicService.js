@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v7_1_conditional_blocks';
+export const PROMPT_VERSION = 'v7_2_oi_band_levels';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -552,8 +552,8 @@ CONVICTION DECAY — PENALIZACIÓN POR CONTRADICCIONES
 
 El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[]. Cubren:
 - CVD 1D en divergencia con el precio, solo con cvd_strength moderate/strong — una divergencia marginal es ruido y no cuenta (bloque VOLUMEN)
-- OI plano o cayendo (change_24h_pct < 0) (bloque DERIVADOS)
-- Precio pegado a un nivel S/R con historial (2+ toques) del TF primario, dentro del umbral normalizado por volatilidad (gating.near_level_pct_used) (bloque ESTRUCTURA)
+- OI CONTRAYÉNDOSE (change_24h_pct < −1%, fuera de la banda muerta de ±1%: dentro de esa banda el cambio es ruido, no señal) (bloque DERIVADOS)
+- Precio pegado a un nivel S/R FUERTE (3+ toques, el mismo criterio que usa el veto) del TF primario, dentro del umbral normalizado por volatilidad (gating.near_level_pct_used) (bloque ESTRUCTURA)
 - Conflicto entre 1W y 1D (tendencias opuestas) (bloque ESTRUCTURA)
 - CONFLICTO estructural activo: BOS y CHoCH ambos "active" y en direcciones OPUESTAS (bloque ESTRUCTURA)
 

@@ -252,11 +252,39 @@ describe('computeContradictions', () => {
     expect(r.missing_structural_confirmation).toBe(false);
   });
 
-  test('price_near_key_level exige 2+ toques (nivel con 1 toque no cuenta)', () => {
-    const ctx = fourContradictions();
-    ctx.technical['4h'].support_resistance = { supports: [{ price: 99.5, touches: 1 }], resistances: [] };
-    const r = computeContradictions(ctx);
-    expect(r.contradictions.map((c) => c.code)).not.toContain('price_near_key_level');
+  test('price_near_key_level exige el MISMO nivel de fuerza que el veto (3+ toques)', () => {
+    // Antes bastaban 2 toques y disparaba el 77,4 % del tiempo (medido 2026-07-27): el
+    // bloque `structure` quedaba casi siempre activo y contradiction_count medía de facto
+    // solo derivados+volumen. Ahora veto y contradicción comparten la definición de nivel.
+    const conDos = fourContradictions();
+    conDos.technical['4h'].support_resistance = { supports: [{ price: 99.5, touches: 2 }], resistances: [] };
+    expect(computeContradictions(conDos).contradictions.map((c) => c.code))
+      .not.toContain('price_near_key_level');
+
+    const conTres = fourContradictions();
+    conTres.technical['4h'].support_resistance = { supports: [{ price: 99.5, touches: 3 }], resistances: [] };
+    expect(computeContradictions(conTres).contradictions.map((c) => c.code))
+      .toContain('price_near_key_level');
+  });
+
+  test('OI dentro de la banda muerta (±1%) NO es contradicción', () => {
+    // La mediana del cambio 24h del OI es ~0 (SOL −0,16 · BTC −0,26 · ETH +0,06 sobre 90d),
+    // así que el corte viejo `< 0` disparaba el ~52 %: una moneda al aire, no una señal.
+    for (const oi of [-0.9, -0.16, 0, 0.5]) {
+      const ctx = fourContradictions();
+      ctx.openInterest = { change_24h_pct: oi };
+      expect(computeContradictions(ctx).contradictions.map((c) => c.code))
+        .not.toContain('oi_flat_or_falling');
+    }
+  });
+
+  test('OI contrayéndose de verdad (< −1%) sí es contradicción', () => {
+    for (const oi of [-1.5, -3.09]) {
+      const ctx = fourContradictions();
+      ctx.openInterest = { change_24h_pct: oi };
+      expect(computeContradictions(ctx).contradictions.map((c) => c.code))
+        .toContain('oi_flat_or_falling');
+    }
   });
 
   test('mercado limpio → sin contradicciones', () => {

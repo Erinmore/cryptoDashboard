@@ -242,3 +242,46 @@ describe('runOutcomeJob — PnL firmado por dirección (auditoría #2, hallazgo 
     expect(out.pnl_signed_pct_24h).toBeNull();
   });
 });
+
+describe('runOutcomeJob — banda muerta normalizada por ATR', () => {
+  const velas = (tMs, pares) => pares.map(([high, low], i) => ({
+    t: tMs + i * HOUR, open: low, close: high, high, low, volume: 1,
+  }));
+
+  test('con ATR alto, un movimiento pequeño se clasifica flat (no win)', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    // +0.5% a 24h. Con el 0.3% fijo sería 'win'; con ATR% 4 la banda es 1% → 'flat'.
+    fetchHistoricalClose.mockResolvedValue(100.5);
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(velas(tMs, [[101, 99]]))
+      .mockResolvedValueOnce(velas(tMs - 80 * HOUR, Array(20).fill([104, 96])));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Comprar', primary_tf: '4h', timestamp: iso(tMs),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.atr_pct_at_analysis).toBeGreaterThan(2);
+    expect(out.outcome_24h).toBe('flat');
+  });
+
+  test('sin ATR reconstruible se cae al 0.3% fijo', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    fetchHistoricalClose.mockResolvedValue(100.5); // +0.5% > 0.3% → win
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(velas(tMs, [[101, 99]]))
+      .mockResolvedValueOnce([]);
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Comprar', primary_tf: '4h', timestamp: iso(tMs),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.atr_pct_at_analysis).toBeNull();
+    expect(out.outcome_24h).toBe('win');
+  });
+});

@@ -27,7 +27,8 @@ let timer = null;
 /** Persiste el snapshot de una moneda (CVD/VWAP diario + backfill de derivados). */
 async function pollCoin(coin) {
   try {
-    // CVD/VWAP: snapshot diario desde velas 1D (única serie sin fuente externa de histórico).
+    // CVD/VWAP: snapshot diario desde velas 1D. Ninguna API los sirve ya calculados, pero al
+    // ser función pura de estas velas SÍ se reconstruyen a posteriori (backfillHistorySeries.mjs).
     const candles1D = await fetchOHLC(coin, '1D');
     if (candles1D?.length) {
       const ind = computeIndicators(candles1D, '1D');

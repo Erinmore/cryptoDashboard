@@ -11,7 +11,9 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { buildSystemPrompt, buildPrompt, buildLlmRequest } from '../src/services/anthropicService.js';
+import {
+  buildSystemPrompt, buildPrompt, buildLlmRequest, PROMPT_VERSION,
+} from '../src/services/anthropicService.js';
 
 const NOT_SUPPORTED = { available: false, unavailable_reason: 'not_supported_for_asset' };
 
@@ -145,7 +147,9 @@ describe('buildLlmRequest integra ambos', () => {
     const req = buildLlmRequest(solCtx, 'claude-opus-4-8');
     expect(req.prompt_blocks).toEqual([]);
     expect(req.system).not.toContain('E. On-Chain Score');
-    expect(req.prompt_version).toBe('v7_1_conditional_blocks');
+    // Se compara con la constante, no con un literal: lo que se prueba es que el campo
+    // viaja, no qué versión concreta hay hoy (un bump no debe romper este test).
+    expect(req.prompt_version).toBe(PROMPT_VERSION);
   });
 
   test('BTC recibe el prompt completo', () => {

@@ -1,7 +1,7 @@
 /**
  * auditOpportunityThresholds.mjs — ¿discrimina algo la métrica de coste de oportunidad?
  *
- * Motivación: `OPPORTUNITY_DEFAULTS` (2×/1× ATR) se introdujo en la Fase 5 como CONVENCIÓN
+ * Motivación: el par de múltiplos (target/adverse) se introdujo en la Fase 5 como CONVENCIÓN
  * declarada, no como umbral calibrado. Este script hace con ella lo que
  * `auditThresholds.mjs` hizo con los cortes de la ruta de decisión, y añade lo que allí no
  * hacía falta: la TASA BASE.
@@ -38,7 +38,7 @@
 
 import { calculateATR } from '../src/utils/indicators.js';
 import { computeFirstPassage, ATR_MULTIPLES } from '../src/utils/pathMetrics.js';
-import { classifyOpportunity, OPPORTUNITY_DEFAULTS } from '../src/utils/stats.js';
+import { classifyOpportunity, opportunityParamsFor } from '../src/utils/stats.js';
 
 const HOUR_MS = 3600 * 1000;
 const TF_MS = { '1h': HOUR_MS, '4h': 4 * HOUR_MS, '1D': 24 * HOUR_MS };
@@ -123,10 +123,9 @@ function measure(anchors, hourly, tfMs) {
           if (op.offered) r.grid[`${tk}|${ak}`]++;
         }
       }
+      const cal = opportunityParamsFor(hH);
       const def = classifyOpportunity(row, {
-        horizonH: hH,
-        targetK: OPPORTUNITY_DEFAULTS.targetK,
-        adverseK: OPPORTUNITY_DEFAULTS.adverseK,
+        horizonH: hH, targetK: cal.targetK, adverseK: cal.adverseK,
       });
       if (def.offered) r.hoursTo.push(def.hours_to);
       const win = path.filter((c) => c.t <= tMs + hH * HOUR_MS);
@@ -181,7 +180,7 @@ function median(xs) {
 function reportCoin(coin, data) {
   console.log(`\n${'═'.repeat(78)}\n${coin} · TF ${TF} · ${data.anchors.length} anclas`);
 
-  for (const [hLabel] of HORIZONS) {
+  for (const [hLabel, hH] of HORIZONS) {
     const r = data.results[hLabel];
     if (!r.n) { console.log(`  ${hLabel}: sin anclas con recorrido completo`); continue; }
 
@@ -194,13 +193,14 @@ function reportCoin(coin, data) {
         const rate = (hits / r.n) * 100;
         return `${fmtPct(hits, r.n)}${cellFlag(rate)}`.padStart(8);
       });
-      const mark = tk === OPPORTUNITY_DEFAULTS.targetK ? ' ←' : '';
+      const mark = tk === opportunityParamsFor(hH).targetK ? ' ←' : '';
       console.log(`    ${`${tk}× ATR`.padEnd(15)}${cells.join('')}${mark}`);
     }
 
-    const def = r.grid[`${OPPORTUNITY_DEFAULTS.targetK}|${OPPORTUNITY_DEFAULTS.adverseK}`];
+    const cal = opportunityParamsFor(hH);
+    const def = r.grid[`${cal.targetK}|${cal.adverseK}`];
     const defRate = (def / r.n) * 100;
-    console.log(`    Par por defecto (${OPPORTUNITY_DEFAULTS.targetK}×/${OPPORTUNITY_DEFAULTS.adverseK}×): `
+    console.log(`    Par calibrado (${cal.targetK}×/${cal.adverseK}×): `
       + `${defRate.toFixed(1)}% · mediana hasta objetivo ${median(r.hoursTo)?.toFixed(1) ?? '—'} h`
       + ` · excursión media ${(r.excursions.reduce((a, b) => a + b, 0) / (r.excursions.length || 1)).toFixed(2)}×ATR`);
     console.log(`    → Un \`Esperar\` de CRYPTEX solo informa si su offered_pct se APARTA de ${defRate.toFixed(1)}%.`);
@@ -211,7 +211,8 @@ function reportCoin(coin, data) {
 
 console.log('AUDITORÍA DE LA MÉTRICA DE OPORTUNIDAD (Fase 5) — degeneración + tasa base');
 console.log(`Funciones importadas del backend. TF ${TF} · ${DAYS} días · rejilla ${ATR_MULTIPLES.join('/')}`);
-console.log(`Convención vigente: target ${OPPORTUNITY_DEFAULTS.targetK}× / adverse ${OPPORTUNITY_DEFAULTS.adverseK}× ATR`);
+console.log(`Pares calibrados: 24h ${opportunityParamsFor(24).targetK}×/${opportunityParamsFor(24).adverseK}× · `
+  + `7d ${opportunityParamsFor(168).targetK}×/${opportunityParamsFor(168).adverseK}× ATR`);
 
 for (const coin of COINS) {
   try {

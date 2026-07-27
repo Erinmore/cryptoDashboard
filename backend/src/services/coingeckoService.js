@@ -118,12 +118,24 @@ async function fetchBinanceKlines(symbol, interval, limit) {
 
 /**
  * Velas OHLC históricas en un rango temporal (para backtesting / analysis_outcome).
+ *
+ * Incluye los campos de AGRESOR (`taker_buy_base`/`taker_buy_quote`/`quote_volume`), igual
+ * que `fetchOHLC`. Binance los devuelve también para fechas pasadas (12 campos por vela) y
+ * sin ellos `calculateCVD`/`calculateVolumeDelta` caen al proxy heurístico
+ * `(close-low)/(high-low)`, que NO es la misma medida: sobre el mismo día de SOL el delta
+ * salía −7.566 con taker real y +542.289 con la heurística — signo opuesto. Reconstruir
+ * histórico sin estos campos mezclaría filas `heuristic` con las `taker_real` que persiste
+ * el poller, en la misma serie y sin marca que las distinga.
+ *
+ * (La omisión era inocua mientras esta función solo alimentaba el barrier de setups y las
+ * métricas de recorrido, que usan `high`/`low`.)
+ *
  * @param {string} coin
  * @param {string} interval - Formato Binance ('1m', '1h', '4h', '1d'…)
  * @param {number} startTime - epoch ms
  * @param {number} endTime   - epoch ms
  * @param {number} [limit=1000]
- * @returns {Promise<Array<{t:number, open:number, high:number, low:number, close:number, volume:number}>>}
+ * @returns {Promise<Array<{t:number, open:number, high:number, low:number, close:number, volume:number, quote_volume:number, taker_buy_base:number, taker_buy_quote:number}>>}
  */
 export async function fetchHistoricalKlines(coin, interval, startTime, endTime, limit = 1000) {
   const symbol = BINANCE_SYMBOLS[coin.toUpperCase()];
@@ -140,6 +152,9 @@ export async function fetchHistoricalKlines(coin, interval, startTime, endTime, 
     low:    parseFloat(k[3]),
     close:  parseFloat(k[4]),
     volume: parseFloat(k[5]),
+    quote_volume:    parseFloat(k[7]),
+    taker_buy_base:  parseFloat(k[9]),
+    taker_buy_quote: parseFloat(k[10]),
   }));
 }
 

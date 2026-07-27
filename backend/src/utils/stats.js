@@ -21,22 +21,36 @@ const Z_95 = 1.959963984540054; // z para IC del 95%
 export const MIN_DIRECTIONAL_SAMPLE = 20;
 
 /**
- * Convenciones de la métrica de oportunidad. NO son umbrales calibrados contra una
- * distribución (a diferencia de los de `gating.js` tras la auditoría de 2026-07-26): son
- * la definición operativa de "movimiento operable", y por eso viajan en la respuesta —
- * quien lea la cifra ve con qué regla se produjo. Se calibran con la muestra, no antes.
+ * Definición operativa de "movimiento operable": cuánto recorrido favorable (`targetK`) hay
+ * que ver antes de cuánto adverso (`adverseK`), en múltiplos de ATR. Viaja en la respuesta
+ * (`thresholds`) para que la cifra nunca se lea sin la regla que la produjo.
+ *
+ * El objetivo se escala CON EL HORIZONTE. Un múltiplo fijo se vuelve trivial según crece la
+ * ventana: medido el 2026-07-27, 2×/1× a 7 días se toca limpio el 67-69 % de las veces y la
+ * esquina superior de la rejilla satura al 100 % en las tres monedas — a esa escala casi
+ * cualquier objetivo acaba alcanzándose, así que la métrica dejaba de discriminar.
+ *
+ * Razón de fondo, no ajuste de curva: el recorrido de un precio escala aproximadamente con
+ * la raíz del tiempo. De 24h a 7d hay 7× de tiempo (√7 ≈ 2,6) y el objetivo pasa de 2× a
+ * 4× (2×) — el mismo orden. Con 4×/1× la tasa base a 7d (≈36 %) cae donde la de 24h con
+ * 2×/1× (34,8 %), así que los dos horizontes pasan a ser comparables entre sí.
  */
-export const OPPORTUNITY_DEFAULTS = {
-  targetK: 2,   // recorrido favorable, en múltiplos de ATR, que haría el trade rentable
-  adverseK: 1,  // recorrido adverso que habría invalidado la entrada antes de llegar
+export const OPPORTUNITY_BY_HORIZON = {
+  '24h': { targetK: 2, adverseK: 1 },
+  '7d':  { targetK: 4, adverseK: 1 },
 };
+
+/** Par calibrado para un horizonte (en horas; null = ventana completa de 7d). */
+export function opportunityParamsFor(horizonH) {
+  return OPPORTUNITY_BY_HORIZON[horizonH === 24 ? '24h' : '7d'];
+}
 
 /**
  * TASA BASE INCONDICIONAL de la métrica de oportunidad, en % — con qué frecuencia un
- * instante CUALQUIERA del mercado ofrece un movimiento limpio de 2×ATR antes de 1×ATR en
- * contra. Medida con `scripts/auditOpportunityThresholds.mjs` el 2026-07-27 sobre 90 días
- * de velas 4h (n≈578 anclas por moneda): SOL 35,1 · BTC 34,4 · ETH 34,9 a 24h;
- * SOL 67,2 · BTC 68,8 · ETH 69,4 a 7d. Se usa la media de las tres.
+ * instante CUALQUIERA del mercado ofrece un movimiento limpio con el par calibrado de ese
+ * horizonte. Medida con `scripts/auditOpportunityThresholds.mjs` el 2026-07-27 sobre 90
+ * días de velas 4h (n≈578 anclas por moneda): a 24h con 2×/1× → SOL 35,1 · BTC 34,4 ·
+ * ETH 34,9; a 7d con 4×/1× → SOL 35,2 · BTC 30,8 · ETH 41,9. Se usa la media de las tres.
  *
  * PARA QUÉ: sin esta referencia, `offered_pct` es un número flotando. Si los `Esperar` de
  * CRYPTEX ofrecen oportunidad al mismo ritmo que un instante al azar, la abstención NO
@@ -49,11 +63,11 @@ export const OPPORTUNITY_DEFAULTS = {
  * que se vuelve a medir en cada revisión (la fecha va en `measured_at`).
  */
 export const OPPORTUNITY_BASE_RATE = {
+  // Cada tasa corresponde al par calibrado de SU horizonte (OPPORTUNITY_BY_HORIZON):
+  // 24h con 2×/1× y 7d con 4×/1×. Ambas caen en la misma banda (~35 %), que es lo que
+  // hace comparables los dos horizontes.
   '24h': { pct: 34.8, discriminates: true },
-  // A 7 días casi cualquier objetivo de 1×ATR acaba tocándose limpio (la esquina superior
-  // de la rejilla satura al 100 % en las tres monedas): el horizonte largo discrimina mal
-  // con el par por defecto. Se reporta como CONTEXTO, no como evidencia.
-  '7d': { pct: 68.5, discriminates: false },
+  '7d': { pct: 36.0, discriminates: true },
   measured_at: '2026-07-27',
   source: 'scripts/auditOpportunityThresholds.mjs · 90d · SOL/BTC/ETH · TF 4h',
 };
@@ -96,8 +110,9 @@ function crossedAt(side, k, horizonH) {
  *            blocked_by_adverse:boolean, evaluable:boolean}}
  */
 export function classifyOpportunity(row, opts = {}) {
-  const { targetK = OPPORTUNITY_DEFAULTS.targetK, adverseK = OPPORTUNITY_DEFAULTS.adverseK } = opts;
   const horizonH = opts.horizonH ?? null;
+  const cal = opportunityParamsFor(horizonH);
+  const { targetK = cal.targetK, adverseK = cal.adverseK } = opts;
   const fp = parseFirstPassage(row?.path_first_passage);
   const none = { offered: false, direction: null, hours_to: null, blocked_by_adverse: false };
   // Sin rejilla no hay ATR con el que normalizar → no evaluable. Distinto de "no ofreció":
@@ -156,8 +171,9 @@ export function maxExcursionAtr(row, horizon = '24h') {
 export function classifyPathOutcome(action, row, opts = {}) {
   const dir = action === 'Comprar' ? 'up' : action === 'Vender' ? 'down' : null;
   if (!dir) return null;
-  const { targetK = OPPORTUNITY_DEFAULTS.targetK, adverseK = OPPORTUNITY_DEFAULTS.adverseK } = opts;
   const horizonH = opts.horizonH ?? null;
+  const cal = opportunityParamsFor(horizonH);
+  const { targetK = cal.targetK, adverseK = cal.adverseK } = opts;
   const fp = parseFirstPassage(row?.path_first_passage);
   if (!fp?.up || !fp?.down) return null;
 
@@ -234,8 +250,10 @@ const mean = (xs) => {
 export function summarizeOpportunity(rows, opts = {}) {
   const horizonH = opts.horizonH ?? null;
   const horizonKey = horizonH === 24 ? '24h' : '7d';
-  const targetK = opts.targetK ?? OPPORTUNITY_DEFAULTS.targetK;
-  const adverseK = opts.adverseK ?? OPPORTUNITY_DEFAULTS.adverseK;
+  // Por defecto, el par CALIBRADO para este horizonte (no el mismo para los dos).
+  const cal = opportunityParamsFor(horizonH);
+  const targetK = opts.targetK ?? cal.targetK;
+  const adverseK = opts.adverseK ?? cal.adverseK;
 
   const evals = (rows ?? []).map((r) => ({
     row: r,
@@ -248,9 +266,8 @@ export function summarizeOpportunity(rows, opts = {}) {
     ? parseFloat(((offered.length / evaluable.length) * 100).toFixed(1)) : null;
 
   // Comparación contra la tasa base: es lo que convierte el % en evidencia. Solo aplica
-  // con la convención por defecto — con otros múltiplos la referencia medida no vale.
-  const isDefault = targetK === OPPORTUNITY_DEFAULTS.targetK
-    && adverseK === OPPORTUNITY_DEFAULTS.adverseK;
+  // con el par calibrado del horizonte — con otros múltiplos la referencia medida no vale.
+  const isDefault = targetK === cal.targetK && adverseK === cal.adverseK;
   const base = isDefault ? OPPORTUNITY_BASE_RATE[horizonKey] : null;
 
   return {
@@ -319,6 +336,10 @@ export function summarizePathWinRate(rows, opts = {}) {
  * se reporta el n crudo de cada bucket y no se le pone un IC.
  */
 export function summarizeConviction(rows, opts = {}) {
+  // Horizonte 24h por defecto: la convicción se emite sobre la decisión inmediata, y es
+  // además el horizonte que mejor discrimina (el de 7d necesita un objetivo de 4×ATR para
+  // no saturar). Sin fijarlo, heredaría la ventana completa y mediría otra cosa.
+  const o = { horizonH: 24, ...opts };
   const buckets = new Map();
   for (const r of rows ?? []) {
     const b = convictionBucket(r.conviction);
@@ -330,8 +351,8 @@ export function summarizeConviction(rows, opts = {}) {
   return order.filter((b) => buckets.has(b)).map((bucket) => {
     const list = buckets.get(bucket);
     const waits = list.filter((r) => r.action === 'Esperar' || r.action === 'Preparar');
-    const opp = summarizeOpportunity(waits, opts);
-    const path = summarizePathWinRate(list, opts);
+    const opp = summarizeOpportunity(waits, o);
+    const path = summarizePathWinRate(list, o);
     return {
       bucket,
       n: list.length,

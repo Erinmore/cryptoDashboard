@@ -100,10 +100,13 @@ async function processAnalysis(a, now) {
     }
   }
 
-  // Clasificación direccional + PnL a 24h.
-  out.outcome_1h  = classifyOutcome(a.action, priceAt, out.price_1h_later);
-  out.outcome_24h = classifyOutcome(a.action, priceAt, out.price_24h_later);
-  out.outcome_7d  = classifyOutcome(a.action, priceAt, out.price_7d_later);
+  // Clasificación direccional + PnL a 24h. La banda muerta se resuelve más abajo, una vez
+  // conocido el ATR (se calcula tras las klines del recorrido).
+  const classifyAll = (bandPct) => {
+    out.outcome_1h  = classifyOutcome(a.action, priceAt, out.price_1h_later, bandPct);
+    out.outcome_24h = classifyOutcome(a.action, priceAt, out.price_24h_later, bandPct);
+    out.outcome_7d  = classifyOutcome(a.action, priceAt, out.price_7d_later, bandPct);
+  };
   out.pnl_pct_24h = (priceAt && out.price_24h_later != null)
     ? parseFloat((((out.price_24h_later - priceAt) / priceAt) * 100).toFixed(2))
     : null;
@@ -140,6 +143,8 @@ async function processAnalysis(a, now) {
     }
   }
   out.atr_pct_at_analysis = atrPct;
+  // Banda muerta normalizada por volatilidad (0.25×ATR%), con el 0.3 fijo de fallback.
+  classifyAll(Number.isFinite(atrPct) && atrPct > 0 ? 0.25 * atrPct : undefined);
   if (pathCandles?.length) {
     Object.assign(out, computePathMetrics({
       candles: pathCandles, priceAt, atrPct, tMs, intervalMs: HOUR_MS,

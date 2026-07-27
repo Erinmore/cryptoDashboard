@@ -45,6 +45,10 @@ describe('wilsonInterval', () => {
 // ─── Fase 5 · coste de oportunidad y win-rate path-aware ─────────────────────
 
 describe('classifyOpportunity', () => {
+  // El par se fija EXPLÍCITAMENTE: estos tests comprueban la lógica (orden, bloqueo,
+  // empates), no la calibración. Un cambio de múltiplos no debe romperlos.
+  const op = (row, extra = {}) => classifyOpportunity(row, { targetK: 2, adverseK: 1, ...extra });
+
   /** Fila de outcome con la rejilla de primeros cruces ya hidratada. */
   const fila = (up, down, atr = 1) => ({
     atr_pct_at_analysis: atr,
@@ -52,7 +56,7 @@ describe('classifyOpportunity', () => {
   });
 
   test('recorrido limpio al alza → oportunidad ofrecida', () => {
-    const r = classifyOpportunity(fila({ 2: 6 }, {}));
+    const r = op(fila({ 2: 6 }, {}));
     expect(r.offered).toBe(true);
     expect(r.direction).toBe('up');
     expect(r.hours_to).toBe(6);
@@ -60,52 +64,52 @@ describe('classifyOpportunity', () => {
 
   test('adverso ANTES del objetivo → no era operable (era latigazo)', () => {
     // Llegó a +2xATR en la hora 10, pero antes se fue -1xATR en la hora 3.
-    const r = classifyOpportunity(fila({ 2: 10 }, { 1: 3 }));
+    const r = op(fila({ 2: 10 }, { 1: 3 }));
     expect(r.offered).toBe(false);
     expect(r.blocked_by_adverse).toBe(true);
   });
 
   test('adverso DESPUÉS del objetivo no invalida la oportunidad', () => {
-    const r = classifyOpportunity(fila({ 2: 3 }, { 1: 10 }));
+    const r = op(fila({ 2: 3 }, { 1: 10 }));
     expect(r.offered).toBe(true);
     expect(r.hours_to).toBe(3);
   });
 
   test('empate en la misma vela → se asume el adverso primero (conservador)', () => {
-    const r = classifyOpportunity(fila({ 2: 5 }, { 1: 5 }));
+    const r = op(fila({ 2: 5 }, { 1: 5 }));
     expect(r.offered).toBe(false);
     expect(r.blocked_by_adverse).toBe(true);
   });
 
   test('mercado plano → evaluable y sin oportunidad (abstención acertada)', () => {
-    const r = classifyOpportunity(fila({}, {}));
+    const r = op(fila({}, {}));
     expect(r.evaluable).toBe(true);
     expect(r.offered).toBe(false);
     expect(r.blocked_by_adverse).toBe(false);
   });
 
   test('sin rejilla → NO evaluable, distinto de "no ofreció"', () => {
-    const r = classifyOpportunity({ path_first_passage: null });
+    const r = op({ path_first_passage: null });
     expect(r.evaluable).toBe(false);
     expect(r.offered).toBe(false);
   });
 
   test('el horizonte descarta lo que llegó demasiado tarde', () => {
     const f = fila({ 2: 100 }, {});
-    expect(classifyOpportunity(f).offered).toBe(true);              // ventana 7d
-    expect(classifyOpportunity(f, { horizonH: 24 }).offered).toBe(false); // en 24h, no
+    expect(op(f).offered).toBe(true);                               // sin límite de horas
+    expect(op(f, { horizonH: 24 }).offered).toBe(false);            // en 24h, no
   });
 
   test('elige el sentido que llegó antes cuando ambos son limpios', () => {
-    const r = classifyOpportunity(fila({ 2: 20 }, { 2: 4 }), { adverseK: 3 });
+    const r = op(fila({ 2: 20 }, { 2: 4 }), { adverseK: 3 });
     expect(r.direction).toBe('down');
     expect(r.hours_to).toBe(4);
   });
 
   test('acepta el JSON crudo de SQLite', () => {
     const raw = JSON.stringify({ up: { 2: 6 }, down: {} });
-    expect(classifyOpportunity({ path_first_passage: raw }).offered).toBe(true);
-    expect(classifyOpportunity({ path_first_passage: '{roto' }).evaluable).toBe(false);
+    expect(op({ path_first_passage: raw }).offered).toBe(true);
+    expect(op({ path_first_passage: '{roto' }).evaluable).toBe(false);
   });
 
   test('un objetivo más exigente reduce las oportunidades contadas', () => {
@@ -139,28 +143,30 @@ describe('maxExcursionAtr', () => {
 
 describe('classifyPathOutcome', () => {
   const fila = (up, down) => ({ path_first_passage: { up, down } });
+  // Par explícito por el mismo motivo que arriba: se prueba la lógica, no la calibración.
+  const path = (accion, row) => classifyPathOutcome(accion, row, { targetK: 2, adverseK: 1 });
 
   test('Comprar que toca objetivo antes que stop → win', () => {
-    expect(classifyPathOutcome('Comprar', fila({ 2: 5 }, { 1: 20 }))).toBe('win');
+    expect(path('Comprar', fila({ 2: 5 }, { 1: 20 }))).toBe('win');
   });
 
   test('Comprar que toca el stop antes → loss aunque el precio recupere después', () => {
     // Es justo lo que outcome_24h no ve: mira el destino, no el camino.
-    expect(classifyPathOutcome('Comprar', fila({ 2: 20 }, { 1: 3 }))).toBe('loss');
+    expect(path('Comprar', fila({ 2: 20 }, { 1: 3 }))).toBe('loss');
   });
 
   test('Vender invierte los sentidos', () => {
-    expect(classifyPathOutcome('Vender', fila({ 1: 20 }, { 2: 5 }))).toBe('win');
-    expect(classifyPathOutcome('Vender', fila({ 1: 3 }, { 2: 20 }))).toBe('loss');
+    expect(path('Vender', fila({ 1: 20 }, { 2: 5 }))).toBe('win');
+    expect(path('Vender', fila({ 1: 3 }, { 2: 20 }))).toBe('loss');
   });
 
   test('sin resolver por ningún lado → flat', () => {
-    expect(classifyPathOutcome('Comprar', fila({}, {}))).toBe('flat');
+    expect(path('Comprar', fila({}, {}))).toBe('flat');
   });
 
   test('no direccional o sin rejilla → null', () => {
-    expect(classifyPathOutcome('Esperar', fila({ 2: 5 }, {}))).toBeNull();
-    expect(classifyPathOutcome('Comprar', { path_first_passage: null })).toBeNull();
+    expect(path('Esperar', fila({ 2: 5 }, {}))).toBeNull();
+    expect(path('Comprar', { path_first_passage: null })).toBeNull();
   });
 });
 
@@ -192,13 +198,20 @@ describe('summarizeOpportunity — comparación contra la tasa base', () => {
     expect(s.lift_pct).toBeCloseTo(15.2, 1);
   });
 
-  test('el horizonte de 7d se marca como poco discriminante', () => {
-    const s = summarizeOpportunity([fila({ 2: 5 }, {})], { horizonH: null });
-    expect(s.base_rate_pct).toBe(OPPORTUNITY_BASE_RATE['7d'].pct);
-    expect(s.base_rate_discriminates).toBe(false);
+  test('el horizonte de 7d usa su propio par calibrado (4×, no 2×)', () => {
+    // Con 2×/1× a 7 días la tasa base era 68,5% y saturaba: el objetivo escala con la
+    // ventana, así que cada horizonte tiene sus múltiplos.
+    const soloDosX = summarizeOpportunity([fila({ 2: 5 }, {})], { horizonH: null });
+    expect(soloDosX.offered_pct).toBe(0);          // 2×ATR ya no basta a 7d
+    expect(soloDosX.thresholds.target_k_atr).toBe(4);
+
+    const conCuatroX = summarizeOpportunity([fila({ 2: 5, 4: 30 }, {})], { horizonH: null });
+    expect(conCuatroX.offered_pct).toBe(100);
+    expect(conCuatroX.base_rate_pct).toBe(OPPORTUNITY_BASE_RATE['7d'].pct);
+    expect(conCuatroX.base_rate_discriminates).toBe(true);
   });
 
-  test('con múltiplos NO por defecto no se compara (la base medida no aplica)', () => {
+  test('con múltiplos NO calibrados no se compara (la base medida no aplica)', () => {
     const s = summarizeOpportunity([fila({ 3: 5 }, {})], { horizonH: 24, targetK: 3 });
     expect(s.base_rate_pct).toBeNull();
     expect(s.lift_pct).toBeNull();

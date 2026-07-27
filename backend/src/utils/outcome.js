@@ -8,7 +8,14 @@
  * @param {string} action - 'Comprar' | 'Vender' | 'Preparar' | 'Esperar'
  * @param {number} priceAtAnalysis
  * @param {number} priceLater
- * @param {number} [thresholdPct=0.3] - Banda muerta (%) para considerar 'flat'.
+ * @param {number} [thresholdPct=0.3] - Banda muerta (%) para considerar 'flat'. El caller
+ *   (outcomeService) pasa 0.25×ATR% del TF primario cuando puede reconstruirlo, para que la
+ *   banda escale con la volatilidad del activo en vez de ser la misma para BTC que para SOL
+ *   (mismo criterio que la banda de `price_vs_vwap` tras la auditoría de umbrales, T6).
+ *   El 0.3 fijo queda solo de fallback. Medido el 2026-07-27 sobre 973 ventanas por moneda:
+ *   el cambio reclasifica ~1 punto porcentual de los casos (flat pasa de 2,5-5,2 % a
+ *   3,7-5,8 %) — es consistencia, no un arreglo grande. La definición dura de acierto la
+ *   da el win-rate path-aware (`classifyPathOutcome`), no esta banda.
  * @returns {'win'|'loss'|'flat'|'moved'|null}
  *   win/loss/flat para acciones direccionales (Comprar/Vender);
  *   moved/flat (informativo) para no direccionales (Esperar/Preparar);
