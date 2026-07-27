@@ -1018,6 +1018,32 @@ html, body {
   gap: var(--sp-sm);
   margin-bottom: var(--sp-sm);
 }
+
+/* "Falta para operar" — en un sistema que casi siempre dice Esperar, es la única salida
+   accionable que produce. Se destaca con la barra lateral de aviso para que no se lea
+   como un dato más de la tarjeta. */
+.hist-missing {
+  background: var(--alert-info-bg);
+  border-left: 2px solid var(--accent-dim);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-md) var(--sp-lg);
+  margin-bottom: var(--sp-sm);
+}
+.hist-missing-label {
+  display: block;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: var(--sp-xs);
+}
+.hist-missing-list {
+  margin: 0;
+  padding-left: var(--sp-2xl);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
 .hist-badge {
   font-size: var(--fs-xs);
   text-transform: uppercase;

@@ -347,6 +347,13 @@ function runMigrations(db) {
   // vs el contradictions_found booleano que reporta el LLM.
   ensureColumn(db, 'analyses', 'contradiction_count', 'INTEGER');
   ensureColumn(db, 'analyses', 'contradiction_codes', 'TEXT');
+  // Telemetría del dedupe (revisión 2026-07-26, M1). `contradiction_codes` guarda la lista
+  // POST-dedupe: cuando un veto se activa, los códigos que lo construyeron desaparecen de ahí
+  // y se perdía el rastro justo en el caso raro que interesa observar. `deduped_by_veto` los
+  // conserva, y `contradictions_signal_count` da el conteo crudo (sin dedupe de ningún tipo)
+  // que hace medible cuánto descuenta el dedupe por bloque.
+  ensureColumn(db, 'analyses', 'deduped_by_veto', 'TEXT');
+  ensureColumn(db, 'analyses', 'contradictions_signal_count', 'INTEGER');
   // S/R strength del nivel más cercano (antes solo se persistía la distancia %).
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_support_strength', 'INTEGER');
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_resistance_strength', 'INTEGER');

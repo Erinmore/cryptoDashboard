@@ -41,17 +41,31 @@ fi
 # Se consulta la BBDD (readonly) en vez del log: así cuenta también lo que lance
 # el usuario desde la UI, no solo lo que dispare el cron.
 if [ -f "$DB" ]; then
+  # OJO con `return` de primer nivel: `node -e` NO envuelve el script en el wrapper de módulo
+  # de CommonJS, así que un return suelto es "SyntaxError: Illegal return statement". Esa era
+  # la razón de que este freno nunca funcionara: el nodo moría, el 2>/dev/null se tragaba el
+  # error, RECENT quedaba vacío y el disparo seguía adelante. Se vio en producción el
+  # 2026-07-27 (dos oportunistas con 59 min de diferencia). Toda la lógica va en la función.
+  # shellcheck disable=SC2016  # process.argv es de JS, no del shell
   RECENT="$(cd "$BACKEND_DIR" && "$NODE_BIN" -e '
     const D = require("better-sqlite3");
-    try {
+    const recent = () => {
       const db = new D(process.argv[1], { readonly: true });
       const r = db.prepare("SELECT MAX(timestamp) t FROM analyses WHERE coin = ?").get(process.argv[2]);
-      if (!r?.t) return process.stdout.write("0");
+      if (!r?.t) return "0";
       const hours = (Date.now() - new Date(r.t).getTime()) / 3600000;
-      process.stdout.write(hours < Number(process.argv[3]) ? "1" : "0");
-    } catch { process.stdout.write("0"); }  // ante duda, no bloquear el disparo
-  ' "$DB" "$COIN" "$MIN_GAP_HOURS" 2>/dev/null)"
-  [ "$RECENT" = "1" ] && exit 0
+      return hours < Number(process.argv[3]) ? "1" : "0";
+    };
+    try { process.stdout.write(recent()); }
+    catch { process.stdout.write("0"); }  // ante duda, no bloquear el disparo
+  ' "$DB" "$COIN" "$MIN_GAP_HOURS" 2>>"$LOG")"
+  # Salida inesperada (vacía o distinta de 0/1) = el chequeo no se pudo hacer. Se anota: un
+  # freno que falla en silencio es peor que no tenerlo, porque da falsa sensación de control.
+  case "$RECENT" in
+    1) exit 0 ;;
+    0) ;;
+    *) echo "$TS reason=opportunistic-check WARN freno_2h_indeterminado salida=\"$RECENT\"" >> "$LOG" ;;
+  esac
 fi
 
 # ── ¿Se activa alguna condición? (payload gratis, sin LLM) ───────────────────

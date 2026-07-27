@@ -306,7 +306,10 @@ describe('computeGating — dedupe veto↔contradicciones (H4)', () => {
     expect(g.veto_long).toBe(false);
     expect(g.deduped_by_veto).toEqual([]);
     // cvd_1d_divergence + price_near_key_level + htf_conflict presentes.
-    expect(g.contradiction_count).toBe(g.contradictions_raw_count);
+    expect(g.contradiction_count).toBe(g.contradiction_blocks_pre_veto);
+    // Sin veto no hay dedupe por veto, pero SÍ por bloque: 3 señales crudas → 2 bloques
+    // (volume + structure). Es justo la diferencia que el checkpoint quiere medir.
+    expect(g.contradictions_signal_count).toBeGreaterThan(g.contradiction_count);
   });
 
   test('con veto activo → se descuentan cvd_1d_divergence y price_near_key_level', () => {
@@ -317,7 +320,10 @@ describe('computeGating — dedupe veto↔contradicciones (H4)', () => {
     expect(g.contradictions.map((c) => c.code)).not.toContain('cvd_1d_divergence');
     expect(g.contradictions.map((c) => c.code)).not.toContain('price_near_key_level');
     expect(g.deduped_by_veto.length).toBeGreaterThan(0);
-    expect(g.contradiction_count).toBeLessThan(g.contradictions_raw_count);
+    expect(g.contradiction_count).toBeLessThan(g.contradiction_blocks_pre_veto);
+    // Los códigos absorbidos quedan registrados: sin esto se perdería el rastro de qué
+    // construyó el veto, justo en el caso raro que interesa observar.
+    expect(g.deduped_by_veto).toEqual(expect.arrayContaining(['cvd_1d_divergence']));
   });
 
   // Auditoría #2 (hallazgo 6): el OI es la tercera pata del veto (oi_not_expanding con

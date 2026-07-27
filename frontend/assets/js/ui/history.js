@@ -111,6 +111,10 @@ function renderCard(a) {
   const meta = el('div', 'hist-meta');
   const metaBits = [];
   if (a.primary_driver) metaBits.push(`driver: ${a.primary_driver}`);
+  // La convicción es la variable que más discrimina entre análisis cuando los scores salen
+  // todos a 0 (señal H3 de la fase de recogida), y el modal —que es donde se comparan unos
+  // con otros— no la mostraba. Revisión crítica 2026-07-26, M4.
+  if (a.conviction != null) metaBits.push(`convicción ${Number(a.conviction).toFixed(2)}`);
   if (a.risk_score != null) metaBits.push(`riesgo ${a.risk_score}/10`);
   if (a.price_current != null) metaBits.push(fmtPrice(a.price_current));
   if (a.primary_tf) metaBits.push(`TF ${a.primary_tf}`);
@@ -145,7 +149,40 @@ function renderCard(a) {
     b.title = warns.map(w => `${w.severity}: ${w.rule}`).join('\n');
     badges.appendChild(b);
   }
+  // Contradicciones deterministas del backend. Se muestra el conteo que gobierna la puerta
+  // (bloques) y, en el tooltip, los códigos crudos + lo que absorbió el veto — que es donde
+  // se ve el efecto real del dedupe.
+  if (a.contradiction_count != null && a.contradiction_count > 0) {
+    const parse = (s) => { try { return JSON.parse(s) ?? []; } catch { return []; } };
+    const codes = parse(a.contradiction_codes);
+    const deduped = parse(a.deduped_by_veto);
+    const raw = a.contradictions_signal_count;
+    const b = el('span', 'hist-badge watch',
+      `${a.contradiction_count} contradic.${raw != null && raw > a.contradiction_count ? ` (de ${raw})` : ''}`);
+    const lines = [];
+    if (codes.length) lines.push(`Cuentan: ${codes.join(', ')}`);
+    if (deduped.length) lines.push(`Absorbidas por el veto: ${deduped.join(', ')}`);
+    if (raw != null) lines.push(`Señales crudas: ${raw} → ${a.contradiction_count} bloques`);
+    b.title = lines.join('\n');
+    badges.appendChild(b);
+  }
   if (badges.childNodes.length) card.appendChild(badges);
+
+  // Qué falta para poder operar. Es la única salida accionable de un sistema que dice
+  // "Esperar" casi siempre: se persistía y se devolvía por la API, pero no se pintaba en
+  // ninguna pantalla (revisión crítica 2026-07-26, M4).
+  if (a.missing_confirmations) {
+    let items = [];
+    try { items = JSON.parse(a.missing_confirmations) ?? []; } catch { /* ignore */ }
+    if (Array.isArray(items) && items.length) {
+      const box = el('div', 'hist-missing');
+      box.appendChild(el('span', 'hist-missing-label', 'Falta para operar'));
+      const ul = el('ul', 'hist-missing-list');
+      for (const it of items.slice(0, 5)) ul.appendChild(el('li', '', String(it)));
+      box.appendChild(ul);
+      card.appendChild(box);
+    }
+  }
 
   // Resultado a posteriori (analysis_outcome)
   const horizons = [['1h', a.outcome_1h], ['24h', a.outcome_24h], ['7d', a.outcome_7d]]

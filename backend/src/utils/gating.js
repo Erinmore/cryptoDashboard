@@ -361,8 +361,10 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
  *     señales del mismo bloque son el mismo eje. Máximo 3.
  *
  * `contradiction_count` refleja el conteo tras ambas deduplicaciones (el que consume el
- * validador para la puerta CONVICTION DECAY). `contradictions_raw_count` es el conteo de
- * bloques ANTES del dedupe por veto (para telemetría de cuánto descuenta el veto).
+ * validador para la puerta CONVICTION DECAY). Junto a él se exponen dos conteos de telemetría:
+ * `contradiction_blocks_pre_veto` (bloques ANTES del dedupe por veto — cuánto descuenta el veto)
+ * y `contradictions_signal_count` (señales crudas, sin deduplicar: mide el efecto del dedupe
+ * por bloque, que es lo que el checkpoint necesita para falsar H1).
  *
  * @param {object} args - { technical, openInterest, currentPrice, primaryTf }
  * @returns {object} bloque `gating` completo para el payload.
@@ -389,7 +391,18 @@ export function computeGating(args) {
     contradictions,
     contradiction_count: countBlocks(contradictions),
     contradiction_blocks: [...new Set(contradictions.map((c) => c.block ?? CONTRADICTION_BLOCK[c.code]))],
-    contradictions_raw_count: countBlocks(contra.contradictions),
+    // Tres conteos distintos, y los nombres ahora dicen cuál es cuál (revisión 2026-07-26, M1):
+    //   contradiction_count            → BLOQUES tras ambos dedupes. El que gobierna la puerta.
+    //   contradiction_blocks_pre_veto  → BLOQUES antes del dedupe por veto (cuánto descuenta el veto).
+    //   contradictions_signal_count    → SEÑALES crudas, sin deduplicar de ninguna forma.
+    // El campo se llamaba `contradictions_raw_count` pero contenía bloques, no señales: "raw"
+    // sugería lo contrario y no existía ningún campo con el conteo crudo real, que es justo el
+    // que hace medible el efecto del dedupe (H1 del checkpoint).
+    contradiction_blocks_pre_veto: countBlocks(contra.contradictions),
+    contradictions_signal_count: contra.contradictions.length,
+    // Códigos que el veto absorbió. Se persiste (no solo se expone) porque al activarse el veto
+    // desaparecen de `contradictions`, y sin este campo el registro de qué lo construyó se
+    // perdía justo en el caso raro que interesa observar.
     deduped_by_veto: deduped,
     missing_structural_confirmation: contra.missing_structural_confirmation,
   };

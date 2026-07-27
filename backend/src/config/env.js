@@ -61,6 +61,9 @@ const env = {
 
   // Base de datos
   dbPath: process.env.DB_PATH || './data/cryptex.db',
+  // Estado de la recogida que escribe scripts/checkCollection.sh y sirve /health. Sin valor
+  // se deduce de $HOME; se puede fijar si el layout de la Pi cambia.
+  collectionHealthFile: process.env.COLLECTION_HEALTH_FILE || null,
 
   // Cache TTL (segundos)
   cache: {
