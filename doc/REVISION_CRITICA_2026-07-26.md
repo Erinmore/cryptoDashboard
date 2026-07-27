@@ -512,6 +512,105 @@ es que nadie miró nunca la distribución.
 
 ---
 
+## Segunda tanda de mediciones (2026-07-27) — veto, derivados y puerta de decay
+
+Herramienta: [`backend/scripts/auditVetoFrequency.mjs`](../backend/scripts/auditVetoFrequency.mjs).
+Reconstruye la conjunción COMPLETA del veto sobre **90 días reales** (klines + Coinalyze) y mide
+el grupo 2 de la auditoría, que no se podía medir solo con klines.
+
+### V1 · La recalibración NO se pasó de laxa
+
+Era mi principal preocupación tras ver el veto activo en 2 de 2 análisis. **Medido: 8,2 %.**
+
+| | |
+|---|---|
+| **Veto activo** | **8,2 %** de 534 ventanas (long 0,0 % · short 8,2 %) |
+| Pata CVD 1D direccional | 13,5 % ← sigue siendo el cuello de botella |
+| Pata OI sin expandir | 71,2 % |
+| Pata nivel fuerte cercano | 48,7 % |
+| Episodios | 11 rachas en 90 días · media 4 velas · máx 2,3 días |
+
+Que saltara en las primeras consultas fue **coincidencia con una racha**, no un umbral roto. La
+preocupación era legítima pero la respuesta estaba medible desde el primer momento.
+
+Y valida el arreglo del cron B: con disparo por transición serían **~11 disparos en 90 días**;
+con el de persistencia habrían sido **~44**. El sesgo era real y ahora no existe.
+
+### V2 · `funding severity`: 6 de 8 buckets muertos — pero NO se toca
+
+| bucket | frecuencia |
+|---|---|
+| `normal` (positivo) | 52,0 % |
+| `normal` (negativo) | 48,0 % |
+| `elevated` / `high` / `extreme`, ambos signos | **0,0 %** |
+
+El funding de SOL en 90 días: mediana **0,0005 %**, p95 **0,01 %**. El corte de `elevated` está en
+0,05 % — **cinco veces por encima del p95**. Las reglas FUNDING SEVERITY y FUNDING NEGATIVO del
+prompt (~16 líneas) no se aplican nunca para SOL.
+
+**Decisión: no recalibrar.** Y es importante entender por qué, porque contradice lo que se hizo
+con `cvd_strength`: el funding tiene **significado absoluto**. Un 0,5 % por periodo es un coste de
+carry insostenible en cualquier activo y en cualquier época. Convertirlo a percentiles llamaría
+"extreme" al 0,01 % de SOL, que es funding normal — sería fabricar una alarma. Un umbral se
+normaliza cuando la magnitud solo tiene sentido comparada consigo misma; el funding no es ese caso.
+
+*(Unidades verificadas antes de concluir: el histórico de Coinalyze y el `rate_pct` en vivo
+coinciden exactamente — 0,008751 en ambos.)*
+
+### V3 · LSR contrarian 60/40: el flag no informaba de nada — CORREGIDO
+
+| | |
+|---|---|
+| long % de SOL | mediana **72,7 %** · p10 63,4 · p90 77,6 |
+| `contrarian_bear` (>60) | **95,7 %** |
+| `balanced` | 4,3 % |
+| `contrarian_bull` (<40) | **0,0 %** |
+
+El corte fijo daba por supuesto que un libro equilibrado está en el 50 %. En SOL la norma es
+**72,7 % de longs**, así que el flag decía "contrarian bear" casi siempre y "contrarian bull"
+jamás. Y como es **el único input de `expected_scores.derivatives` cuando el funding es normal**
+—que es el 100 % del tiempo, por V2— la guardia C2 de derivados era una **constante de −1**.
+
+Corregido: terciles de la propia serie de 7 días, que es la ventana ya descargada. Aquí sí procede
+normalizar, por el motivo inverso al del funding: el posicionamiento **solo** tiene sentido
+relativo — no existe un "50 % correcto" universal.
+
+Verificado en producción: `long_pct 71,7 → percentil 51,2 → balanced` (cortes 69,61 / 72,55).
+El mismo valor que ayer daba `contrarian_bear` con −1 automático.
+
+### V4 · C2 · La puerta de `>=3` es CORRECTA — decisión cerrada
+
+| `contradiction_count` | frecuencia |
+|---|---|
+| 0 bloques | 11,5 % |
+| 1 bloque | 41,3 % |
+| 2 bloques | 44,2 % |
+| **>=3 bloques** | **2,9 %** ← la puerta |
+
+Quedaba la duda de si `>=3` era una decisión o un residuo del dedupe. Con los datos: bajarla a
+`>=2` haría que la puerta forzara `Esperar` el **47 % del tiempo** — inaceptable. En `>=3` actúa
+como lo que debe ser: una confluencia extrema, el 2,9 %. **Se mantiene, ahora sí como decisión
+consciente y no por inercia.**
+
+**Hallazgo nuevo (no corregido):** `price_near_key_level` dispara el **77,4 %** de las ventanas,
+así que el bloque `structure` está casi siempre activo y `contradiction_count` acaba midiendo de
+facto "derivados + volumen". Usa `CONTRADICTION_MIN_TOUCHES=2`, más permisivo que el 3 del veto.
+Subirlo a 3 lo dejaría en torno al 22 %. **No lo he tocado**: el resultado agregado (2,9 %) es
+sano, y ya se han hecho muchos cambios hoy — cada uno adicional compone riesgo sin evidencia de
+que haga falta. Queda anotado para el checkpoint.
+
+### V5 · El régimen por percentil no degeneró `computeTrend`
+
+Era un efecto colateral sin evaluar: al salir `ranging` más a menudo, `computeTrend` excluye ADX
+más veces. Medido sobre 208 ventanas — régimen: `ranging` 42,8 % · `weak_trend` 38,0 % ·
+`trending` 19,2 %. Distribución de tendencia: `neutral` 57,2 % · `bullish` 28,4 % · `bearish`
+14,4 %. **Repartida, sin categoría dominante.** El cambio no rompió nada.
+
+*(Caveat: el script usa un proxy estructural EMA20/50 para la tendencia, no `computeTrend`
+completo — mide el eje que alimenta `htf_conflict_1w_1d`, no el score ponderado.)*
+
+---
+
 ## Síntesis y orden de trabajo propuesto
 
 ### Ahora, durante la recogida — categoría (A), nada toca la decisión

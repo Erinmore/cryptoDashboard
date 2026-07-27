@@ -1,3 +1,4 @@
+import { bucketByPercentile } from '../utils/percentiles.js';
 import axios from 'axios';
 import { cacheGet, cacheSet } from './cacheService.js';
 import {
@@ -259,15 +260,41 @@ export async function fetchLongShortRatio(coin) {
     const longPct  = parseFloat((latest.l ?? 50).toFixed(1));
     const shortPct = parseFloat((latest.s ?? 50).toFixed(1));
 
-    // Indicador contrario: >60% longs = mercado sesgado, peligro de reversión
-    const signal = longPct > 60 ? 'longs_dominant_contrarian_bear'
+    // Indicador contrario, RELATIVO A LA BASE DEL PROPIO ACTIVO (auditoría de umbrales,
+    // hallazgo T8). El corte fijo >60 % / <40 % daba por supuesto que un libro equilibrado
+    // está en el 50 %, y eso no es cierto: medido sobre 90 días, la mediana de long% en SOL
+    // es 72,7 % (p10 63,4 · p90 77,6). Con el umbral fijo, `contrarian_bear` salía el 95,7 %
+    // del tiempo y `contrarian_bull` NUNCA — el flag no informaba de nada, y como es el único
+    // input de expected_scores.derivatives cuando el funding es normal, dejaba esa guardia
+    // convertida en una constante de −1.
+    //
+    // Lo que importa no es el nivel absoluto sino la desviación respecto a la norma DE ESE
+    // activo: un 63 % de longs es poco para SOL y muchísimo para otro par. Se usan terciles
+    // de la propia serie (7 días), que es la ventana que ya se descarga.
+    //
+    // NOTA — por qué aquí sí y en `funding severity` no: el posicionamiento es inherentemente
+    // relativo (no hay un "50 % correcto" universal), mientras que el funding tiene significado
+    // absoluto — un 0,5 % por periodo es un coste de carry insostenible en cualquier activo.
+    // Ver percentiles.js.
+    const longSeries = history.map((h) => h.l).filter(Number.isFinite);
+    const bucket = bucketByPercentile(longPct, longSeries, {
+      labels: ['shorts_dominant_contrarian_bull', 'balanced', 'longs_dominant_contrarian_bear'],
+      minSample: 24,
+    });
+    // Sin serie suficiente se cae al criterio absoluto de antes (mejor que no emitir señal).
+    const signal = bucket.label ?? (longPct > 60 ? 'longs_dominant_contrarian_bear'
       : longPct < 40 ? 'shorts_dominant_contrarian_bull'
-      : 'balanced';
+      : 'balanced');
 
     const result = {
       long_pct: longPct,
       short_pct: shortPct,
       signal,
+      // Trazabilidad de la calibración (mismo patrón que cvd_strength): sin esto no se puede
+      // explicar a posteriori por qué un 72 % fue "balanced" un día y "contrarian_bear" otro.
+      long_pct_percentile: bucket.percentile,
+      signal_cuts: bucket.cuts,
+      signal_basis: bucket.label ? 'percentile_7d' : 'absolute_fallback',
       source: 'coinalyze',
       // Timestamp del último candle horario usado (`latest.t`, epoch seconds).
       data_timestamp_utc: latest.t ? new Date(latest.t * 1000).toISOString() : null,

@@ -72,7 +72,22 @@ fi
 PAYLOAD="$(curl -s --max-time 60 "$API/api/analyze/payload?coin=$COIN&primary_tf=$TF" 2>/dev/null)"
 [ -z "$PAYLOAD" ] && { echo "$TS reason=opportunistic-check ERROR payload_vacio" >> "$LOG"; exit 1; }
 
-REASON="$(printf '%s' "$PAYLOAD" | "$NODE_BIN" -e '
+# Se dispara en la TRANSICIÓN, no mientras la condición persista.
+#
+# El disparador se diseñó para un evento RARO: el veto no había saltado nunca. Tras la
+# recalibración de umbrales (2026-07-26) puede estar activo la mayor parte del tiempo, y un
+# disparador que reacciona a la persistencia deja de ser oportunista: se convierte en un
+# muestreo CONDICIONADO a que el veto esté activo. En 14 días serían hasta 14 observaciones
+# extra sesgadas hacia ese estado, sobre 28 programadas — la distribución del checkpoint
+# saldría inflada hacia justo el caso que el disparador selecciona.
+#
+# Comparando con el estado del chequeo anterior, solo se dispara con condiciones NUEVAS, que
+# es lo que la intención original pedía: capturar el momento en que el camino se activa.
+STATE_FILE="${STATE_FILE:-$LOG_DIR/last-gating-state}"
+PREV="$(cat "$STATE_FILE" 2>/dev/null || true)"
+
+# shellcheck disable=SC2016  # las plantillas son de JS, no del shell
+HITS="$(printf '%s' "$PAYLOAD" | "$NODE_BIN" -e '
 let d=""; process.stdin.on("data",c=>d+=c).on("end",()=>{
   try {
     const p = JSON.parse(d).payload ?? {};
@@ -81,21 +96,43 @@ let d=""; process.stdin.on("data",c=>d+=c).on("end",()=>{
     const chg = p.price_change_24h_pct;
     const hits = [];
 
-    // Caminos endurecidos que nunca han disparado en producción — máxima prioridad.
+    // Caminos endurecidos del gating.
     if (g.veto_long)         hits.push("veto_long");
     if (g.veto_short)        hits.push("veto_short");
     if (g.data_insufficient) hits.push("data_insufficient");
-    // Régimen distinto del rango en el que se ha muestreado hasta ahora.
-    if (typeof oi === "number" && oi > 3)          hits.push(`oi_expandiendo_${oi}pct`);
-    if (typeof chg === "number" && Math.abs(chg) > 5) hits.push(`mov_24h_${chg}pct`);
+    // Régimen distinto del rango en el que se ha muestreado hasta ahora. Sin el valor en la
+    // etiqueta: si fuera "oi_expandiendo_3.4pct" cada décima sería una condición "nueva" y
+    // la comparación con el estado anterior no serviría de nada.
+    if (typeof oi === "number" && oi > 3)             hits.push("oi_expandiendo");
+    if (typeof chg === "number" && Math.abs(chg) > 5) hits.push("mov_24h_fuerte");
 
-    process.stdout.write(hits.join("+"));
+    process.stdout.write(hits.join(" "));
   } catch { process.stdout.write(""); }
-});' 2>/dev/null)"
+});' 2>>"$LOG")"
 
-[ -z "$REASON" ] && exit 0   # nada que ver hoy
+# Estado actual guardado SIEMPRE, dispare o no: si solo se guardara al disparar, una
+# condición que persiste volvería a contar como nueva en el siguiente chequeo.
+printf '%s' "$HITS" > "$STATE_FILE"
+
+[ -z "$HITS" ] && exit 0   # nada activo
+
+# Condiciones presentes ahora que NO estaban en el chequeo anterior.
+NUEVAS=""
+for h in $HITS; do
+  case " $PREV " in
+    *" $h "*) ;;                                     # ya estaba → persistencia, no evento
+    *) NUEVAS="${NUEVAS:+$NUEVAS+}$h" ;;
+  esac
+done
+
+if [ -z "$NUEVAS" ]; then
+  # Traza deliberada: sin ella parecería que el disparador está muerto, cuando en realidad
+  # está haciendo justo su trabajo (no re-muestrear un estado que ya se capturó).
+  echo "$TS reason=opportunistic-check persiste=\"$HITS\" sin_transicion" >> "$LOG"
+  exit 0
+fi
 
 # ── Disparo ──────────────────────────────────────────────────────────────────
 echo "$TODAY" > "$MARKER"
-echo "$TS TRIGGER oportunista: $REASON" >> "$LOG"
-exec "$SCRIPT_DIR/collect.sh" "opportunistic:$REASON"
+echo "$TS TRIGGER oportunista: $NUEVAS (estado previo: ${PREV:-vacío})" >> "$LOG"
+exec "$SCRIPT_DIR/collect.sh" "opportunistic:$NUEVAS"

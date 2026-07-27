@@ -212,6 +212,11 @@ function runMigrations(db) {
       -- cortes (2 %/8 %) contra la distribución real sin re-fetchear klines.
       cvd_strength TEXT,
       cvd_delta_vs_volume_pct REAL,
+      -- Trazabilidad de la calibración: desde v7_0 los cortes salen de la propia serie y por
+      -- tanto VARÍAN en cada análisis. Sin guardarlos no se puede explicar a posteriori por qué
+      -- un mismo 1,3 % fue "moderate" un día y "marginal" otro — justo lo que hay que auditar.
+      cvd_strength_pctile REAL,
+      cvd_strength_cuts TEXT,
       vwap_trend TEXT,
       vwap_divergence TEXT,
 
@@ -363,6 +368,8 @@ function runMigrations(db) {
   // justo la variable que abre o cierra la puerta de Comprar/Vender (revisión 2026-07-26, C3).
   ensureColumn(db, 'analysis_tf_snapshot', 'cvd_strength', 'TEXT');
   ensureColumn(db, 'analysis_tf_snapshot', 'cvd_delta_vs_volume_pct', 'REAL');
+  ensureColumn(db, 'analysis_tf_snapshot', 'cvd_strength_pctile', 'REAL');
+  ensureColumn(db, 'analysis_tf_snapshot', 'cvd_strength_cuts', 'TEXT');
   // Auditoría B2/C2: total reproducible del backend + scores esperados (guardia de
   // divergencia) — telemetría LLM vs backend, no reemplazan los scores del LLM.
   ensureColumn(db, 'analyses', 'score_total_backend', 'REAL');

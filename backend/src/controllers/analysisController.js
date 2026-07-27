@@ -680,6 +680,12 @@ async function buildAnalyzeContext(coin, primaryTf) {
         long_pct:  lsr.long_pct,
         short_pct: lsr.short_pct,
         signal:    lsr.signal,
+        // Desde v7_1 la señal es relativa a la base del propio activo (terciles de 7d): el
+        // corte fijo 60/40 daba `contrarian_bear` el 95,7 % del tiempo en SOL, cuya mediana
+        // de long% es 72,7 %. Sin estos campos la etiqueta no sería auditable a posteriori.
+        long_pct_percentile: lsr.long_pct_percentile ?? null,
+        signal_cuts:         lsr.signal_cuts ?? null,
+        signal_basis:        lsr.signal_basis ?? null,
         source:    lsr.source ?? 'coinalyze',
         history:   longShortSummary,
         data_timestamp_utc: lsr.data_timestamp_utc ?? null,
@@ -911,6 +917,9 @@ export function buildTfSnapshots(analysisId, technical) {
       // separar "eligió Esperar" de "no pudo decir otra cosa" (revisión 2026-07-26, C3).
       cvd_strength:            cvd?.cvd_strength ?? null,
       cvd_delta_vs_volume_pct: cvd?.cvd_delta_vs_volume_pct ?? null,
+      // Los cortes vigentes en ESTA serie: sin ellos la etiqueta no es auditable a posteriori.
+      cvd_strength_pctile:     cvd?.cvd_strength_pctile ?? null,
+      cvd_strength_cuts:       Array.isArray(cvd?.cvd_strength_cuts) ? JSON.stringify(cvd.cvd_strength_cuts) : null,
       vwap_trend:           vwap?.trend ?? null,
       vwap_divergence:      vwap?.divergence ?? null,
 
