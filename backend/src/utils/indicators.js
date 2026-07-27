@@ -125,11 +125,34 @@ export function calculateBollingerBands(closes, period = BB_PERIOD, stdDevMult =
   const rawPosition = bandWidth > 0 ? (current - lower) / bandWidth : 0.5;
   const position = Math.max(0, Math.min(1, rawPosition)); // Clamp to [0.0, 1.0]
 
+  // ── Compresión relativa (squeeze) ──
+  // `width_pct` NO es comparable entre TFs: medido el 2026-07-27 sobre SOL vale 2,7 en 1h y
+  // 33,3 en 1W. Un umbral absoluto de squeeze sería una constante disfrazada (fallo T5). Se
+  // sitúa la anchura actual en SU PROPIA distribución reciente — mismo patrón que
+  // `cvd_strength` y `adx.regime` tras la auditoría de umbrales.
+  const widthSeries = [];
+  for (let i = period; i <= closes.length; i++) {
+    const w = closes.slice(i - period, i);
+    const m = w.reduce((a, b) => a + b, 0) / period;
+    const sd = Math.sqrt(w.reduce((s, v) => s + Math.pow(v - m, 2), 0) / period);
+    if (m > 0) widthSeries.push(((2 * stdDevMult * sd) / m) * 100);
+  }
+  const widthPct = parseFloat(((bandWidth / mean) * 100).toFixed(2));
+  const sq = bucketByPercentile(widthPct, widthSeries, {
+    labels: ['squeeze', 'normal', 'expansion'],
+  });
+
   return {
     upper: parseFloat(upper.toFixed(2)),
     middle: parseFloat(mean.toFixed(2)),
     lower: parseFloat(lower.toFixed(2)),
-    width_pct: parseFloat(((bandWidth / mean) * 100).toFixed(2)),
+    width_pct: widthPct,
+    // squeeze = compresión en el tercil bajo de su propia historia → energía acumulada,
+    // ruptura probable pero SIN dirección implícita. expansion = tercil alto → movimiento
+    // ya en curso, entradas tardías y stops caros.
+    volatility_state: sq.label,
+    width_pctile: sq.percentile,
+    width_cuts: sq.cuts,
     position: parseFloat(position.toFixed(4)),
     window: period,
     std_dev_mult: stdDevMult,

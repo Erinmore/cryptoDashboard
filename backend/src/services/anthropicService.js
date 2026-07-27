@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v7_2_oi_band_levels';
+export const PROMPT_VERSION = 'v8_0_full_payload';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -266,6 +266,46 @@ price_vs_vwap="below" en 1D: señal de debilidad estructural. Añade cautela a c
 VWAP divergence="bearish" en 1D con precio subiendo: bandera de advertencia equivalente a CVD 1D divergente. Reduce convicción LONG en 1 nivel.
 VWAP divergence="bullish" en 1D con precio cayendo: bandera de cautela para shorts.
 
+B4. RÉGIMEN DE VOLATILIDAD (no puntúa: decide QUÉ TIPO de operación tiene sentido)
+
+Antes de puntuar dirección, establece en qué régimen está el mercado. Una tesis correcta ejecutada en el régimen equivocado pierde dinero igual que una tesis errónea.
+
+Fuentes, todas precalculadas (no recalcules ni fijes umbrales propios):
+
+technical[tf].bollinger_bands.volatility_state — compresión de las bandas situada en SU PROPIA distribución (terciles). "squeeze" = anchura en el tercil bajo; "expansion" = tercil alto. width_pct NO es comparable entre TFs (en SOL vale ~2.7 en 1h y ~33 en 1W), por eso se usa el estado, no el número.
+technical[tf].bollinger_bands.position — 0.0 = precio en la banda inferior, 1.0 = en la superior.
+technical[tf].regime — trending / ranging / high_volatility.
+technical[tf].atr.pct — volatilidad realizada del TF.
+volatility.{btc_dvol,eth_dvol} — volatilidad IMPLÍCITA (solo BTC/ETH; en SOL usa atr.pct como proxy).
+
+Reglas:
+
+volatility_state="squeeze" en el TF primario: energía acumulada, ruptura probable, PERO SIN DIRECCIÓN IMPLÍCITA. Un squeeze NO es señal alcista ni bajista. Favorece PREPARAR con dos escenarios (ruptura arriba / abajo) antes que COMPRAR o VENDER en el momento. Si además regime="ranging", la ruptura tiende a venir del rango: los niveles del rango son la referencia de trigger.
+volatility_state="expansion" en el TF primario: el movimiento YA está en curso. Las entradas a mercado llegan tarde y los stops necesarios son caros. Reduce la convicción de una entrada nueva en la dirección del movimiento y súbelo al Risk Score. NO lo uses como argumento de reversión: expansión no es agotamiento.
+position >= 0.95 o <= 0.05 en el TF primario: precio pegado a una banda. En regime="ranging" es contexto de reversión hacia la media; en regime="trending" es continuación, NO reversión. El régimen decide el signo, la posición sola no.
+Squeeze en 1D o 1W: el escenario de ruptura domina sobre cualquier lectura táctica de 1h. Dilo explícitamente en la tesis.
+
+Coherencia con ATR: si volatility_state="squeeze" pero atr.pct está en máximos del periodo, hay contradicción entre volatilidad implícita en las bandas y realizada. Señálalo y baja convicción: es un mercado que no está donde parece.
+
+B5. POSICIONAMIENTO Y PARTICIPACIÓN (no puntúa: modula convicción y tamaño)
+
+Estos campos sitúan la operación en el ciclo del activo. No generan dirección por sí mismos; evitan operar una señal técnica limpia sobre un contexto que la desmiente.
+
+coin_market.ath_change_pct — distancia al máximo histórico (negativa = drawdown desde ATH).
+coin_market.volume_vs_30d_median — volumen del último día frente a la mediana de los 30 previos. 1.0 = día normal; 2.0 = el doble de lo habitual. Es la medida de PARTICIPACIÓN, y está normalizada contra el propio activo.
+coin_market.turnover_pct — volumen 24h como % de la capitalización (rotación).
+global_market.btc_dominance_pct y market_cap_change_24h_pct — contexto de sector.
+
+Reglas:
+
+volume_vs_30d_median < 0.7 con una señal direccional fuerte: el movimiento lo está haciendo poco dinero. Reduce convicción un nivel — los movimientos sin participación se deshacen. NO invalida la tesis, la degrada.
+volume_vs_30d_median > 2.0: participación real. Confirma la señal que ya exista, en cualquier dirección. NUNCA la crea: volumen alto sin dirección definida es distribución o pánico, no una entrada.
+ath_change_pct < -70% (drawdown profundo): las resistencias superiores están muy lejos y el activo está en zona de acumulación o de daño estructural. Da más peso a la estructura de 1W y desconfía de objetivos de precio ambiciosos en el corto plazo.
+ath_change_pct > -20% (cerca de máximos): poca resistencia técnica por encima pero riesgo de reversión alto. Sube el Risk Score.
+Divergencia con el sector: si global_market.market_cap_change_24h_pct y el precio de la moneda apuntan en direcciones opuestas, la moneda se está moviendo por razones propias. Señálalo — o hay una historia idiosincrática, o es ruido de baja liquidez (contrástalo con volume_vs_30d_median).
+
+ANTI-DOBLE-CONTEO: volume_vs_30d_median mide participación DIARIA agregada. No lo sumes al Volume Flow Score, que ya mide agresión intra-vela vía CVD. Uno responde "¿cuánta gente participó?" y el otro "¿quién fue agresor?". Son ejes distintos y solo uno puntúa.
+
 C. Structure Score (-2 a +2)
 
 Evalúa la ESTRUCTURA DE MERCADO por TF (1D, 4h, 1h): market structure (HH/HL vs LH/LL), BOS/CHoCH (SMC), niveles S/R, Volume Profile (POC/VAH/VAL) y posición del precio respecto a ellos.
@@ -286,25 +326,25 @@ Regla crítica
 
 D. Execution Score (-2 a +2)
 
-Evalúa:
+Mide TIMING, no dirección: si la tesis ya existe por derivados y estructura, este score dice si el momento de entrar es ahora o no.
 
-RSI
-MACD
-SuperTrend
-Stoch RSI
-WaveTrend
+Se puntúa por CONTEO DE VOTOS sobre el TF primario, no por impresión general. Cada indicador emite exactamente un voto (+1 alcista / -1 bajista / 0 neutro):
 
-Interpretación:
+RSI — >55 alcista · <45 bajista · 45-55 neutro. Sobrecompra (>70) o sobreventa (<30) NO son votos de reversión por sí solas: en regime="trending" son continuación. Si el RSI está en extremo, el voto lo da el régimen.
+MACD — usa momentum_state, ya calculado: bullish_accelerating = +1 · bearish_accelerating = -1 · los estados *_decelerating = 0 (el momento se está agotando, no ha girado).
+SuperTrend — trend="UP" = +1 · "DOWN" = -1. El nivel (support/resistance) es la invalidación táctica, no el voto.
+Stoch RSI — cruce al alza desde <20 = +1 · cruce a la baja desde >80 = -1 · resto 0.
+WaveTrend — usa signal: oversold_cross_up = +1 · overbought_cross_down = -1 · overbought/oversold sin cruce = 0 (una condición extendida no es un trigger).
 
-+2 = timing limpio alcista
-+1 = timing aceptable
-0 = timing mixto
--1 = timing débil
--2 = timing claramente adverso
+Suma los cinco votos y traduce:
 
-Regla
++4 o +5 → +2 · +2 o +3 → +1 · -1 a +1 → 0 · -2 o -3 → -1 · -4 o -5 → -2
 
-Nunca domina sobre derivados ni estructura.
+Reglas duras:
+
+Nunca domina sobre derivados ni estructura. Un Execution +2 sobre una estructura -2 NO justifica comprar: significa "buen timing para una tesis que no existe".
+Si los cinco votos suman 0 PERO están repartidos (p.ej. +1,+1,0,-1,-1), no es lo mismo que cinco ceros: hay conflicto de timing. Refléjalo bajando convicción, aunque el score sea el mismo.
+technical[tf].momentum_alignment indica si la tendencia ponderada del TF coincide con SuperTrend. Si es false, estructura y timing discrepan: reduce convicción un nivel y NO abras posición a mercado — exige trigger explícito.
 
 <<<BLOCK:onchain>>>
 E. On-Chain Score (-2 a +2) — solo BTC
@@ -837,14 +877,46 @@ function buildPrompt(ctx) {
   // Se retiran SOLO del dataset del LLM; siguen en /api/analyze/payload y persistidos en
   // `analysis_tf_snapshot.volume_delta_buy_pct` para telemetría.
   // `last_candle_type`, `anomaly` y `source` SÍ se conservan: son estacionarios y sí informan.
+  // v8_0 · PODA POR FALTA DE DUEÑO. Auditado el 2026-07-27 cruzando las 651 claves del
+  // dataset contra las referencias del system: estos campos viajaban sin que ninguna regla
+  // los consumiera. El coste en tokens era menor (~1 %); el problema es el DOBLE CONTEO —
+  // el mismo hecho entrando por dos caminos con reglas distintas, que es lo que B1/H4 y los
+  // dos dedupes llevan tres sprints combatiendo. Todos siguen en /api/analyze/payload y en
+  // la BBDD: se retiran del dataset del LLM, no del sistema.
+  //
+  //  · `adx`        → su lectura ya viaja destilada en `regime` (que lo percentiliza) y en
+  //                   `trend` (que lo pondera y lo EXCLUDE en ranging). Dárselo crudo invita
+  //                   a re-derivar estructura con otra regla. Además `adx.regime`
+  //                   (trending/weak_trend/ranging) y `technical[tf].regime`
+  //                   (trending/ranging/high_volatility) son vocabularios distintos con el
+  //                   mismo nombre: dos dueños para "régimen".
+  //  · `trend_basis`→ constante ('ema_cross_swing') en los 4 TFs: metadato, no señal.
+  //  · `distance_to_nearest_*_pct` → la proximidad a niveles ya la resuelve el gating con el
+  //                   umbral normalizado por ATR (`near_level_pct_used`).
+  const TF_PRUNE = ['adx', 'trend_basis', 'distance_to_nearest_support_pct',
+    'distance_to_nearest_resistance_pct'];
   if (llmCtx.technical) {
     llmCtx.technical = Object.fromEntries(
       Object.entries(llmCtx.technical).map(([tf, data]) => {
-        if (!data?.volume_delta) return [tf, data];
-        const { buy_pressure_pct, sell_pressure_pct, ...vd } = data.volume_delta;
-        return [tf, { ...data, volume_delta: vd }];
+        if (!data) return [tf, data];
+        const clean = { ...data };
+        for (const k of TF_PRUNE) delete clean[k];
+        if (clean.volume_delta) {
+          const { buy_pressure_pct, sell_pressure_pct, ...vd } = clean.volume_delta;
+          clean.volume_delta = vd;
+        }
+        return [tf, clean];
       })
     );
+  }
+
+  // `timeframe_analysis.guidance` y `hierarchy_tiers` son INSTRUCCIONES dentro de los datos
+  // (texto imperativo, y además en inglés dentro de un prompt en español). El comportamiento
+  // debe cambiarse en un solo sitio: el system. Se conservan `conflict` y `reasoning`, que
+  // sí son hechos observados sobre este mercado.
+  if (llmCtx.timeframe_analysis) {
+    const { guidance, hierarchy_tiers, hierarchy_recommendation, ...ta } = llmCtx.timeframe_analysis;
+    llmCtx.timeframe_analysis = ta;
   }
 
   return '# DATASET\n' + JSON.stringify(llmCtx, null, 2);

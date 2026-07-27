@@ -75,6 +75,32 @@ export function supertrendLevel(st) {
  * @param {number[]} values
  * @returns {'rising'|'falling'|'flat'}
  */
+/**
+ * Volumen del último día cerrado frente a la MEDIANA de los 30 anteriores.
+ *
+ * Una cifra de rotación absoluta ("3,15 % de la capitalización") no dice si hoy hay mucha o
+ * poca participación PARA ESTE activo — habría que meter un umbral inventado para
+ * interpretarla, que es justo el error que la auditoría de umbrales destapó una y otra vez.
+ * Comparar la serie consigo misma no necesita ninguna constante nueva: 1.0 = un día normal,
+ * 2.0 = el doble de lo habitual.
+ *
+ * @param {Array<{volume:number}>|null} candles1D
+ * @returns {number|null}
+ */
+export function volumeVs30dMedian(candles1D) {
+  if (!Array.isArray(candles1D) || candles1D.length < 8) return null;
+  const vols = candles1D.map((c) => c?.volume).filter(Number.isFinite);
+  if (vols.length < 8) return null;
+  const last = vols[vols.length - 1];
+  const prev = vols.slice(-31, -1);           // hasta 30 días previos, excluyendo el actual
+  if (!prev.length) return null;
+  const sorted = [...prev].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  if (!(median > 0)) return null;
+  return parseFloat((last / median).toFixed(2));
+}
+
 function computeLinearTrend(values) {
   if (!values || values.length < 2) return 'flat';
   const n = values.length;
@@ -622,6 +648,16 @@ async function buildAnalyzeContext(coin, primaryTf) {
       ath_change_pct: coinMarket.ath_change_pct != null ? parseFloat(coinMarket.ath_change_pct.toFixed(2)) : null,
       atl_usd:        coinMarket.atl_usd != null ? parseFloat(coinMarket.atl_usd.toFixed(2)) : null,
       atl_change_pct: coinMarket.atl_change_pct != null ? parseFloat(coinMarket.atl_change_pct.toFixed(2)) : null,
+      // Rotación: volumen 24h como % de la capitalización. Mide cuánta convicción hay
+      // detrás del precio — un movimiento con rotación baja lo mueve poco dinero y se
+      // deshace igual de rápido.
+      turnover_pct: (coinMarket.volume_24h_usd && coinMarket.market_cap_usd)
+        ? parseFloat(((coinMarket.volume_24h_usd / coinMarket.market_cap_usd) * 100).toFixed(2))
+        : null,
+      // Participación RELATIVA A SÍ MISMA: volumen del último día partido por la mediana
+      // de los últimos 30 días. Un ratio absoluto de rotación no dice si hoy es mucho o
+      // poco PARA ESTE activo; este sí, y sin introducir ningún umbral nuevo.
+      volume_vs_30d_median: volumeVs30dMedian(candles['1D']),
     } : null,
 
     sentiment: {

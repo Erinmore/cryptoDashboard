@@ -158,3 +158,91 @@ describe('buildLlmRequest integra ambos', () => {
     expect(req.system.length).toBeGreaterThan(buildLlmRequest(solCtx, 'claude-opus-4-8').system.length);
   });
 });
+
+describe('buildPrompt — poda por falta de dueño (v8_0)', () => {
+  const ctx = () => ({
+    coin: 'SOL',
+    technical: {
+      '4h': {
+        trend: 'bullish',
+        regime: 'trending',
+        trend_basis: 'ema_cross_swing',
+        adx: { adx: 24.08, plus_di: 30.67, minus_di: 12.96, regime: 'weak_trend' },
+        distance_to_nearest_support_pct: 1.2,
+        distance_to_nearest_resistance_pct: 2.4,
+        bollinger_bands: { width_pct: 5.68, volatility_state: 'squeeze', position: 0.9 },
+        volume_delta: { buy_pressure_pct: 50.6, sell_pressure_pct: 49.4, anomaly: false },
+      },
+    },
+    timeframe_analysis: {
+      primary_tf: '4h', conflict: null, reasoning: 'No major conflict.',
+      hierarchy_recommendation: 'default',
+      hierarchy_tiers: { default: ['1D', '4h'] },
+      guidance: 'For conflicting signals: wait for alignment',
+    },
+  });
+
+  const dataset = (c) => JSON.parse(buildPrompt(c).match(/\{[\s\S]*\}/)[0]);
+
+  test('retira los campos sin consumidor en el prompt', () => {
+    const d = dataset(ctx())['technical']['4h'];
+    // adx: su lectura ya viaja destilada en `regime` y `trend`; darlo crudo invita a
+    // re-derivar estructura con otra regla (doble conteo).
+    expect(d.adx).toBeUndefined();
+    expect(d.trend_basis).toBeUndefined();          // constante: metadato, no señal
+    expect(d.distance_to_nearest_support_pct).toBeUndefined();     // lo resuelve el gating
+    expect(d.distance_to_nearest_resistance_pct).toBeUndefined();
+    expect(d.volume_delta.buy_pressure_pct).toBeUndefined();       // M2, ya existente
+  });
+
+  test('conserva lo que SÍ tiene regla', () => {
+    const d = dataset(ctx())['technical']['4h'];
+    expect(d.regime).toBe('trending');
+    expect(d.trend).toBe('bullish');
+    expect(d.bollinger_bands.volatility_state).toBe('squeeze');    // consumido por B4
+    expect(d.volume_delta.anomaly).toBe(false);
+  });
+
+  test('las instrucciones dentro de los datos se retiran; los hechos se quedan', () => {
+    const ta = dataset(ctx()).timeframe_analysis;
+    // `guidance` era texto imperativo (y en inglés) dentro del dataset: el comportamiento
+    // se cambia en el system, no en dos sitios que pueden divergir.
+    expect(ta.guidance).toBeUndefined();
+    expect(ta.hierarchy_tiers).toBeUndefined();
+    expect(ta.hierarchy_recommendation).toBeUndefined();
+    expect(ta.conflict).toBeNull();          // hecho observado: se conserva
+    expect(ta.reasoning).toBe('No major conflict.');
+  });
+
+  test('no revienta si faltan los bloques opcionales', () => {
+    expect(() => buildPrompt({ coin: 'SOL' })).not.toThrow();
+    expect(() => buildPrompt({ technical: { '4h': null } })).not.toThrow();
+  });
+});
+
+describe('buildSystemPrompt — las reglas nuevas consumen flags precalculados (v8_0)', () => {
+  const sys = () => {
+    const r = buildSystemPrompt({ coin: 'SOL', technical: {} });
+    return typeof r === 'string' ? r : r.system;
+  };
+
+  test('B4 lee volatility_state, no width_pct crudo', () => {
+    const s = sys();
+    expect(s).toContain('volatility_state');
+    // El umbral vive en el backend (terciles de su propia serie). Si el prompt fijara un
+    // corte absoluto de anchura sería una constante disfrazada: width_pct vale ~2.7 en 1h
+    // y ~33 en 1W para el mismo activo.
+    expect(s).not.toMatch(/width_pct\s*[<>]/);
+  });
+
+  test('la rúbrica de Execution es contable, no impresionista', () => {
+    const s = sys();
+    expect(s).toContain('CONTEO DE VOTOS');
+    expect(s).toContain('momentum_state');   // usa el flag ya calculado del MACD
+    expect(s).toContain('momentum_alignment');
+  });
+
+  test('el posicionamiento usa la medida normalizada contra el propio activo', () => {
+    expect(sys()).toContain('volume_vs_30d_median');
+  });
+});

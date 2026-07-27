@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { computeLevelDistances, supertrendLevel } from '../src/controllers/analysisController.js';
+import { computeLevelDistances, supertrendLevel, volumeVs30dMedian } from '../src/controllers/analysisController.js';
 
 describe('computeLevelDistances — strength del nivel más cercano', () => {
   const price = 100;
@@ -61,5 +61,34 @@ describe('supertrendLevel — nivel numérico según dirección', () => {
   test('null / banda ausente → null (sin crash)', () => {
     expect(supertrendLevel(null)).toBeNull();
     expect(supertrendLevel({ trend: 'UP', support: null, resistance: null })).toBeNull();
+  });
+});
+
+describe('volumeVs30dMedian (v8_0) — participación normalizada contra el propio activo', () => {
+  const velas = (vols) => vols.map((volume, i) => ({ t: i, open: 1, high: 1, low: 1, close: 1, volume }));
+
+  test('un día normal da ~1.0', () => {
+    expect(volumeVs30dMedian(velas(Array(31).fill(100)))).toBe(1);
+  });
+
+  test('el doble de lo habitual da ~2.0', () => {
+    expect(volumeVs30dMedian(velas([...Array(30).fill(100), 200]))).toBe(2);
+  });
+
+  test('usa la MEDIANA, así que un pico aislado no distorsiona la referencia', () => {
+    // Con media, el 5000 de un solo día inflaría la base y taparía el día alto real.
+    const v = [...Array(29).fill(100), 5000, 200];
+    expect(volumeVs30dMedian(velas(v))).toBe(2);
+  });
+
+  test('excluye el día en curso del cálculo de la mediana', () => {
+    // Si el propio día contara en su referencia, el ratio tendería artificialmente a 1.
+    expect(volumeVs30dMedian(velas([...Array(30).fill(10), 100]))).toBe(10);
+  });
+
+  test('datos insuficientes o corruptos → null (no se inventa la referencia)', () => {
+    expect(volumeVs30dMedian(velas([100, 200]))).toBeNull();
+    expect(volumeVs30dMedian(null)).toBeNull();
+    expect(volumeVs30dMedian(velas(Array(31).fill(0)))).toBeNull(); // mediana 0
   });
 });

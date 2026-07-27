@@ -1341,3 +1341,42 @@ describe('calculateBollingerBands — campos de metadata', () => {
     expect(result.window).toBe(20);
   });
 });
+
+describe('Bollinger — volatility_state (v8_0)', () => {
+  test('sitúa la anchura en su propia distribución, no en un umbral absoluto', () => {
+    // Serie que se COMPRIME al final: la anchura actual cae en el tercil bajo de su historia.
+    const closes = [];
+    for (let i = 0; i < 60; i++) closes.push(100 + (i % 2 ? 8 : -8));   // muy ancha
+    for (let i = 0; i < 40; i++) closes.push(100 + (i % 2 ? 0.2 : -0.2)); // comprimida
+    const bb = calculateBollingerBands(closes);
+    expect(bb.volatility_state).toBe('squeeze');
+    expect(bb.width_pctile).toBeLessThan(50);
+  });
+
+  test('una expansión al final se etiqueta expansion', () => {
+    const closes = [];
+    for (let i = 0; i < 60; i++) closes.push(100 + (i % 2 ? 0.2 : -0.2));
+    for (let i = 0; i < 40; i++) closes.push(100 + (i % 2 ? 9 : -9));
+    const bb = calculateBollingerBands(closes);
+    expect(bb.volatility_state).toBe('expansion');
+  });
+
+  test('la escala es relativa: la MISMA anchura puede ser squeeze o expansion', () => {
+    // El mismo width_pct absoluto cae en terciles opuestos según su historia — que es
+    // exactamente por lo que un umbral fijo (tipo "squeeze si width<2%") no sirve.
+    const tranquila = Array.from({ length: 100 }, (_, i) => 100 + (i % 2 ? 1 : -1));
+    const agitada = [];
+    for (let i = 0; i < 80; i++) agitada.push(100 + (i % 2 ? 10 : -10));
+    for (let i = 0; i < 20; i++) agitada.push(100 + (i % 2 ? 1 : -1));
+    const a = calculateBollingerBands(tranquila);
+    const b = calculateBollingerBands(agitada);
+    expect(b.volatility_state).toBe('squeeze');
+    expect(a.volatility_state).not.toBe('squeeze');
+  });
+
+  test('sin muestra suficiente no inventa etiqueta', () => {
+    const bb = calculateBollingerBands(Array.from({ length: 21 }, (_, i) => 100 + i * 0.1));
+    expect(bb.volatility_state).toBeNull();
+    expect(bb.width_pct).toBeGreaterThan(0); // el dato base sigue estando
+  });
+});
