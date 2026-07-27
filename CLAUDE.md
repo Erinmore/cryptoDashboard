@@ -19,6 +19,30 @@ El documento de referencia arquitectónica es [BLUEPRINT.md](./doc/BLUEPRINT.md)
 
 ---
 
+## 🧊 DESARROLLO CONGELADO hasta ~2026-08-10 — LEER ANTES DE TOCAR NADA
+
+**La ruta de decisión está congelada.** Desde que se automatizó la recogida se acumularon ~10
+versiones de prompt y 5+ puntos cero, con saldo de **0 días de datos evaluables**: cada mejora
+tiraba la muestra, y sin muestra el único avance posible era inspeccionar código, que producía
+más hallazgos, que forzaban otro punto cero. El bucle se retroalimentaba.
+
+**NO tocar durante la congelación:** `services/anthropicService.js` (prompt), `utils/gating.js`,
+`utils/expectedScores.js`, `services/decisionGates.js`, `services/analysisValidator.js`, ni
+ninguna constante de umbral — **por muy mal calibrada que parezca**.
+
+**Sí se puede:** medición que no altera la decisión, telemetría, scripts de auditoría, y bugs
+que **corrompan o pierdan datos**.
+
+**Criterio ante la duda:** si el cambio movería `PROMPT_VERSION` o cambiaría qué decide el
+sistema ante el mismo input → se ANOTA en la tabla de hallazgos de SESSION_STATE.md §0 y se
+decide en el checkpoint. No se aplica.
+
+El motivo no es burocrático: el instrumento mejoró mucho y está medido, pero la calidad de las
+DECISIONES sigue con n=0 —nunca se ha reportado un win-rate— y eso solo lo arregla dejar correr
+la muestra. Ver SESSION_STATE.md §0.
+
+---
+
 ## Stack
 
 | Capa | Tecnología |
@@ -833,6 +857,7 @@ CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `-
 
 ## Lo que NO hacer
 
+- **No tocar el prompt ni el gating hasta el checkpoint (~2026-08-10)** — ver §DESARROLLO CONGELADO arriba y SESSION_STATE.md §0. Los hallazgos se anotan, no se aplican.
 - No cambiar PixiJS a v8 — se eligió v7.4.x deliberadamente
 - No añadir TypeScript — el proyecto usa JS puro con tipos via JSDoc si es necesario
 - No usar `require()` — solo ES modules
