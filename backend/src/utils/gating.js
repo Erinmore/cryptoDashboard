@@ -50,7 +50,15 @@ const NEAR_LEVEL_PCT = 1.5; // fallback fijo si no hay ATR del TF primario
 // primario ≈ el 1.5% histórico para BTC 4h (ATR%≈1), acotado para no degenerar.
 const NEAR_LEVEL_ATR_MULT = 1.5;
 const NEAR_LEVEL_MIN_PCT = 0.5;
-const NEAR_LEVEL_MAX_PCT = 3.0;
+
+// Techo POR TF (auditoría de umbrales 2026-07-26, hallazgo T5). El tope único de 3 % se
+// eligió pensando en el 4h, pero el ATR% mediano de SOL es 6,26 % en 1D y 20,57 % en 1W:
+// el recorte saturaba el 100 % de las ventanas en esos TFs (99,6 % en BTC, 100 % en ETH),
+// devolviendo siempre 3 %. Es decir, la "normalización por volatilidad" de la Fase 4 era
+// en 1D/1W una constante disfrazada, y en 4h mordía el 31 % del tiempo. El techo tiene que
+// escalar con el horizonte: un movimiento del 3 % es enorme en 1h y ruido en 1W.
+const NEAR_LEVEL_MAX_PCT_BY_TF = { '1h': 2.0, '4h': 4.0, '1D': 10.0, '1W': 25.0 };
+const NEAR_LEVEL_MAX_PCT_DEFAULT = 3.0;
 
 // Tolerancias de zona BORDERLINE (telemetría, hallazgo 9): un veto que se activa o se
 // queda a un tick de activarse por décimas es una decisión de borde — se señala en
@@ -59,11 +67,17 @@ const NEAR_LEVEL_MAX_PCT = 3.0;
 const OI_BORDERLINE_PT = 0.25;      // |change_24h_pct − umbral| <= 0.25 puntos
 const LEVEL_BORDERLINE_FACTOR = 1.25; // nivel fuerte entre 1× y 1.25× del umbral
 
-/** Umbral efectivo de cercanía a nivel para un ATR% dado (fallback al fijo). */
-export function dynamicNearLevelPct(atrPct) {
+/**
+ * Umbral efectivo de cercanía a nivel para un ATR% dado (fallback al fijo si no hay ATR).
+ * @param {number|null} atrPct - ATR% del TF primario
+ * @param {string} [tf] - TF primario; determina el techo del recorte (ver T5). Sin TF se
+ *   usa el tope histórico de 3 % para no cambiar el comportamiento de los llamantes viejos.
+ */
+export function dynamicNearLevelPct(atrPct, tf = null) {
   if (!Number.isFinite(atrPct) || atrPct <= 0) return NEAR_LEVEL_PCT;
+  const maxPct = NEAR_LEVEL_MAX_PCT_BY_TF[tf] ?? NEAR_LEVEL_MAX_PCT_DEFAULT;
   const v = NEAR_LEVEL_ATR_MULT * atrPct;
-  return parseFloat(Math.max(NEAR_LEVEL_MIN_PCT, Math.min(NEAR_LEVEL_MAX_PCT, v)).toFixed(2));
+  return parseFloat(Math.max(NEAR_LEVEL_MIN_PCT, Math.min(maxPct, v)).toFixed(2));
 }
 const MIN_TOUCHES = 3;      // veto: nivel fuerte = 3+ toques
 const CONTRADICTION_MIN_TOUCHES = 2; // contradicción: nivel con algo de historial (>=2)
@@ -158,7 +172,7 @@ export function nearStrongLevel(levels, price, minTouches = MIN_TOUCHES, maxDist
 export function computeVetos({ technical, openInterest, currentPrice, primaryTf }) {
   const cvd1D = technical?.['1D']?.cvd ?? null;
   const primarySr = technical?.[primaryTf]?.support_resistance ?? null;
-  const nearPct = dynamicNearLevelPct(technical?.[primaryTf]?.atr?.pct);
+  const nearPct = dynamicNearLevelPct(technical?.[primaryTf]?.atr?.pct, primaryTf);
 
   const oiChange = openInterest?.change_24h_pct ?? null;
   const cvd1DPresent = cvd1D?.divergence != null;
@@ -283,7 +297,7 @@ export function computeContradictions({ technical, openInterest, currentPrice, p
   //    normalizado por ATR del TF primario (antes 1.5% fijo — hallazgos 7/14).
   //    H1: exigir toques evita que cualquier pivote menor cercano dispare la contradicción.
   const sr = pTf?.support_resistance ?? null;
-  const nearPct = dynamicNearLevelPct(pTf?.atr?.pct);
+  const nearPct = dynamicNearLevelPct(pTf?.atr?.pct, primaryTf);
   const nearSup = nearStrongLevel(sr?.supports, currentPrice, CONTRADICTION_MIN_TOUCHES, nearPct);
   const nearRes = nearStrongLevel(sr?.resistances, currentPrice, CONTRADICTION_MIN_TOUCHES, nearPct);
   if (nearSup.found || nearRes.found) {

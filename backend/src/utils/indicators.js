@@ -8,6 +8,7 @@ import {
   SUPERTREND_ATR_PERIOD, SUPERTREND_MULTIPLIER, SUPERTREND_ADAPTIVE_EMA,
   REGIME_ATR_MULTIPLIER,
 } from '../config/constants.js';
+import { bucketByPercentile, rollingSums, quantile } from './percentiles.js';
 
 // ─── RSI (Wilder's smoothing) ─────────────────────────────────────────────────
 
@@ -211,8 +212,17 @@ export function calculateFibonacci(high, low, levels = FIB_LEVELS) {
 
 // ─── ATR (Average True Range) ─────────────────────────────────────────────────
 
-export function calculateATR(candles, period = 14) {
-  if (candles.length < period + 1) return null;
+/**
+ * Serie completa del ATR de Wilder, un valor por vela desde que hay datos suficientes.
+ *
+ * Existe para poder situar el ATR actual en su propia distribución (detectMarketRegime)
+ * sin recalcular el indicador desde cero para cada corte, que era O(n²). `calculateATR`
+ * es el último elemento de esta serie, así que ambos no pueden divergir.
+ *
+ * @returns {Array<{idx:number, atr:number}>} idx = índice en `candles`
+ */
+export function calculateATRSeries(candles, period = 14) {
+  if (candles.length < period + 1) return [];
 
   const trs = [];
   for (let i = 1; i < candles.length; i++) {
@@ -221,12 +231,20 @@ export function calculateATR(candles, period = 14) {
     trs.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
   }
 
-  // Wilder smoothing
+  const out = [];
   let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  out.push({ idx: period, atr });                 // trs[i] corresponde a candles[i+1]
   for (let i = period; i < trs.length; i++) {
-    atr = (atr * (period - 1) + trs[i]) / period;
+    atr = (atr * (period - 1) + trs[i]) / period; // Wilder smoothing
+    out.push({ idx: i + 1, atr });
   }
-  return parseFloat(atr.toFixed(2));
+  return out;
+}
+
+export function calculateATR(candles, period = 14) {
+  const series = calculateATRSeries(candles, period);
+  if (series.length === 0) return null;
+  return parseFloat(series[series.length - 1].atr.toFixed(2));
 }
 
 // ─── Stochastic RSI ───────────────────────────────────────────────────────────
@@ -355,7 +373,15 @@ export function calculateWaveTrend(candles, n1 = WT_N1, n2 = WT_N2) {
 
 // ─── ADX + DMI ────────────────────────────────────────────────────────────────
 
-export function calculateADX(candles, period = ADX_PERIOD) {
+/**
+ * Núcleo compartido del ADX: recorre las velas una sola vez y devuelve la SERIE de ADX
+ * además del estado final de los suavizados. `calculateADX` (escalar público) y
+ * `calculateADXSeries` (distribución para el régimen por percentil) salen ambos de aquí,
+ * así que no pueden divergir ni hay que recalcular O(n²) para situar el valor actual.
+ *
+ * @returns {{series:number[], plusDI:number, minusDI:number}|null}
+ */
+function adxCore(candles, period) {
   if (candles.length < period * 2 + 1) return null;
 
   const trArr = [], plusDM = [], minusDM = [];
@@ -395,14 +421,34 @@ export function calculateADX(candles, period = ADX_PERIOD) {
 
   if (dxArr.length < period) return null;
 
-  // ADX = Wilder smoothing del DX
+  // ADX = Wilder smoothing del DX. Se guarda cada paso: el último es el ADX actual y el
+  // conjunto es la distribución contra la que se mide el régimen.
+  const series = [];
   let adx = dxArr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  series.push(adx);
   for (let i = period; i < dxArr.length; i++) {
     adx = (adx * (period - 1) + dxArr[i]) / period;
+    series.push(adx);
   }
 
-  const plusDI = smTR > 0 ? (smPlusDM / smTR) * 100 : 0;
-  const minusDI = smTR > 0 ? (smMinusDM / smTR) * 100 : 0;
+  return {
+    series,
+    plusDI: smTR > 0 ? (smPlusDM / smTR) * 100 : 0,
+    minusDI: smTR > 0 ? (smMinusDM / smTR) * 100 : 0,
+  };
+}
+
+/** Serie histórica de ADX (para situar el valor actual en su propia distribución). */
+export function calculateADXSeries(candles, period = ADX_PERIOD) {
+  return adxCore(candles, period)?.series ?? [];
+}
+
+export function calculateADX(candles, period = ADX_PERIOD) {
+  const core = adxCore(candles, period);
+  if (!core) return null;
+
+  const adx = core.series[core.series.length - 1];
+  const { plusDI, minusDI } = core;
 
   let regime;
   if (adx >= ADX_TRENDING_THRESHOLD) regime = 'trending';
@@ -566,6 +612,36 @@ export function calculateCVD(candles) {
   // reconstruir una serie acumulada con base consistente (ver cvdSummary).
   const lastCandleDelta = series.length >= 2 ? series[series.length - 1] - series[series.length - 2] : series[0];
 
+  // Fuerza AUTO-NORMALIZADA (auditoría de umbrales 2026-07-26, hallazgo T3).
+  //
+  // Antes se bucketizaba |cvd_delta_vs_volume_pct| con cortes fijos 2 %/8 % iguales para los
+  // cuatro TFs. Medido sobre ~830 ventanas por TF y las tres monedas, el corte del 2 % caía
+  // en el percentil ~52 del 4h (SOL 52,5 · BTC 53,2 · ETH 50,3) — partía la muestra por la
+  // mitad sin discriminar — y el bucket "strong" salía al 0,0 % en 4h, 1D y 1W: rama muerta.
+  // El ratio se aplasta al subir de TF porque en ventanas largas el flujo neto se cancela.
+  //
+  // Ahora el corte sale de la propia serie: se reconstruye la distribución de la MISMA
+  // magnitud sobre ventanas rodantes del array disponible y se clasifica por terciles.
+  // Con eso el reparto es ~33/33/33 en todo TF y moneda, sin tablas que mantener.
+  const deltas = [];
+  for (let i = 0; i < series.length; i++) {
+    deltas.push(i === 0 ? series[0] : series[i] - series[i - 1]);
+  }
+  const volumes = candles.map((c) => c.volume);
+  const dSums = rollingSums(deltas, DIVERGENCE_WINDOW);
+  const vSums = rollingSums(volumes, DIVERGENCE_WINDOW);
+  const ratioSample = dSums
+    .map((d, i) => (vSums[i] > 0 ? Math.abs(d / vSums[i]) * 100 : null))
+    .filter((v) => v != null);
+
+  // Suelo absoluto: por debajo del 0,25 % del volumen de la ventana el desequilibrio es
+  // ruido aunque su percentil sea alto. Sin él, un mercado muerto produciría "strong" por
+  // ser el tercio superior de casi nada (ver percentiles.js).
+  const strength = bucketByPercentile(Math.abs(cvdDeltaVsVolumePct), ratioSample, {
+    labels: ['marginal', 'moderate', 'strong'],
+    absoluteFloor: 0.25,
+  });
+
   return {
     value: parseFloat(current.toFixed(2)),
     last_candle_delta: parseFloat(lastCandleDelta.toFixed(2)),
@@ -575,6 +651,11 @@ export function calculateCVD(candles) {
     price_change_pct_window: parseFloat(priceChangePct.toFixed(2)),
     cvd_delta_window: parseFloat(cvdDelta.toFixed(2)),
     cvd_delta_vs_volume_pct: parseFloat(cvdDeltaVsVolumePct.toFixed(2)),
+    // Fuerza + su trazabilidad: percentil que ocupa y cortes vigentes en esta serie. Los dos
+    // últimos son telemetría — permiten auditar la calibración a posteriori sin re-fetchear.
+    cvd_strength: strength.label,
+    cvd_strength_pctile: strength.percentile,
+    cvd_strength_cuts: strength.cuts,
     source: hasRealTaker ? 'taker_real' : 'heuristic',
   };
 }
@@ -709,41 +790,128 @@ export function detectMarketRegime(candles, closes) {
   });
   const atrSma = atrValues.reduce((a, b) => a + b, 0) / atrValues.length;
 
-  if (atrCurrent > atrSma * REGIME_ATR_MULTIPLIER) return 'high_volatility';
-  if (adxResult.adx >= ADX_TRENDING_THRESHOLD) return 'trending';
-  if (adxResult.adx <= ADX_RANGING_THRESHOLD) return 'ranging';
-  return 'weak_trend';
+  // ── Volatilidad: percentil del ATR% contra su propia historia ──────────────
+  //
+  // Antes: `atrCurrent > atrSma * REGIME_ATR_MULTIPLIER` (multiplicador 2). Medido en la
+  // auditoría de umbrales (T1), `high_volatility` salía al 0,0 % en las DOCE combinaciones
+  // moneda × TF, sobre ~9.000 ventanas: rama muerta. Y no por un umbral alto, sino por un
+  // error de planteamiento — el ATR de Wilder es él mismo una media suavizada, así que está
+  // autocorrelacionado con su propia SMA(20) y el cociente no llega a despegarse de 1.
+  //
+  // Ahora se compara el ATR% actual contra la distribución del ATR% de la propia ventana:
+  // "alta volatilidad" = decil superior de lo que este activo hace en este TF. Definición
+  // relativa y honesta, y no depende de la escala del activo.
+  const atrPctSeries = [];
+  for (let i = ADX_PERIOD + 1; i < candles.length; i++) {
+    const a = calculateATR(candles.slice(0, i + 1));
+    const c = candles[i].close;
+    if (a !== null && c > 0) atrPctSeries.push(a / c * 100);
+  }
+  const lastClose = candles[candles.length - 1].close;
+  const atrPctNow = lastClose > 0 ? atrCurrent / lastClose * 100 : null;
+  const volCut = quantile(atrPctSeries, 0.90);
+  const volMedian = quantile(atrPctSeries, 0.50);
+  // DOS condiciones, no una. El percentil solo no basta: en un mercado plano el decil
+  // superior sigue siendo casi-nada y se etiquetaría como "alta volatilidad" por pura
+  // posición relativa (lo destapó el test de mercado lateral sintético). Se exige además
+  // un salto REAL sobre la mediana — expansión de al menos 1,5×. Es un criterio de escala
+  // libre: no fija un ATR% absoluto, que dependería del activo.
+  const VOL_EXPANSION_MULT = 1.5;
+  if (atrPctNow != null && volCut != null && volMedian > 0 && atrPctSeries.length >= 20
+      && atrPctNow >= volCut && atrPctNow >= volMedian * VOL_EXPANSION_MULT) {
+    return 'high_volatility';
+  }
+
+  // ── Tendencia: percentil del ADX, con los cortes clásicos como suelo ───────
+  //
+  // Los cortes 25/20 de Wilder caían en el percentil ~50 (T2): "trending" era una moneda al
+  // aire, y eso decide si computeTrend pondera ADX o no. Se pasa a terciles de la propia
+  // distribución, PERO conservando el criterio absoluto como suelo: un ADX de 12 no es
+  // tendencia por muy alto que quede respecto a una racha plana. Así el campo discrimina
+  // sin dejar de significar lo que significa en cualquier manual.
+  const adxSeries = [];
+  for (let i = ADX_PERIOD * 2; i < candles.length; i++) {
+    const r = calculateADX(candles.slice(0, i + 1));
+    if (r && Number.isFinite(r.adx)) adxSeries.push(r.adx);
+  }
+  const bucket = bucketByPercentile(adxResult.adx, adxSeries, {
+    labels: ['ranging', 'weak_trend', 'trending'],
+    absoluteFloor: ADX_RANGING_THRESHOLD,
+  });
+  if (bucket.label === 'trending' && adxResult.adx < ADX_RANGING_THRESHOLD) return 'weak_trend';
+  return bucket.label
+    ?? (adxResult.adx >= ADX_TRENDING_THRESHOLD ? 'trending'
+      : adxResult.adx <= ADX_RANGING_THRESHOLD ? 'ranging' : 'weak_trend');
 }
 
 // ─── Support & Resistance ─────────────────────────────────────────────────────
 
+/**
+ * Pivotes fractales: máximos/mínimos locales estrictos con `lb` velas a cada lado.
+ * Mismo criterio que `detectSwings` de smc.js (lookback=2), replicado aquí para no crear
+ * una dependencia circular entre utils.
+ */
+function pivotPrices(candles, lb = 2) {
+  const out = [];
+  for (let i = lb; i < candles.length - lb; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = i - lb; j <= i + lb; j++) {
+      if (j === i) continue;
+      if (candles[j].high >= candles[i].high) isHigh = false;
+      if (candles[j].low <= candles[i].low) isLow = false;
+    }
+    if (isHigh) out.push(candles[i].high);
+    if (isLow) out.push(candles[i].low);
+  }
+  return out;
+}
+
+/**
+ * Soportes y resistencias por clustering de PIVOTES.
+ *
+ * Reescrito en la auditoría de umbrales (2026-07-26, hallazgo T4). La versión anterior tenía
+ * dos defectos que se reforzaban entre sí y hacían que `touches` no midiera lo que su nombre
+ * promete:
+ *
+ *  1. Alimentaba el `high` Y el `low` de TODAS las velas, sin filtrar. No eran pivotes: eran
+ *     los extremos de cada barra. En una ventana de 50 velas son 100 precios repartidos por
+ *     el rango, así que cualquier banda del 0,5 % recogía 10-20 por pura densidad. `touches`
+ *     acababa midiendo TIEMPO DE PERMANENCIA en la banda, no rechazos del nivel.
+ *  2. El cluster se re-centraba con media incremental sobre precios ordenados ascendentemente,
+ *     así que el ancla derivaba hacia arriba y admitía precios cada vez más lejos del origen
+ *     (encadenamiento). Medido: 100 candidatos colapsaban en 8 clusters y el 88 % de ellos
+ *     excedían su propia tolerancia, hasta ×2,2.
+ *
+ * Consecuencia: el 89-92 % de los niveles superaban el filtro de "3+ toques" en 4h — el
+ * criterio de "nivel fuerte" del veto no seleccionaba nada. Ahora se agrupan solo pivotes
+ * fractales, con ancla FIJA (sin deriva), sobre una ventana más larga que compensa que los
+ * pivotes sean más escasos. Con eso "3+ toques" pasa a seleccionar el ~12 % superior.
+ */
 export function calculateSupportResistance(candles, lookback = SR_LOOKBACK, minTouches = SR_MIN_TOUCHES, tolerancePct = SR_TOLERANCE_PCT) {
   const slice = candles.slice(-lookback);
-  const levels = [];
+  if (slice.length === 0) return { supports: [], resistances: [] };
 
-  for (const candle of slice) {
-    levels.push(candle.high);
-    levels.push(candle.low);
-  }
-
-  // Ordenar candidatos antes del clustering: garantiza que niveles próximos en
-  // precio se evalúan consecutivamente y elimina la dependencia del orden temporal.
-  // Antes el clustering era greedy y el primer high del slice anclaba el cluster.
-  levels.sort((a, b) => a - b);
+  // Solo pivotes: un "toque" pasa a ser un rechazo local real, no una vela cualquiera
+  // cuyo extremo cayó dentro de la banda.
+  const levels = pivotPrices(slice).sort((a, b) => a - b);
 
   const grouped = [];
   for (const price of levels) {
+    // Ancla FIJA: la pertenencia se mide siempre contra el primer precio del cluster, así
+    // que su anchura total no puede superar la tolerancia. Con media móvil el cluster
+    // "caminaba" y encadenaba precios arbitrariamente lejanos.
     const existing = grouped.find(g =>
-      Math.abs(g.price - price) / g.price <= tolerancePct
+      Math.abs(g.anchor - price) / g.anchor <= tolerancePct
     );
     if (existing) {
       existing.touches++;
-      // Media incremental para no sesgar hacia el primer toque.
-      existing.price = existing.price + (price - existing.price) / existing.touches;
+      existing.sum += price;
     } else {
-      grouped.push({ price, touches: 1 });
+      grouped.push({ anchor: price, sum: price, touches: 1 });
     }
   }
+  // El precio representativo es la media de sus miembros; el ancla solo define pertenencia.
+  for (const g of grouped) g.price = g.sum / g.touches;
 
   const currentPrice = slice[slice.length - 1].close;
 

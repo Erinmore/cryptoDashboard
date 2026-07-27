@@ -49,6 +49,15 @@ rsync -az --delete backend/src/ "$PI_HOST:$PI_DIR/backend/src/"
 echo "▶ Sync package manifests..."
 rsync -az backend/package.json backend/package-lock.json "$PI_HOST:$PI_DIR/backend/"
 
+# Scripts operativos. Antes se quedaban fuera del deploy y sólo llegaban a la Pi por un
+# rsync manual de una vez: la recogida de datos (collect*.sh), el backup y auditStats
+# quedaban congelados en la versión del día que se copiaron, sin que nada lo delatara
+# (revisión crítica 2026-07-26, hallazgo H3). Sin --delete: la Pi puede tener utilidades
+# propias que el repo no conoce.
+echo "▶ Sync scripts operativos..."
+rsync -az scripts/ "$PI_HOST:$PI_DIR/scripts/"
+rsync -az backend/scripts/ "$PI_HOST:$PI_DIR/backend/scripts/"
+
 if [ "$INSTALL_DEPS" = "1" ]; then
   echo "▶ Reinstalando deps del backend (npm ci)..."
   ssh "$PI_HOST" 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd '"$PI_DIR"'/backend && npm ci --omit=dev'

@@ -20,21 +20,24 @@ import { calculateVolumeProfile } from '../utils/volumeProfile.js';
 import { calculateSMC } from '../utils/smc.js';
 import { RSI_OVERBOUGHT, RSI_OVERSOLD, VOLUME_PROFILE_VALID_THRESHOLD_PCT, TIMEFRAME_MINUTES } from '../config/constants.js';
 
-/** Fuerza del desequilibrio CVD según |cvd_delta_vs_volume_pct| (regla del prompt). */
-function cvdStrength(pct) {
-  if (pct == null) return null;
-  const a = Math.abs(pct);
-  if (a < 2) return 'marginal';
-  if (a <= 8) return 'moderate';
-  return 'strong';
-}
+// `cvdStrength` vivía aquí con cortes fijos 2 %/8 %. Se retiró en la auditoría de umbrales
+// (2026-07-26, T3): el corte caía sobre la mediana del 4h y dejaba "strong" vacío por encima
+// de 1h. Ahora la etiqueta la calcula `calculateCVD` por percentiles de la propia serie.
 
-/** Lado del precio respecto a un nivel: 'above' / 'below' / 'at' (dentro de 0.05%). */
-function priceSide(price, level) {
+/**
+ * Lado del precio respecto a un nivel: 'above' / 'below' / 'at'.
+ *
+ * La banda neutral se expresa en fracción del ATR% del TF, no en un 0,05 % fijo: medido en la
+ * auditoría (T6), con el corte fijo el estado 'at' salía al 0,0-2,5 % según TF — el campo era
+ * binario de facto y la frontera, arbitraria. Un cuarto del ATR es una banda comparable entre
+ * TFs y activos. Sin ATR se cae al 0,05 % de antes.
+ */
+function priceSide(price, level, atrPct = null) {
   if (price == null || level == null) return null;
+  const band = Number.isFinite(atrPct) && atrPct > 0 ? atrPct * 0.25 : 0.05;
   const diffPct = ((price - level) / level) * 100;
-  if (diffPct > 0.05) return 'above';
-  if (diffPct < -0.05) return 'below';
+  if (diffPct > band) return 'above';
+  if (diffPct < -band) return 'below';
   return 'at';
 }
 
@@ -86,16 +89,28 @@ export function computeIndicators(candles, timeframe) {
   // Precio de referencia (último cierre) — usado por varios flags precalculados.
   const currentPrice = closes[closes.length - 1];
 
+  // ── ATR (volatilidad realizada del TF) ───────────────────────
+  // Auditoría #2 (hallazgos 7/14/16): expone la volatilidad del TF para (a) normalizar
+  // el umbral de cercanía a niveles del gating (antes 1.5% fijo para BTC y SOL por igual)
+  // y (b) dar un proxy de régimen de volatilidad a activos sin DVOL (SOL).
+  // Se calcula ANTES que CVD/VWAP/VolumeProfile porque `priceSide` lo usa para dimensionar
+  // su banda neutral (auditoría de umbrales T6).
+  const atrValue = calculateATR(candles);
+  const atr = atrValue !== null ? {
+    value: atrValue,
+    pct: currentPrice ? parseFloat((atrValue / currentPrice * 100).toFixed(2)) : null,
+    period: 14,
+  } : null;
+
   // ── CVD ──────────────────────────────────────────────────────
   // divergence_window_candles no es comparable directamente entre TFs (20 velas
   // de 1h ≈ 20h, 20 velas de 1W ≈ 140 días) — se añade el equivalente en minutos.
-  // cvd_strength precalcula la fuerza del desequilibrio (antes el LLM bucketizaba
-  // cvd_delta_vs_volume_pct a mano): <2% marginal, 2-8% moderate, >8% strong.
+  // `cvd_strength` lo calcula ya `calculateCVD` por percentiles de la propia serie
+  // (auditoría de umbrales T3); aquí solo se enriquece con la equivalencia temporal.
   const cvdRaw = calculateCVD(candles);
   const cvd = cvdRaw ? {
     ...cvdRaw,
     divergence_window_minutes: cvdRaw.divergence_window_candles * TIMEFRAME_MINUTES[timeframe],
-    cvd_strength: cvdStrength(cvdRaw.cvd_delta_vs_volume_pct),
   } : null;
 
   // ── VWAP ─────────────────────────────────────────────────────
@@ -103,7 +118,7 @@ export function computeIndicators(candles, timeframe) {
   const vwapRaw = calculateVWAP(candles);
   const vwap = vwapRaw ? {
     ...vwapRaw,
-    price_vs_vwap: priceSide(currentPrice, vwapRaw.value),
+    price_vs_vwap: priceSide(currentPrice, vwapRaw.value, atr?.pct),
   } : null;
 
   // ── Fibonacci ────────────────────────────────────────────────
@@ -136,7 +151,7 @@ export function computeIndicators(candles, timeframe) {
       valid: vpValid,
       invalid_reason: vpValid ? null : 'poc_distance_pct_exceeds_threshold',
       // Flags precalculados (antes el LLM comparaba precio vs POC/VAH/VAL a mano):
-      price_vs_poc: priceSide(currentPrice, vpRaw.poc),
+      price_vs_poc: priceSide(currentPrice, vpRaw.poc, atr?.pct),
       // Excursión: precio >2% por encima del VAH (alcista) o >2% por debajo del VAL (bajista).
       excursion: vpRaw.vah != null && currentPrice > vpRaw.vah * 1.02 ? 'above_vah'
                : vpRaw.val != null && currentPrice < vpRaw.val * 0.98 ? 'below_val'
@@ -159,17 +174,6 @@ export function computeIndicators(candles, timeframe) {
       ? parseFloat(((currentPrice - bos.broken_swing_price) / bos.broken_swing_price * 100).toFixed(2))
       : null;
   }
-
-  // ── ATR (volatilidad realizada del TF) ───────────────────────
-  // Auditoría #2 (hallazgos 7/14/16): expone la volatilidad del TF para (a) normalizar
-  // el umbral de cercanía a niveles del gating (antes 1.5% fijo para BTC y SOL por igual)
-  // y (b) dar un proxy de régimen de volatilidad a activos sin DVOL (SOL).
-  const atrValue = calculateATR(candles);
-  const atr = atrValue !== null ? {
-    value: atrValue,
-    pct: currentPrice ? parseFloat((atrValue / currentPrice * 100).toFixed(2)) : null,
-    period: 14,
-  } : null;
 
   // ── Market Regime ────────────────────────────────────────────
   const regime = detectMarketRegime(candles, closes);

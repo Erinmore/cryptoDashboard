@@ -853,7 +853,7 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
 /**
  * Builds the array of TF snapshot rows from context.technical.
  */
-function buildTfSnapshots(analysisId, technical) {
+export function buildTfSnapshots(analysisId, technical) {
   const snapshots = [];
   for (const [tf, data] of Object.entries(technical ?? {})) {
     if (!data) continue;
@@ -898,6 +898,11 @@ function buildTfSnapshots(analysisId, technical) {
       volume_delta_buy_pct: vd?.buy_pressure_pct ?? null,
       cvd_trend:            cvd?.trend ?? null,
       cvd_divergence:       cvd?.divergence ?? null,
+      // Covariable decisiva: con cvd_strength="marginal" en el TF primario el Volume Flow
+      // Score se anula y Comprar/Vender son inalcanzables. Sin persistirla no se puede
+      // separar "eligió Esperar" de "no pudo decir otra cosa" (revisión 2026-07-26, C3).
+      cvd_strength:            cvd?.cvd_strength ?? null,
+      cvd_delta_vs_volume_pct: cvd?.cvd_delta_vs_volume_pct ?? null,
       vwap_trend:           vwap?.trend ?? null,
       vwap_divergence:      vwap?.divergence ?? null,
 

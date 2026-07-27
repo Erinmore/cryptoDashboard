@@ -6,7 +6,8 @@
  * Llamado desde scripts/runSystem.sh (con confirmación previa en el menú).
  *
  *   history   → history_series (CVD/VWAP/funding/oi/lsr/liq/fear_greed)
- *   analyses  → analyses + analysis_tf_snapshot + analysis_liquidation_snapshot + analysis_outcome
+ *   analyses  → analyses + analysis_tf_snapshot + analysis_liquidation_snapshot +
+ *               analysis_fvg_snapshot + analysis_outcome
  *   all       → ambos
  *
  * Nota: si el backend está corriendo mantiene en memoria las series ya hidratadas
@@ -49,7 +50,10 @@ if (target === 'history' || target === 'all') {
 }
 if (target === 'analyses' || target === 'all') {
   // Orden hijo→padre (no hay FK enforcement, pero mantiene coherencia lógica).
-  for (const t of ['analysis_liquidation_snapshot', 'analysis_tf_snapshot', 'analysis_outcome', 'analyses']) {
+  // analysis_fvg_snapshot se añadió después que este script y faltaba en la lista: al vaciar
+  // dejaba sus filas huérfanas apuntando a análisis inexistentes. Las hijas van antes que la
+  // madre (no hay enforcement de FK en better-sqlite3 sin triggers).
+  for (const t of ['analysis_liquidation_snapshot', 'analysis_tf_snapshot', 'analysis_fvg_snapshot', 'analysis_outcome', 'analyses']) {
     report.push([t, del(t)]);
   }
 }

@@ -70,8 +70,20 @@ export const SUPERTREND_ADAPTIVE_EMA = 50; // EMA del ATR para multiplicador ada
 export const VOLUME_DELTA_LOOKBACK = 20; // velas para calcular presión agregada
 
 // ─── Support/Resistance ───────────────────────────────────────
-export const SR_LOOKBACK = 50;
-export const SR_MIN_TOUCHES = 2;
+// Ventana de S/R. Subida de 50 a 100 en la auditoría de umbrales (T4): al pasar el generador
+// de "todos los extremos" a "solo pivotes fractales", los candidatos caen de ~100 a ~13 por
+// ventana y con lookback 50 quedaban solo ~2,7 niveles con historial — insuficiente para los
+// 3 soportes + 3 resistencias que devuelve la función. Con 100 vuelven a ~17 niveles/ventana,
+// comparable a antes pero con toques que significan rechazos reales.
+// `slice(-lookback)` degrada solo si el TF tiene menos velas (1D=90, 1W=52): usa las que haya.
+export const SR_LOOKBACK = 100;
+// Bajado de 2 a 1 junto con el cambio a pivotes (T4). Con el generador viejo —que metía los
+// extremos de todas las velas— exigir 2 toques era un filtro anti-ruido imprescindible. Con
+// pivotes fractales, UN toque ya es un rechazo local real y merece figurar como nivel; medido,
+// exigir 2 dejaba el 1W en 0,4 niveles por ventana (el bloque S/R semanal se quedaba vacío).
+// La calidad la lleva ahora `touches`/`strength`, no la pertenencia a la lista: con minTouches=1
+// el filtro de "nivel fuerte" del veto (>=3) selecciona el 18,8 % en 4h, frente al 89,1 % de antes.
+export const SR_MIN_TOUCHES = 1;
 export const SR_TOLERANCE_PCT = 0.005; // 0.5%
 
 // ─── Fibonacci ────────────────────────────────────────────────

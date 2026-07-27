@@ -204,6 +204,14 @@ function runMigrations(db) {
       volume_delta_buy_pct REAL,
       cvd_trend TEXT,
       cvd_divergence TEXT,
+      -- Fuerza del desequilibrio del CVD. cvd_strength es la etiqueta que consumen el veto,
+      -- la contradicción de volumen y (vía prompt) el Volume Flow Score: con "marginal" el
+      -- score de volumen se anula y las puertas Comprar/Vender quedan cerradas. Sin este par
+      -- no se puede separar a posteriori un "el modelo eligió Esperar" de un "no se le
+      -- permitió otra cosa". Se guarda también el ratio crudo para poder recalibrar los
+      -- cortes (2 %/8 %) contra la distribución real sin re-fetchear klines.
+      cvd_strength TEXT,
+      cvd_delta_vs_volume_pct REAL,
       vwap_trend TEXT,
       vwap_divergence TEXT,
 
@@ -344,6 +352,10 @@ function runMigrations(db) {
   ensureColumn(db, 'analysis_tf_snapshot', 'nearest_resistance_strength', 'INTEGER');
   // SuperTrend: nivel numérico (banda de soporte/resistencia), antes solo la dirección.
   ensureColumn(db, 'analysis_tf_snapshot', 'supertrend_level', 'REAL');
+  // CVD: fuerza + ratio crudo. Se persistían `trend` y `divergence` pero NO la fuerza, que es
+  // justo la variable que abre o cierra la puerta de Comprar/Vender (revisión 2026-07-26, C3).
+  ensureColumn(db, 'analysis_tf_snapshot', 'cvd_strength', 'TEXT');
+  ensureColumn(db, 'analysis_tf_snapshot', 'cvd_delta_vs_volume_pct', 'REAL');
   // Auditoría B2/C2: total reproducible del backend + scores esperados (guardia de
   // divergencia) — telemetría LLM vs backend, no reemplazan los scores del LLM.
   ensureColumn(db, 'analyses', 'score_total_backend', 'REAL');
