@@ -87,6 +87,14 @@ export function supertrendLevel(st) {
  * @param {Array<{volume:number}>|null} candles1D
  * @returns {number|null}
  */
+/** Días transcurridos desde una fecha ISO (YYYY-MM-DD). null si no es utilizable. */
+export function daysSince(isoDate) {
+  if (!isoDate) return null;
+  const t = Date.parse(isoDate);
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
 export function volumeVs30dMedian(candles1D) {
   if (!Array.isArray(candles1D) || candles1D.length < 8) return null;
   const vols = candles1D.map((c) => c?.volume).filter(Number.isFinite);
@@ -661,6 +669,11 @@ async function buildAnalyzeContext(coin, primaryTf) {
       ath_change_pct: coinMarket.ath_change_pct != null ? parseFloat(coinMarket.ath_change_pct.toFixed(2)) : null,
       atl_usd:        coinMarket.atl_usd != null ? parseFloat(coinMarket.atl_usd.toFixed(2)) : null,
       atl_change_pct: coinMarket.atl_change_pct != null ? parseFloat(coinMarket.atl_change_pct.toFixed(2)) : null,
+      ath_date:       coinMarket.ath_date ?? null,
+      atl_date:       coinMarket.atl_date ?? null,
+      // Antigüedad del techo en días: convierte el ATH de un precio suelto en posición de
+      // ciclo. Hecho derivado del calendario, sin umbral que calibrar.
+      days_since_ath: daysSince(coinMarket.ath_date),
       // Rotación: volumen 24h como % de la capitalización. Mide cuánta convicción hay
       // detrás del precio — un movimiento con rotación baja lo mueve poco dinero y se
       // deshace igual de rápido.

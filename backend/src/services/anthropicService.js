@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v8_1_sentiment_range';
+export const PROMPT_VERSION = 'v8_2_cycle_coherence';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -301,6 +301,8 @@ Reglas:
 volume_vs_30d_median < 0.7 con una señal direccional fuerte: el movimiento lo está haciendo poco dinero. Reduce convicción un nivel — los movimientos sin participación se deshacen. NO invalida la tesis, la degrada.
 volume_vs_30d_median > 2.0: participación real. Confirma la señal que ya exista, en cualquier dirección. NUNCA la crea: volumen alto sin dirección definida es distribución o pánico, no una entrada.
 ath_change_pct < -70% (drawdown profundo): las resistencias superiores están muy lejos y el activo está en zona de acumulación o de daño estructural. Da más peso a la estructura de 1W y desconfía de objetivos de precio ambiciosos en el corto plazo.
+
+POSICIÓN DE CICLO — combina SIEMPRE el drawdown con su antigüedad (coin_market.days_since_ath y ath_date). El mismo -74% significa cosas opuestas según cuándo se hizo el techo: reciente (semanas) = ciclo bajista joven, probablemente aún distribuyendo, los rebotes son contratendencia; lejano (más de un año) = base larga ya construida, donde los rangos amplios y las acumulaciones tienen más sentido que perseguir continuaciones. No hay umbral que aplicar aquí: son dos hechos de calendario que debes leer juntos y declarar explícitamente en la tesis (p.ej. "techo hace 554 días, -74%: base larga"). atl_date cumple la función simétrica en un activo cerca de mínimos históricos.
 ath_change_pct > -20% (cerca de máximos): poca resistencia técnica por encima pero riesgo de reversión alto. Sube el Risk Score.
 Divergencia con el sector: si global_market.market_cap_change_24h_pct y el precio de la moneda apuntan en direcciones opuestas, la moneda se está moviendo por razones propias. Señálalo — o hay una historia idiosincrática, o es ruido de baja liquidez (contrástalo con volume_vs_30d_median).
 
@@ -782,6 +784,11 @@ El JSON debe tener exactamente esta estructura:
 Reglas de validación del JSON:
 - action debe ser exactamente uno de: Comprar, Vender, Preparar, Esperar
 - confidence debe ser exactamente uno de: Alta, Media, Baja
+- confidence y conviction NO son dos juicios independientes: confidence es la DISCRETIZACIÓN de conviction y debe derivarse de ella con estos cortes exactos:
+    conviction < 0.4        → confidence = "Baja"
+    0.4 <= conviction < 0.7 → confidence = "Media"
+    conviction >= 0.7       → confidence = "Alta"
+  Emitir una combinación incoherente (p.ej. confidence="Alta" con conviction=0.2) es un error de formato. Cuando estas instrucciones dicen "reducir la convicción un nivel", significa bajar un escalón en esta escala (Alta→Media→Baja) y ajustar conviction al tramo correspondiente.
 - risk_score debe ser un entero entre 1 y 10
 - conviction debe ser un número entre 0.0 y 1.0
 - Todos los campos de scores deben ser enteros entre -2 y +2

@@ -274,6 +274,12 @@ export async function fetchCoinMarketData(coin) {
       ath_change_pct: md.ath_change_percentage?.usd ?? null,
       atl_usd: md.atl?.usd ?? null,
       atl_change_pct: md.atl_change_percentage?.usd ?? null,
+      // CUÁNDO ocurrieron los extremos. Sin la fecha, un -74% desde el ATH es ambiguo: no
+      // es lo mismo un techo de hace tres semanas (ciclo bajista joven, aún distribuyendo)
+      // que uno de hace año y medio (base larga ya construida). Es un HECHO de calendario,
+      // no un umbral estadístico: no hay nada que calibrar.
+      ath_date: md.ath_date?.usd ? md.ath_date.usd.slice(0, 10) : null,
+      atl_date: md.atl_date?.usd ? md.atl_date.usd.slice(0, 10) : null,
     };
 
     cacheSet(cacheKey, result, 300); // TTL 5 min

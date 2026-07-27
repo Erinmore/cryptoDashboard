@@ -365,3 +365,40 @@ describe('validateAnalysis — puerta de PREPARAR (auditoría #2, hallazgo 5)', 
     expect(v.warnings.find(w => w.rule === 'score_divergence_derivatives')?.severity).toBe('severe');
   });
 });
+
+describe('coherencia confidence ↔ conviction (v8_2)', () => {
+  const base = (over = {}) => ({
+    action: 'Esperar', confidence: 'Baja', risk_score: 6, conviction: 0.3,
+    primary_driver: 'structure', has_executable_setup: false, gating_active: false,
+    contradictions_found: false, scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
+    setup: null, executive_summary: 'x', missing_confirmations: [],
+    ...over,
+  });
+  const codes = (st) => validateAnalysis(st, {}).warnings.map((w) => w.rule);
+
+  test('una combinación coherente no genera aviso', () => {
+    expect(codes(base({ confidence: 'Baja', conviction: 0.3 }))).not.toContain('confidence_conviction_mismatch');
+    expect(codes(base({ confidence: 'Media', conviction: 0.5 }))).not.toContain('confidence_conviction_mismatch');
+    expect(codes(base({ confidence: 'Alta', conviction: 0.8 }))).not.toContain('confidence_conviction_mismatch');
+  });
+
+  test('confidence alta con conviction baja se marca (antes pasaba sin queja)', () => {
+    expect(codes(base({ confidence: 'Alta', conviction: 0.2 }))).toContain('confidence_conviction_mismatch');
+  });
+
+  test('los cortes son los MISMOS que usa convictionBucket del backtest', () => {
+    // Si divergieran, la calibración de convicción mediría una escala distinta de la que
+    // el modelo reporta.
+    expect(codes(base({ confidence: 'Media', conviction: 0.4 }))).not.toContain('confidence_conviction_mismatch');
+    expect(codes(base({ confidence: 'Baja', conviction: 0.4 }))).toContain('confidence_conviction_mismatch');
+    expect(codes(base({ confidence: 'Alta', conviction: 0.7 }))).not.toContain('confidence_conviction_mismatch');
+    expect(codes(base({ confidence: 'Media', conviction: 0.7 }))).toContain('confidence_conviction_mismatch');
+  });
+
+  test('es aviso MINOR: no degrada la acción a Esperar', () => {
+    const st = base({ action: 'Comprar', confidence: 'Alta', conviction: 0.1 });
+    const w = validateAnalysis(st, {}).warnings
+      .find((x) => x.rule === 'confidence_conviction_mismatch');
+    expect(w.severity).toBe('minor');
+  });
+});

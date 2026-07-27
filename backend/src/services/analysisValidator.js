@@ -61,6 +61,20 @@ export function validateAnalysis(structured, opts = {}) {
   if (!CONFIDENCES.includes(confidence)) {
     warn('confidence_enum', 'minor', `confidence="${confidence}" no es uno de ${CONFIDENCES.join('|')}`);
   }
+  // COHERENCIA confidence ↔ conviction. Eran dos salidas para la misma magnitud sin
+  // ninguna relación definida: el modelo podía emitir confidence="Alta" con conviction=0.2
+  // y nada se quejaba. Desde v8_2 confidence es la discretización de conviction, con los
+  // MISMOS cortes que `convictionBucket` de utils/stats.js — así la calibración de
+  // convicción del backtest mide la misma escala que reporta el modelo.
+  // Severidad `minor`: es incoherencia de formato, no una decisión mal tomada; no debe
+  // degradar la acción a Esperar.
+  if (Number.isFinite(conviction) && CONFIDENCES.includes(confidence)) {
+    const esperado = conviction < 0.4 ? 'Baja' : conviction < 0.7 ? 'Media' : 'Alta';
+    if (esperado !== confidence) {
+      warn('confidence_conviction_mismatch', 'minor',
+        `confidence="${confidence}" no corresponde a conviction=${conviction} (esperado "${esperado}")`);
+    }
+  }
   if (structured.primary_driver != null && !DRIVERS.includes(structured.primary_driver)) {
     warn('primary_driver_enum', 'minor', `primary_driver="${structured.primary_driver}" no es uno de ${DRIVERS.join('|')}`);
   }
