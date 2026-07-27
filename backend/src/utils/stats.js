@@ -284,6 +284,10 @@ export function summarizeOpportunity(rows, opts = {}) {
       ? parseFloat((offeredPct - base.pct).toFixed(1)) : null,
     base_rate_discriminates: base?.discriminates ?? null,
     base_rate_measured_at: base ? OPPORTUNITY_BASE_RATE.measured_at : null,
+    // Contexto de la referencia: se midió sobre velas 4h de SOL/BTC/ETH. Comparar contra
+    // ella un análisis de otro TF sería comparar con la base equivocada, así que la
+    // procedencia viaja con la cifra en vez de quedarse en un comentario del código.
+    base_rate_scope: base ? OPPORTUNITY_BASE_RATE.source : null,
     blocked_by_adverse_n: evaluable.filter((e) => e.op.blocked_by_adverse).length,
     median_hours_to_target: median(offered.map((e) => e.op.hours_to)),
     avg_max_excursion_atr: mean(evaluable.map((e) => maxExcursionAtr(e.row, horizonKey))),
