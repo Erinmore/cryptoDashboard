@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v7_0_calibrated';
+export const PROMPT_VERSION = 'v7_1_conditional_blocks';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -306,6 +306,7 @@ Regla
 
 Nunca domina sobre derivados ni estructura.
 
+<<<BLOCK:onchain>>>
 E. On-Chain Score (-2 a +2) — solo BTC
 
 DISPONIBILIDAD: el campo "onchain" puede ser un objeto de datos, o bien { "available": false, "unavailable_reason": ... }. Si available=false:
@@ -336,6 +337,7 @@ Si la señal on-chain es positiva (+1 o +2), refuerza moderadamente un bias alci
 Si es negativa (-1 o -2), añade cautela a cualquier bias alcista.
 Nunca construir tesis principal sobre on-chain. Nunca usarlo como trigger.
 
+<<</BLOCK:onchain>>>
 F. Macro & Institutional Context (sin score directo — ajusta conviction)
 
 Usa los campos "macro", "etf_flows" y "volatility" del dataset.
@@ -350,6 +352,7 @@ macro_regime="mixed": sin sesgo macro claro. Neutral.
 
 Matices secundarios (solo para afinar el relato, ya incorporados en el régimen): DXY trend_5d="rising" = dólar fuerte = risk-off; Gold trend_5d="rising" bruscamente = búsqueda de safe haven = contexto de estrés.
 
+<<<BLOCK:etf_flows>>>
 F2. ETF Flows (solo BTC y ETH spot ETF):
 
 DISPONIBILIDAD: igual que onchain, etf_flows puede ser { "available": false, "unavailable_reason": ... }. Si available=false con "not_supported_for_asset" (SOL no tiene spot ETF): omitir el ajuste de ETF flows por completo, no es un dato faltante. Con "fetch_failed" (BTC/ETH): omitir el ajuste y notar la ausencia de contexto institucional en el Risk Score.
@@ -371,6 +374,8 @@ Si etf_flows.trend_7d="accumulating" Y funding_rate.severity_negative ∈ {"high
 Si etf_flows.trend_7d="distributing" Y funding_rate.severity ∈ {"high", "extreme"} (funding positivo extremo):
 → Señalar como "presión de distribución institucional + riesgo de liquidation cascade" y tratarlo como cautela cualitativa adicional, sin restar un valor fijo.
 
+<<</BLOCK:etf_flows>>>
+<<<BLOCK:dvol>>>
 F3. Volatility Index — DVOL (solo BTC y ETH):
 
 Usa "volatility.btc_dvol" y "volatility.eth_dvol".
@@ -381,6 +386,7 @@ regime="complacent" (<40): baja volatilidad puede preceder expansión brusca; no
 change_24h_pct positivo = volatilidad expandiéndose = aumenta incertidumbre direccional.
 Si DVOL es null o sol_dvol (siempre null): ignorar este subbloque.
 
+<<</BLOCK:dvol>>>
 F4. SMC — Smart Money Concepts
 
 Usa technical[tf].smc por timeframe.
@@ -755,12 +761,92 @@ construye hipótesis probabilística, nunca certeza.`;
  * @param {object} ctx - Contexto de mercado completo
  * @returns {string}
  */
+/**
+ * Bloques del SYSTEM_PROMPT que solo aplican si el dato correspondiente existe de verdad.
+ *
+ * Motivación (revisión crítica 2026-07-26, H4): el protocolo de recogida fija SOL, y para SOL
+ * `onchain` y `etf_flows` llegan siempre como { available: false } y `sol_dvol` es null. Las
+ * tres secciones que los gobiernan suman ~61 de las 733 líneas del prompt: instrucciones que
+ * no pueden aplicarse, pagadas en cada análisis.
+ *
+ * Se filtran en vez de borrarse para no perder la capacidad sobre BTC/ETH. Efecto secundario
+ * deseable: si un día la API on-chain falla en un análisis de BTC, la sección desaparece sola
+ * y el modelo no recibe reglas sobre datos que no tiene delante.
+ *
+ * @param {object} ctx - contexto del análisis (el mismo que va al dataset)
+ * @returns {{ present: boolean, reason: string }} por bloque
+ */
+function blockAvailability(ctx) {
+  const onchain = ctx?.onchain ?? null;
+  const etf = ctx?.etf_flows ?? null;
+  const vol = ctx?.volatility ?? null;
+  const coin = ctx?.coin ?? null;
+
+  // `available: false` es el sentinel explícito de los servicios; su ausencia total también
+  // cuenta como no disponible (degraded mode devuelve null).
+  const has = (b) => !!b && b.available !== false;
+  // DVOL: Deribit solo cubre BTC y ETH. Para el resto el bloque no aporta nada aunque lleguen
+  // los índices de BTC/ETH — son contexto de mercado, no del activo analizado.
+  const hasDvol = !!vol && (
+    (coin === 'BTC' && vol.btc_dvol) || (coin === 'ETH' && vol.eth_dvol)
+  );
+
+  return {
+    onchain: has(onchain),
+    etf_flows: has(etf),
+    dvol: !!hasDvol,
+  };
+}
+
+/**
+ * Ensambla el SYSTEM_PROMPT quitando los bloques cuyo dato no está presente.
+ * @returns {{ system: string, blocks: string[] }} `blocks` = los INCLUIDOS (telemetría).
+ */
+export function buildSystemPrompt(ctx) {
+  const avail = blockAvailability(ctx);
+  let out = SYSTEM_PROMPT;
+  const included = [];
+
+  for (const [name, present] of Object.entries(avail)) {
+    // El marcador y su contenido se van enteros; se conserva un salto para no pegar secciones.
+    const re = new RegExp(`<<<BLOCK:${name}>>>[\\s\\S]*?<<</BLOCK:${name}>>>\\n?`, 'g');
+    if (present) {
+      included.push(name);
+      out = out.replace(new RegExp(`<<<\\/?BLOCK:${name}>>>\\n?`, 'g'), '');
+    } else {
+      out = out.replace(re, '');
+    }
+  }
+  // Red de seguridad: si quedara algún marcador sin procesar, no debe llegar al modelo.
+  out = out.replace(/<<<\/?BLOCK:[a-z_]+>>>\n?/g, '');
+  return { system: out, blocks: included };
+}
+
 function buildPrompt(ctx) {
   // `expected_scores` es la guardia de divergencia del validador (C2): si el LLM la ve,
   // puede copiar el score esperado y la guardia deja de ser un chequeo independiente
   // (auditoría #2, hallazgo 1). Se excluye del dataset que recibe el modelo; sigue en el
   // payload de /api/analyze/payload y persistida en el header para telemetría.
   const { expected_scores, ...llmCtx } = ctx ?? {};
+
+  // M2 · `buy_pressure_pct` / `sell_pressure_pct` se acumulan sobre TODA la ventana del TF
+  // (168-180 velas), así que están estructuralmente clavados en ~50: medido, 50,6 % cuando la
+  // última vela real marcaba 62,3 % de agresión compradora. El prompt no los cita en ninguna
+  // de sus 733 líneas, pero el nombre sugiere una lectura de presión que el número no soporta:
+  // es ruido con apariencia de señal, y ya obligó a reenganchar la guardia C2 al CVD (2026-07-10).
+  // Se retiran SOLO del dataset del LLM; siguen en /api/analyze/payload y persistidos en
+  // `analysis_tf_snapshot.volume_delta_buy_pct` para telemetría.
+  // `last_candle_type`, `anomaly` y `source` SÍ se conservan: son estacionarios y sí informan.
+  if (llmCtx.technical) {
+    llmCtx.technical = Object.fromEntries(
+      Object.entries(llmCtx.technical).map(([tf, data]) => {
+        if (!data?.volume_delta) return [tf, data];
+        const { buy_pressure_pct, sell_pressure_pct, ...vd } = data.volume_delta;
+        return [tf, { ...data, volume_delta: vd }];
+      })
+    );
+  }
+
   return '# DATASET\n' + JSON.stringify(llmCtx, null, 2);
 }
 
@@ -863,10 +949,16 @@ function assertStructuredShape(structured) {
  */
 function buildLlmRequest(context, modelId) {
   const m = resolveModel(modelId);
+  // El system se ensambla según los datos presentes: para SOL caen ~61 líneas de reglas
+  // sobre on-chain, ETF flows y DVOL que nunca podrían aplicarse (ver buildSystemPrompt).
+  const { system, blocks } = buildSystemPrompt(context);
   return {
     model: m.id,
     max_tokens: MAX_TOKENS,
     prompt_version: PROMPT_VERSION,
+    // Qué bloques opcionales viajaron. Con moneda fija el conjunto es estable, pero si un
+    // servicio falla el prompt cambia — y sin esto no habría forma de saberlo a posteriori.
+    prompt_blocks: blocks,
     // `temperature` está DEPRECADO en los modelos actuales (Claude 5 / Opus 4.8 →
     // la API responde 400 si se envía). Por defecto env.analysisTemperature es null y
     // el campo se OMITE. Solo se incluye si se define ANALYSIS_TEMPERATURE (escape hatch
@@ -875,7 +967,7 @@ function buildLlmRequest(context, modelId) {
     // thinking sólo se desactiva donde hace falta (Sonnet 5 activa adaptive al
     // omitirlo → gasta tokens y puede truncar). Opus/Haiku van sin `thinking`.
     ...(m.disableThinking ? { thinking: { type: 'disabled' } } : {}),
-    system: SYSTEM_PROMPT,
+    system,
     messages: [{ role: 'user', content: buildPrompt(context) }],
   };
 }
