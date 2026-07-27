@@ -5,7 +5,7 @@
 import { describe, test, expect } from '@jest/globals';
 import {
   wilsonInterval, classifyOpportunity, maxExcursionAtr,
-  classifyPathOutcome, convictionBucket,
+  classifyPathOutcome, convictionBucket, summarizeOpportunity, OPPORTUNITY_BASE_RATE,
 } from '../src/utils/stats.js';
 
 describe('wilsonInterval', () => {
@@ -174,5 +174,39 @@ describe('convictionBucket', () => {
   test('valor ausente → null', () => {
     expect(convictionBucket(null)).toBeNull();
     expect(convictionBucket(undefined)).toBeNull();
+  });
+});
+
+describe('summarizeOpportunity — comparación contra la tasa base', () => {
+  const fila = (up, down) => ({
+    atr_pct_at_analysis: 1,
+    path_first_passage: { up, down },
+  });
+
+  test('el lift compara el offered_pct con la tasa base medida', () => {
+    // 2 de 4 ofrecen → 50%, contra una base de 34.8% a 24h.
+    const rows = [fila({ 2: 5 }, {}), fila({ 2: 6 }, {}), fila({}, {}), fila({}, {})];
+    const s = summarizeOpportunity(rows, { horizonH: 24 });
+    expect(s.offered_pct).toBe(50);
+    expect(s.base_rate_pct).toBe(OPPORTUNITY_BASE_RATE['24h'].pct);
+    expect(s.lift_pct).toBeCloseTo(15.2, 1);
+  });
+
+  test('el horizonte de 7d se marca como poco discriminante', () => {
+    const s = summarizeOpportunity([fila({ 2: 5 }, {})], { horizonH: null });
+    expect(s.base_rate_pct).toBe(OPPORTUNITY_BASE_RATE['7d'].pct);
+    expect(s.base_rate_discriminates).toBe(false);
+  });
+
+  test('con múltiplos NO por defecto no se compara (la base medida no aplica)', () => {
+    const s = summarizeOpportunity([fila({ 3: 5 }, {})], { horizonH: 24, targetK: 3 });
+    expect(s.base_rate_pct).toBeNull();
+    expect(s.lift_pct).toBeNull();
+  });
+
+  test('sin filas evaluables no se inventa un lift', () => {
+    const s = summarizeOpportunity([{ path_first_passage: null }], { horizonH: 24 });
+    expect(s.offered_pct).toBeNull();
+    expect(s.lift_pct).toBeNull();
   });
 });

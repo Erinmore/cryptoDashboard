@@ -31,6 +31,33 @@ export const OPPORTUNITY_DEFAULTS = {
   adverseK: 1,  // recorrido adverso que habría invalidado la entrada antes de llegar
 };
 
+/**
+ * TASA BASE INCONDICIONAL de la métrica de oportunidad, en % — con qué frecuencia un
+ * instante CUALQUIERA del mercado ofrece un movimiento limpio de 2×ATR antes de 1×ATR en
+ * contra. Medida con `scripts/auditOpportunityThresholds.mjs` el 2026-07-27 sobre 90 días
+ * de velas 4h (n≈578 anclas por moneda): SOL 35,1 · BTC 34,4 · ETH 34,9 a 24h;
+ * SOL 67,2 · BTC 68,8 · ETH 69,4 a 7d. Se usa la media de las tres.
+ *
+ * PARA QUÉ: sin esta referencia, `offered_pct` es un número flotando. Si los `Esperar` de
+ * CRYPTEX ofrecen oportunidad al mismo ritmo que un instante al azar, la abstención NO
+ * aporta información por bueno que parezca el porcentaje absoluto. Lo que refuta o
+ * confirma es el `lift` — la diferencia.
+ *
+ * NO es un umbral ajustado a los outcomes del sistema: se midió sobre historia de mercado
+ * y ANTES de ver ninguna decisión, justo para no reintroducir la circularidad de
+ * validación de la 1ª auditoría red-team. Caduca: la tasa base deriva con el régimen, así
+ * que se vuelve a medir en cada revisión (la fecha va en `measured_at`).
+ */
+export const OPPORTUNITY_BASE_RATE = {
+  '24h': { pct: 34.8, discriminates: true },
+  // A 7 días casi cualquier objetivo de 1×ATR acaba tocándose limpio (la esquina superior
+  // de la rejilla satura al 100 % en las tres monedas): el horizonte largo discrimina mal
+  // con el par por defecto. Se reporta como CONTEXTO, no como evidencia.
+  '7d': { pct: 68.5, discriminates: false },
+  measured_at: '2026-07-27',
+  source: 'scripts/auditOpportunityThresholds.mjs · 90d · SOL/BTC/ETH · TF 4h',
+};
+
 /** Parsea `path_first_passage` venga como JSON de SQLite o como objeto ya hidratado. */
 export function parseFirstPassage(raw) {
   if (raw == null) return null;
@@ -217,13 +244,29 @@ export function summarizeOpportunity(rows, opts = {}) {
   const evaluable = evals.filter((e) => e.op.evaluable);
   const offered = evaluable.filter((e) => e.op.offered);
 
+  const offeredPct = evaluable.length
+    ? parseFloat(((offered.length / evaluable.length) * 100).toFixed(1)) : null;
+
+  // Comparación contra la tasa base: es lo que convierte el % en evidencia. Solo aplica
+  // con la convención por defecto — con otros múltiplos la referencia medida no vale.
+  const isDefault = targetK === OPPORTUNITY_DEFAULTS.targetK
+    && adverseK === OPPORTUNITY_DEFAULTS.adverseK;
+  const base = isDefault ? OPPORTUNITY_BASE_RATE[horizonKey] : null;
+
   return {
     n: evals.length,
     // Sin ATR no hay escala de volatilidad: esas filas no cuentan ni a favor ni en contra.
     evaluable_n: evaluable.length,
     offered_n: offered.length,
-    offered_pct: evaluable.length
-      ? parseFloat(((offered.length / evaluable.length) * 100).toFixed(1)) : null,
+    offered_pct: offeredPct,
+    // lift < 0 → el sistema esperó en momentos que ofrecían MENOS que el azar (criterio).
+    // lift ≈ 0 → esperó como quien no mira (la abstención no informa).
+    // lift > 0 → esperó justo cuando había algo que operar (coste de oportunidad real).
+    base_rate_pct: base?.pct ?? null,
+    lift_pct: base && offeredPct != null
+      ? parseFloat((offeredPct - base.pct).toFixed(1)) : null,
+    base_rate_discriminates: base?.discriminates ?? null,
+    base_rate_measured_at: base ? OPPORTUNITY_BASE_RATE.measured_at : null,
     blocked_by_adverse_n: evaluable.filter((e) => e.op.blocked_by_adverse).length,
     median_hours_to_target: median(offered.map((e) => e.op.hours_to)),
     avg_max_excursion_atr: mean(evaluable.map((e) => maxExcursionAtr(e.row, horizonKey))),

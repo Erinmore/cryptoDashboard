@@ -296,10 +296,19 @@ function renderStats(s) {
       g.appendChild(d);
     };
     const k = opp.thresholds ?? {};
-    m('Mercado ofrecía', `${opp.offered_pct}% (${opp.offered_n}/${opp.evaluable_n})`,
-      opp.offered_pct >= 50 ? 'loss' : 'win',
-      `Movimiento limpio de ${k.target_k_atr}×ATR antes de ${k.adverse_k_atr}×ATR en contra. `
-      + 'Alto = se dejó pasar recorrido operable; bajo = abstenerse fue criterio.');
+    m('Mercado ofrecía', `${opp.offered_pct}% (${opp.offered_n}/${opp.evaluable_n})`, '',
+      `Movimiento limpio de ${k.target_k_atr}×ATR antes de ${k.adverse_k_atr}×ATR en contra.`);
+    // El % absoluto no dice nada sin la tasa base: si esperar acierta al mismo ritmo que
+    // un instante al azar, la abstención no aporta información. Lo que informa es el lift.
+    if (opp.lift_pct != null) {
+      const signo = opp.lift_pct > 0 ? '+' : '';
+      m('vs. azar (lift)', `${signo}${opp.lift_pct} pts`,
+        opp.lift_pct > 5 ? 'loss' : opp.lift_pct < -5 ? 'win' : '',
+        `Tasa base incondicional: ${opp.base_rate_pct}% (medida ${opp.base_rate_measured_at} `
+        + 'sobre 90d de SOL/BTC/ETH). Negativo = se esperó en momentos que ofrecían MENOS '
+        + 'que el azar, o sea criterio. Cerca de 0 = la abstención no informa. '
+        + 'Positivo = se dejó pasar recorrido que sí estaba ahí.');
+    }
     if (opp.median_hours_to_target != null) {
       m('Mediana hasta objetivo', `${opp.median_hours_to_target} h`, '',
         'Cuánto tardó en llegar el movimiento. Muy tarde = no era lo que el análisis miraba.');
