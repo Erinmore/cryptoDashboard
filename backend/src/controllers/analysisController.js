@@ -844,7 +844,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
 /**
  * Builds the header object for the `analyses` table from context + LLM output.
  */
-function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs) {
+export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs) {
   const fg    = context.sentiment?.fear_greed ?? null;
   const fgH   = context.sentiment?.fear_greed_history ?? null;
   const macro = context.macro ?? null;
@@ -921,6 +921,12 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     ob_imbalance_signal:      ob?.imbalance_signal ?? null,
 
     tf_conflict: context.timeframe_analysis?.conflict ?? null,
+
+    // El BTC DOMINANCE OVERRIDE degrada Comprar en alts cuando BTC 1D es bajista. Sin el
+    // trend de BTC en el instante del análisis, el checkpoint no puede separar "Volume
+    // bloquea" de "BTC bloquea" sin reconstruir klines a posteriori.
+    btc_trend_1d: context.btc_context?.trend_1d ?? null,
+    btc_trend_1w: context.btc_context?.trend_1w ?? null,
 
     action:               structured.action ?? null,
     confidence:           structured.confidence ?? null,
@@ -1178,6 +1184,7 @@ export async function analyze(req, res, next) {
       env.gatingFailClosedOnMissing,
       context.expected_scores,
       context.price_current,
+      context.derivatives_score,
     );
     if (validation.warnings.length > 0) {
       logger.warn(

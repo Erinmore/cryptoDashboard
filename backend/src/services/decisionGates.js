@@ -25,9 +25,32 @@ import { validateAnalysis, applyFailSafe } from './analysisValidator.js';
  * @param {object|null} gating - `context.gating` (veto_long/short + veto_reason + contradiction_count + data_insufficient).
  * @param {boolean} failsafeEnabled - `env.analysisFailsafeEnabled`.
  * @param {boolean} [failClosedOnMissing=true] - `env.gatingFailClosedOnMissing` (H2).
+ * @param {object|null} [derivativesScore=null] - `context.derivatives_score` (backend, v9_0).
+ *   Autoritativo sobre `scores.derivatives`: el prompt ordena COPIARLO, pero las puertas
+ *   validan contra la copia — sin esto, una copia infiel contaminaría la muestra en
+ *   silencio (inflada abre la puerta sin respaldo determinista; desinflada bloquea un
+ *   direccional legítimo y en BBDD parece decisión del modelo).
  * @returns {{ structured: object, validation: object, degraded: boolean, hardGate: boolean }}
  */
-export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failClosedOnMissing = true, expectedScores = null, currentPrice = null) {
+export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failClosedOnMissing = true, expectedScores = null, currentPrice = null, derivativesScore = null) {
+  // Derivatives Score: el backend es autoritativo (misma filosofía que gating_active).
+  // Se impone ANTES de validar para que buy/sell/prepare_gate y la 6ª contradicción operen
+  // siempre sobre el número verdadero, copie bien o mal el modelo. La discrepancia queda en
+  // telemetría como warning `minor`: la sobrescritura ya la corrige, no hay que degradar.
+  const backendDeriv = derivativesScore?.score;
+  let copyMismatch = null;
+  if (Number.isFinite(backendDeriv)
+      && rawStructured?.scores && typeof rawStructured.scores === 'object'
+      && rawStructured.scores.derivatives !== backendDeriv) {
+    copyMismatch = {
+      rule: 'derivatives_copy_mismatch',
+      severity: 'minor',
+      message: `scores.derivatives=${rawStructured.scores.derivatives} no es la copia de `
+        + `derivatives_score.score=${backendDeriv}; sobrescrito por el backend antes de las puertas`,
+    };
+    rawStructured.scores.derivatives = backendDeriv;
+  }
+
   const vetoActive = !!(gating?.veto_long || gating?.veto_short);
   // H2 · Fail-closed: datos críticos ausentes bloquean trades DIRECCIONALES (Comprar/Vender)
   // y también un Preparar ACCIONABLE (con setup ejecutable: emite niveles operables
@@ -53,6 +76,7 @@ export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failC
     expectedScores,
     currentPrice,
   });
+  if (copyMismatch) validation.warnings.push(copyMismatch);
 
   const vetoTriggered = vetoActive && rawStructured.action !== 'Esperar';
   const decayTriggered = validation.warnings.some((w) => w.rule === 'conviction_decay_forces_wait');

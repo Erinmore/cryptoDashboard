@@ -202,3 +202,60 @@ describe('applyDecisionGates — fail-closed cubre Preparar accionable (auditor�
     expect(r.structured.action).toBe('Preparar');
   });
 });
+
+describe('applyDecisionGates — Derivatives Score autoritativo (F1, 2026-07-29)', () => {
+  // El prompt ordena COPIAR derivatives_score.score en scores.derivatives, pero las puertas
+  // validan contra la copia. Estos tests cubren la sobrescritura autoritativa: sin ella una
+  // copia infiel contaminaría la muestra en silencio en ambos sentidos.
+
+  const ds = (score) => ({ score, data_insufficient: false, basis: [], components: {} });
+
+  test('copia inflada (LLM +1, backend 0): sobrescribe → buy_gate cae → degradado', () => {
+    const raw = { ...buyStructured(), scores: { derivatives: 1, structure: 1, volume: 1, onchain: 0, total: 1 } };
+    const r = applyDecisionGates(raw, noGating, true, true, null, null, ds(0));
+    expect(r.structured.action).toBe('Esperar');            // sin respaldo determinista no hay Comprar
+    expect(r.degraded).toBe(true);
+    expect(r.validation.warnings.map((w) => w.rule)).toEqual(
+      expect.arrayContaining(['derivatives_copy_mismatch', 'buy_gate']),
+    );
+    const mm = r.validation.warnings.find((w) => w.rule === 'derivatives_copy_mismatch');
+    expect(mm.severity).toBe('minor');
+  });
+
+  test('copia desinflada (LLM 0 en Esperar, backend +1): sobrescribe sin degradar', () => {
+    const raw = {
+      action: 'Esperar', confidence: 'Media', risk_score: 5, conviction: 0.5,
+      has_executable_setup: false, gating_active: false, setup: null,
+      scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
+    };
+    const r = applyDecisionGates(raw, noGating, true, true, null, null, ds(1));
+    expect(r.structured.action).toBe('Esperar');
+    expect(r.degraded).toBe(false);
+    // La columna score_derivatives persistirá el valor verdadero del backend, no la copia.
+    expect(r.structured.scores.derivatives).toBe(1);
+    expect(r.validation.warnings.some((w) => w.rule === 'derivatives_copy_mismatch')).toBe(true);
+  });
+
+  test('copia fiel: sin warning y sin mutación', () => {
+    const raw = { ...buyStructured(), scores: { derivatives: 2, structure: 1, volume: 1, onchain: 0, total: 1.3 } };
+    const r = applyDecisionGates(raw, noGating, true, true, null, null, ds(2));
+    expect(r.structured.action).toBe('Comprar');
+    expect(r.validation.warnings.some((w) => w.rule === 'derivatives_copy_mismatch')).toBe(false);
+  });
+
+  test('sin derivatives_score en contexto (null): comportamiento anterior intacto', () => {
+    const raw = buyStructured(); // derivatives: 2 del LLM
+    const r = applyDecisionGates(raw, noGating, true, true, null, null, null);
+    expect(r.structured.action).toBe('Comprar');
+    expect(r.structured.scores.derivatives).toBe(2);
+    expect(r.validation.warnings.some((w) => w.rule === 'derivatives_copy_mismatch')).toBe(false);
+  });
+
+  test('un Comprar legítimo respaldado por el backend NO se toca (anti-regresión)', () => {
+    const raw = { ...buyStructured(), scores: { derivatives: 1, structure: 1, volume: 1, onchain: 0, total: 1 } };
+    const r = applyDecisionGates(raw, noGating, true, true, null, null, ds(1));
+    expect(r.structured.action).toBe('Comprar');
+    expect(r.degraded).toBe(false);
+    expect(r.validation.warnings).toHaveLength(0);
+  });
+});

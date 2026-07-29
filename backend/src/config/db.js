@@ -393,6 +393,11 @@ function runMigrations(db) {
   ensureColumn(db, 'analyses', 'derivatives_data_insufficient', 'INTEGER');
   ensureColumn(db, 'analyses', 'score_derivatives_expected', 'INTEGER');
   ensureColumn(db, 'analyses', 'score_volume_expected', 'INTEGER');
+  // F2 (2026-07-29): trend de BTC en el instante del análisis. El BTC DOMINANCE OVERRIDE
+  // degrada Comprar en alts con BTC 1D bajista; sin esta covariable el checkpoint no puede
+  // separar "Volume bloquea" de "BTC bloquea" sin reconstruir klines de BTC a posteriori.
+  ensureColumn(db, 'analyses', 'btc_trend_1d', 'TEXT');
+  ensureColumn(db, 'analyses', 'btc_trend_1w', 'TEXT');
   // Auditoría #2, hallazgo 3: PnL firmado por dirección (pnl_pct_24h era el movimiento
   // crudo del precio — un Vender ganador aportaba negativo al promedio). Filas viejas →
   // NULL; el job las rellena al reprocesar (mientras price_7d_later siga pendiente).
