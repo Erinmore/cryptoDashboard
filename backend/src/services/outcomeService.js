@@ -12,7 +12,9 @@
 
 import { fetchHistoricalClose, fetchHistoricalKlines } from './coingeckoService.js';
 import { getAnalysesNeedingOutcome, upsertOutcome } from './dbService.js';
-import { classifyOutcome, evaluateSetupBarrier } from '../utils/outcome.js';
+import {
+  classifyOutcome, evaluateSetupBarrier, setupExpiryMs, candlesWithinValidity,
+} from '../utils/outcome.js';
 import { computePathMetrics, computeAtrPct } from '../utils/pathMetrics.js';
 import { calculateATR } from '../utils/indicators.js';
 import env from '../config/env.js';
@@ -165,6 +167,20 @@ async function processAnalysis(a, now) {
   };
   const setupResolved = a.setup_outcome && a.setup_outcome !== 'open';
   const horizonElapsed = now >= tMs + 7 * 24 * HOUR_MS;
+  // Vigencia declarada por el propio análisis (`validity_candles` × TF de ejecución).
+  // El barrier se evalúa SOLO dentro de ella; el recorrido (path metrics) sigue usando la
+  // ventana completa de 7d, que mide el mercado y no la decisión. Si la vigencia no es
+  // determinable, `expiryMs` es null y no se recorta nada (fail-open, ver utils/outcome.js).
+  const expiryMs = setupExpiryMs({
+    tMs,
+    validityCandles: a.setup_validity_candles,
+    tfExecution:     a.setup_tf_execution,
+    primaryTf:       a.primary_tf,
+  });
+  const setupCandles = candlesWithinValidity(pathCandles, expiryMs);
+  // Un setup caduca cuando vence SU vigencia, no cuando vence el horizonte de 7d: si no,
+  // uno declarado válido 24h se quedaría 'open' seis días más sin poder resolverse.
+  const setupHorizonElapsed = expiryMs != null ? now >= expiryMs : horizonElapsed;
   if (a.has_executable_setup && !setupResolved) {
     if (a.setup_entry_price == null) {
       // has_executable_setup=1 pero sin entry_price: geometría irreconstruible y PERMANENTE
@@ -178,13 +194,24 @@ async function processAnalysis(a, now) {
       // Fetch vacío o fallido = fallo transitorio (las klines históricas de Binance son
       // permanentes), NO geometría inválida: preservar y reintentar, no marcar 'invalid'.
       preserveSetup();
+    } else if (!setupCandles?.length) {
+      // Hay velas del recorrido pero NINGUNA dentro de la vigencia declarada (caso límite:
+      // validity_candles=1 en 1h con la primera kline alineada justo en la caducidad). El
+      // setup nunca tuvo una vela en la que llenarse: 'not_triggered', no 'invalid' — la
+      // geometría era correcta, lo que faltó fue ventana.
+      if (setupHorizonElapsed) {
+        out.setup_hit_tp1 = 0; out.setup_hit_tp2 = 0; out.setup_hit_stop = 0;
+        out.setup_outcome = 'not_triggered';
+      } else {
+        preserveSetup();
+      }
     } else {
       const bar = evaluateSetupBarrier({
         entry_price: a.setup_entry_price,
         stop_price:  a.setup_stop_price,
         tp1_price:   a.setup_tp1_price,
         tp2_price:   a.setup_tp2_price,
-      }, pathCandles);
+      }, setupCandles);
       if (bar) {
         out.setup_hit_tp1  = bar.hit_tp1 ? 1 : 0;
         out.setup_hit_tp2  = bar.hit_tp2 ? 1 : 0;
@@ -192,13 +219,13 @@ async function processAnalysis(a, now) {
         // Finalizar estados no terminales cuando ya venció el horizonte de 7d
         // (evita reprocesar el mismo setup indefinidamente — A4).
         let oc = bar.outcome;
-        if (!horizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
-          oc = 'open';               // aún dentro del horizonte: la entrada puede llenarse/resolverse
-        } else if (horizonElapsed && oc === 'open') {
-          oc = 'expired';            // entrada llenada pero sin tocar TP/stop en 7d
-        }                            // horizonElapsed && 'not_triggered' → terminal (nunca se llenó)
+        if (!setupHorizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
+          oc = 'open';               // aún dentro de la vigencia: puede llenarse/resolverse
+        } else if (setupHorizonElapsed && oc === 'open') {
+          oc = 'expired';            // llenada pero sin tocar TP/stop DENTRO DE SU VIGENCIA
+        }                            // vencida && 'not_triggered' → terminal (nunca se llenó)
         out.setup_outcome = oc;
-      } else if (horizonElapsed) {
+      } else if (setupHorizonElapsed) {
         // bar null con velas presentes = geometría inválida (p.ej. entry==stop): terminal.
         markInvalidSetup();
       } else {

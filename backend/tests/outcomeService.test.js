@@ -285,3 +285,72 @@ describe('runOutcomeJob — banda muerta normalizada por ATR', () => {
     expect(out.outcome_24h).toBe('win');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vigencia del setup (2026-07-28). Los helpers puros se cubren en outcome.test.js;
+// aquí se verifica el CABLEADO, que es donde estaba el fallo: que el servicio acote
+// de verdad las velas del barrier y que la caducidad la marque la vigencia declarada
+// y no el horizonte de 7d.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('runOutcomeJob — el barrier respeta setup_validity_candles', () => {
+  const velas = (tMs, pares) => pares.map(([high, low], i) => ({
+    t: tMs + i * HOUR, open: low, close: high, high, low, volume: 1,
+  }));
+
+  /** Long llenado en la 1ª vela, plano 24h, y TP1 tocado al 5º día. */
+  const recorrido = (tMs) => [
+    ...velas(tMs, [[101, 99], ...Array(23).fill([102, 98])]),
+    { t: tMs + 120 * HOUR, open: 101, close: 115, high: 115, low: 101, volume: 1 },
+  ];
+
+  const conSetup = (tMs, extra = {}) => analysisRow({
+    action: 'Comprar', primary_tf: '4h', timestamp: iso(tMs),
+    has_executable_setup: 1,
+    setup_entry_price: 100, setup_stop_price: 95, setup_tp1_price: 110, setup_tp2_price: null,
+    ...extra,
+  });
+
+  test('TP tocado FUERA de la vigencia → expired, no tp1', async () => {
+    const now = Date.now();
+    const tMs = now - 8 * 24 * HOUR;            // vigencia (24h) vencida hace mucho
+    fetchHistoricalKlines.mockResolvedValueOnce(recorrido(tMs)).mockResolvedValueOnce([]);
+    getAnalysesNeedingOutcome.mockReturnValue([conSetup(tMs, {
+      setup_validity_candles: 6, setup_tf_execution: '4h',   // 6 × 4h = 24h
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.setup_outcome).toBe('expired');  // antes del fix: 'tp1'
+    expect(out.setup_hit_tp1).toBe(0);
+  });
+
+  test('sin vigencia declarada se conserva el comportamiento viejo (fail-open → tp1)', async () => {
+    const now = Date.now();
+    const tMs = now - 8 * 24 * HOUR;
+    fetchHistoricalKlines.mockResolvedValueOnce(recorrido(tMs)).mockResolvedValueOnce([]);
+    getAnalysesNeedingOutcome.mockReturnValue([conSetup(tMs, {
+      setup_validity_candles: null, setup_tf_execution: null,
+    })]);
+
+    await runOutcomeJob();
+
+    expect(upsertOutcome.mock.calls[0][0].setup_outcome).toBe('tp1');
+  });
+
+  test('la vigencia manda sobre el horizonte de 7d: caduca a las 24h, no a los 7 días', async () => {
+    const now = Date.now();
+    const tMs = now - 30 * HOUR;                // 7d NO vencido, pero la vigencia SÍ
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(velas(tMs, [[101, 99], ...Array(28).fill([102, 98])]))
+      .mockResolvedValueOnce([]);
+    getAnalysesNeedingOutcome.mockReturnValue([conSetup(tMs, {
+      setup_validity_candles: 6, setup_tf_execution: '4h',
+    })]);
+
+    await runOutcomeJob();
+
+    // Antes habría quedado 'open' otros 6 días, re-evaluándose cada ciclo en balde.
+    expect(upsertOutcome.mock.calls[0][0].setup_outcome).toBe('expired');
+  });
+});

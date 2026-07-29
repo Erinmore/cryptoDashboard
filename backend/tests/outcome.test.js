@@ -3,7 +3,9 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { classifyOutcome, evaluateSetupBarrier } from '../src/utils/outcome.js';
+import {
+  classifyOutcome, evaluateSetupBarrier, setupExpiryMs, candlesWithinValidity,
+} from '../src/utils/outcome.js';
 
 describe('classifyOutcome', () => {
   test('Comprar con subida → win', () => {
@@ -158,5 +160,97 @@ describe('evaluateSetupBarrier — validación', () => {
   });
   test('sin velas → null', () => {
     expect(evaluateSetupBarrier({ entry_price: 100, stop_price: 95 }, [])).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vigencia del setup (2026-07-28) — `setup_validity_candles` se persistía y no lo
+// leía nadie: el barrier recorría los 7d completos y acreditaba como `tp1` un TP
+// tocado mucho después de que el propio análisis se declarase caducado.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const H = 3600 * 1000;
+const T0 = Date.UTC(2026, 6, 28, 8, 0, 0);
+
+describe('setupExpiryMs', () => {
+  test('4h × 6 velas = 24h desde el análisis', () => {
+    expect(setupExpiryMs({ tMs: T0, validityCandles: 6, tfExecution: '4h' })).toBe(T0 + 24 * H);
+  });
+
+  test('tf_execution manda sobre primary_tf', () => {
+    // El setup se ejecuta en 1h aunque el análisis sea de 4h → 3h, no 12h.
+    expect(setupExpiryMs({ tMs: T0, validityCandles: 3, tfExecution: '1h', primaryTf: '4h' }))
+      .toBe(T0 + 3 * H);
+  });
+
+  test('cae a primary_tf si no hay tf_execution', () => {
+    expect(setupExpiryMs({ tMs: T0, validityCandles: 2, primaryTf: '1D' })).toBe(T0 + 48 * H);
+  });
+
+  test('FAIL-OPEN: sin vigencia utilizable → null (el caller no recorta)', () => {
+    expect(setupExpiryMs({ tMs: T0, validityCandles: null, tfExecution: '4h' })).toBeNull();
+    expect(setupExpiryMs({ tMs: T0, validityCandles: 0, tfExecution: '4h' })).toBeNull();
+    expect(setupExpiryMs({ tMs: T0, validityCandles: -3, tfExecution: '4h' })).toBeNull();
+    expect(setupExpiryMs({ tMs: T0, validityCandles: 'seis', tfExecution: '4h' })).toBeNull();
+  });
+
+  test('FAIL-OPEN: TF no reconocido o timestamp inválido → null', () => {
+    expect(setupExpiryMs({ tMs: T0, validityCandles: 6, tfExecution: '30m' })).toBeNull();
+    expect(setupExpiryMs({ tMs: NaN, validityCandles: 6, tfExecution: '4h' })).toBeNull();
+  });
+});
+
+describe('candlesWithinValidity', () => {
+  const candles = Array.from({ length: 10 }, (_, i) => ({ t: T0 + i * H, high: 1, low: 1 }));
+
+  test('recorta a las velas que ABREN antes de la caducidad', () => {
+    const r = candlesWithinValidity(candles, T0 + 4 * H);
+    expect(r).toHaveLength(4);                    // t = T0, +1h, +2h, +3h
+    expect(r.at(-1).t).toBe(T0 + 3 * H);
+  });
+
+  test('la vela que abre justo en la caducidad queda FUERA', () => {
+    expect(candlesWithinValidity(candles, T0 + 1 * H)).toHaveLength(1);
+  });
+
+  test('expiry null → serie intacta (misma referencia, sin copia)', () => {
+    expect(candlesWithinValidity(candles, null)).toBe(candles);
+  });
+
+  test('serie vacía o no-array → se devuelve tal cual', () => {
+    expect(candlesWithinValidity([], T0)).toEqual([]);
+    expect(candlesWithinValidity(null, T0)).toBeNull();
+  });
+});
+
+describe('vigencia × barrier — el caso que motivó el arreglo', () => {
+  // Long: entrada 100, stop 95, TP1 110. Se llena en la 1ª vela, no pasa nada durante
+  // la vigencia (6 velas de 4h = 24h) y el TP se toca al 5º día.
+  const setup = { entry_price: 100, stop_price: 95, tp1_price: 110 };
+  const candles = [
+    { t: T0, high: 101, low: 99 },                                                  // llena
+    ...Array.from({ length: 23 }, (_, i) => ({ t: T0 + (i + 1) * H, high: 102, low: 98 })),
+    { t: T0 + 120 * H, high: 115, low: 101 },                                       // TP1 al 5º día
+  ];
+  const expiry = setupExpiryMs({ tMs: T0, validityCandles: 6, tfExecution: '4h' });
+
+  test('sin acotar (comportamiento viejo) el TP tardío contaba como tp1', () => {
+    expect(evaluateSetupBarrier(setup, candles).outcome).toBe('tp1');
+  });
+
+  test('acotado a su vigencia queda open → el caller lo cierra como expired', () => {
+    const r = evaluateSetupBarrier(setup, candlesWithinValidity(candles, expiry));
+    expect(r.filled).toBe(true);
+    expect(r.hit_tp1).toBe(false);
+    expect(r.outcome).toBe('open');
+  });
+
+  test('un stop DENTRO de la vigencia sigue contando (el recorte no favorece al setup)', () => {
+    const conStop = [
+      { t: T0,           high: 101, low: 99 },
+      { t: T0 + 5 * H,   high: 99,  low: 94 },    // stop, dentro de las 24h
+      { t: T0 + 120 * H, high: 115, low: 101 },   // TP posterior, irrelevante
+    ];
+    expect(evaluateSetupBarrier(setup, candlesWithinValidity(conStop, expiry)).outcome).toBe('stop');
   });
 });

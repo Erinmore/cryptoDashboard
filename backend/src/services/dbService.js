@@ -226,6 +226,7 @@ export function getAnalysesNeedingOutcome(olderThanMs, limit = 100) {
     SELECT a.id, a.coin, a.timestamp, a.price_current, a.action, a.primary_tf,
            a.has_executable_setup, a.setup_entry_price, a.setup_stop_price,
            a.setup_tp1_price, a.setup_tp2_price,
+           a.setup_validity_candles, a.setup_tf_execution,
            o.price_at_analysis,
            o.price_1h_later, o.price_4h_later, o.price_24h_later, o.price_7d_later,
            o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop, o.setup_outcome,

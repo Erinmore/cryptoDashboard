@@ -59,13 +59,73 @@ export function classifyOutcome(action, priceAtAnalysis, priceLater, thresholdPc
  *  - 'not_triggered': el precio nunca tocó `entry_price` en las velas dadas.
  *  - 'open': entrada llenada pero sin resolver TP/stop todavía.
  *  - 'tp1' | 'tp2' | 'stop': resueltos.
- * (El caller — outcomeService — convierte 'open' en 'expired' cuando ya venció el
- *  horizonte de 7d; 'not_triggered' solo es terminal una vez vencido ese horizonte.)
+ * (El caller — outcomeService — convierte 'open' en 'expired' cuando ya venció la
+ *  VIGENCIA del setup; 'not_triggered' solo es terminal una vez vencida. Las velas
+ *  que recibe esta función ya vienen acotadas por `candlesWithinValidity`.)
  *
  * @param {{entry_price:number, stop_price:number, tp1_price?:number, tp2_price?:number}} setup
  * @param {Array<{high:number, low:number}>} candles - En orden cronológico ascendente.
  * @returns {{filled:boolean, hit_tp1:boolean, hit_tp2:boolean, hit_stop:boolean, outcome:'not_triggered'|'open'|'tp1'|'tp2'|'stop'}|null}
  */
+/**
+ * Duración de una vela por timeframe, en ms. Réplica deliberada del mapa de
+ * `utils/episodes.js`: son dos conceptos distintos (allí, unidad de independencia
+ * estadística; aquí, unidad de vigencia declarada por el análisis) y acoplarlos
+ * haría que tocar uno moviese el otro sin querer.
+ */
+const HOUR_MS = 3600 * 1000;
+export const TF_DURATION_MS = {
+  '1h': HOUR_MS,
+  '4h': 4 * HOUR_MS,
+  '1D': 24 * HOUR_MS,
+  '1W': 7 * 24 * HOUR_MS,
+};
+
+/**
+ * Instante (ms) en que CADUCA un setup, según la vigencia que el propio análisis declaró.
+ *
+ * Por qué existe: `setup.validity_candles` se persistía y no lo leía nadie, así que el
+ * barrier recorría la ventana completa de 7d. Un setup declarado "válido 6 velas" cuyo TP
+ * se tocaba al 5º día se contabilizaba como `tp1` acertado — crédito por un movimiento
+ * posterior a su propia caducidad. Y el sesgo no es neutro: el stop suele estar más cerca
+ * que el TP, así que alargar la ventana favorece desproporcionadamente al TP.
+ *
+ * FAIL-OPEN a propósito: si falta la vigencia o el TF no se reconoce devuelve `null`, y el
+ * caller no recorta. Preserva el comportamiento anterior en vez de inventar una ventana
+ * por defecto — un recorte silencioso basado en un dato ausente sería peor que no recortar.
+ *
+ * `tf_execution` manda sobre `primary_tf`: la vigencia se declara en velas del TF en que se
+ * EJECUTA el setup, que puede no ser el TF primario del análisis.
+ *
+ * @param {{tMs:number, validityCandles:*, tfExecution?:string, primaryTf?:string}} opts
+ * @returns {number|null} epoch ms de caducidad, o null si no es determinable.
+ */
+export function setupExpiryMs({ tMs, validityCandles, tfExecution, primaryTf }) {
+  if (!Number.isFinite(tMs)) return null;
+  const n = Number(validityCandles);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const span = TF_DURATION_MS[tfExecution] ?? TF_DURATION_MS[primaryTf] ?? null;
+  if (span == null) return null;
+  return tMs + n * span;
+}
+
+/**
+ * Acota una serie de velas a las que ABREN antes de la caducidad del setup.
+ *
+ * Se filtra por apertura (`t < expiryMs`), no por cierre: mantiene la convención de
+ * `pathMetrics` de que el instante reportado es el cierre de la vela que contiene el
+ * evento (cota superior). Una vela que abre justo en la caducidad queda fuera.
+ *
+ * @param {Array<{t:number}>} candles
+ * @param {number|null} expiryMs - null ⇒ sin recorte (ver FAIL-OPEN de `setupExpiryMs`).
+ * @returns {Array} la misma referencia si no hay recorte, o un nuevo array filtrado.
+ */
+export function candlesWithinValidity(candles, expiryMs) {
+  if (!Array.isArray(candles) || !candles.length) return candles;
+  if (!Number.isFinite(expiryMs)) return candles;
+  return candles.filter((c) => Number.isFinite(c?.t) && c.t < expiryMs);
+}
+
 export function evaluateSetupBarrier(setup, candles) {
   const entry = setup?.entry_price;
   const stop  = setup?.stop_price;
