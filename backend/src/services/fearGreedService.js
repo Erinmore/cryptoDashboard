@@ -30,8 +30,14 @@ export async function fetchFearGreed() {
       classification: current.value_classification,
       previous_value: previousVal,
       previous_classification: previous?.value_classification ?? null,
+      // ⚠️ Faltaba la rama 'stable' (corregido 2026-07-29): el ternario mandaba a
+      // 'worsening' cualquier caso que no fuera estrictamente mayor, así que un índice
+      // PLANO se reportaba como deteriorándose. Con value=29 y previous=29 salía
+      // "worsening", y el histórico —que sí calcula 'stable'— lo contradecía.
       trend_1d: previousVal != null
-        ? currentVal > previousVal ? 'improving' : 'worsening'
+        ? currentVal > previousVal ? 'improving'
+          : currentVal < previousVal ? 'worsening'
+          : 'stable'
         : null,
       trend_7d_change: weekAgoVal != null ? currentVal - weekAgoVal : null,
       timestamp: new Date(parseInt(current.timestamp, 10) * 1000).toISOString(),

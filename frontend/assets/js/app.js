@@ -45,18 +45,36 @@ function renderChart() {
 
 // ── Actualizar UI completa desde el estado ─────────────────────────
 
+/**
+ * Ejecuta un actualizador de panel AISLADO: si lanza, se registra y se sigue.
+ *
+ * Por qué (bug real, 2026-07-29): `updateUI` llamaba a los diez actualizadores en serie con
+ * `renderChart()` AL FINAL. Un campo ausente en el payload —`liquidations.longs_usd`, que
+ * desapareció al renombrar las unidades a `*_coins`— hacía que `updateSentiment` lanzara un
+ * TypeError, y con él morían los cuatro paneles siguientes Y EL GRÁFICO. El dashboard se
+ * quedaba en negro por un dato de liquidaciones.
+ *
+ * Un panel sin datos debe degradarse solo, no arrastrar al resto. El gráfico es lo último en
+ * pintarse y lo más importante: nunca puede depender de que los diez paneles funcionen.
+ */
+function safeUpdate(name, fn, state) {
+  try { fn(state); } catch (err) {
+    console.error(`[CRYPTEX] panel "${name}" falló (se ignora, el resto sigue):`, err);
+  }
+}
+
 function updateUI(state) {
-  updateHeader(state);
-  updateGlobalMarket(state);
-  updateCoinMarketData(state);
-  updateRegimeBadge(state);
-  updateIndicators(state);
-  updateSentiment(state);
-  updateSupportResistance(state);
-  updateLastAnalysis(state);
-  updateBinanceWalls(state);
-  updateOrderBook(state);
-  renderChart();
+  safeUpdate('header',            updateHeader,            state);
+  safeUpdate('globalMarket',      updateGlobalMarket,      state);
+  safeUpdate('coinMarketData',    updateCoinMarketData,    state);
+  safeUpdate('regimeBadge',       updateRegimeBadge,       state);
+  safeUpdate('indicators',        updateIndicators,        state);
+  safeUpdate('sentiment',         updateSentiment,         state);
+  safeUpdate('supportResistance', updateSupportResistance, state);
+  safeUpdate('lastAnalysis',      updateLastAnalysis,      state);
+  safeUpdate('binanceWalls',      updateBinanceWalls,      state);
+  safeUpdate('orderBook',         updateOrderBook,         state);
+  safeUpdate('chart',             renderChart,             state);
 }
 
 // ── Helpers TF buttons ─────────────────────────────────────────────

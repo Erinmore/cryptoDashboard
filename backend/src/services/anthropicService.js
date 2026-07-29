@@ -110,6 +110,11 @@ Campos que acompañan al score:
   derivatives_score.data_insufficient  true = faltó el eje principal. Un 0 ahí significa
                                        "no sabemos", NO "sin señal". Trátalo como ausencia
                                        de información y refléjalo en el Risk Score.
+                                       ⚠️ NO es lo mismo que gating.data_insufficient: ese
+                                       mira CVD 1D y OI y BLOQUEA los direccionales; este
+                                       solo dice que la rúbrica no pudo evaluar su eje. Son
+                                       campos distintos con el mismo nombre — usa siempre la
+                                       ruta completa para no confundirlos.
 
 LO QUE NO DEBES HACER CON ESTE SCORE:
 - No lo modifiques por funding persistente, por OI cayendo ni por ninguna otra lectura: esos
@@ -1044,6 +1049,33 @@ function buildPrompt(ctx) {
   if (llmCtx.derivatives_score) {
     const { rubric, ...ds } = llmCtx.derivatives_score;
     llmCtx.derivatives_score = ds;
+  }
+
+  // v9_0 · Bloques cuyo SYSTEM se excluyó pero cuyo DATO seguía viajando (auditoría previa al
+  // despliegue, 2026-07-29). `blockAvailability` ya decide qué secciones se montan; si una NO
+  // se monta, su dato es un huérfano completo: llega al modelo sin ninguna regla que lo
+  // interprete. Detectado con `volatility`: en un análisis de SOL viajaban `btc_dvol` (37,65)
+  // y `eth_dvol` (52,47) mientras la sección F3 estaba fuera — el propio comentario de
+  // `blockAvailability` dice que para otras monedas "no aporta nada aunque lleguen los índices
+  // de BTC/ETH", y aun así se enviaban.
+  //
+  // Podría tener sentido darle regla (el DVOL de BTC es un proxy de volatilidad implícita de
+  // todo el mercado), pero eso exige medir su distribución primero. Hasta entonces: se poda.
+  {
+    const avail = blockAvailability(ctx);
+    if (!avail.dvol) delete llmCtx.volatility;
+    if (!avail.onchain) delete llmCtx.onchain;
+    if (!avail.etf_flows) delete llmCtx.etf_flows;
+  }
+
+  // `sentiment.fear_greed.trend_1d` COLISIONA con `btc_context.trend_1d`: misma clave, dos
+  // vocabularios (improving/worsening/stable vs bullish/bearish/neutral) y solo el segundo
+  // tiene regla (BTC DOMINANCE OVERRIDE). Es el patrón que v8_0 retiró con `adx.regime`. El
+  // sentimiento diario ya viaja mejor expresado en `fear_greed_history` (current/yesterday/
+  // 7d_ago/30d_ago + range_position_pct), así que la clave ambigua se retira.
+  if (llmCtx.sentiment?.fear_greed) {
+    const { trend_1d, ...fg } = llmCtx.sentiment.fear_greed;
+    llmCtx.sentiment = { ...llmCtx.sentiment, fear_greed: fg };
   }
 
   if (llmCtx.gating) {

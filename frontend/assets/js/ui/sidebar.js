@@ -65,6 +65,28 @@ function fmt(n, decimals = 2) {
   });
 }
 
+/**
+ * Formatea un NIVEL de precio (soporte/resistencia).
+ *
+ * Distinto de `fmtPrice` a propósito: los niveles son PROMEDIOS de clusters de pivotes, así
+ * que arrastran decimales de cálculo. `fmtPrice` permite hasta 4 por debajo de $100, y eso
+ * pintaba "$73.4633" para un soporte de SOL — cinco cifras significativas para un nivel que
+ * es una media aproximada. Sugiere una precisión que el dato no tiene (2026-07-29).
+ */
+function fmtLevel(n) {
+  if (n == null) return '—';
+  // `minimumFractionDigits` fija los decimales: sin él, `toLocaleString` recorta los ceros
+  // finales y en una COLUMNA de niveles salía "$72.8" junto a "$73.46", desalineado.
+  if (n >= 1) return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })}`;
+}
+
+/** Pluraliza el conteo de toques: antes salía "1 touches". */
+function fmtTouches(t) {
+  const n = t || 0;
+  return `${n} ${n === 1 ? 'touch' : 'touches'}`;
+}
+
 function fmtPrice(n) {
   if (n == null) return '—';
   if (n >= 10000) return `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
@@ -349,24 +371,30 @@ function lsrSignalToArrow(signal) {
 export function updateSentiment(state) {
   const { fearGreed, derivatives } = state;
 
-  // Fear & Greed
+  // Fear & Greed — el número por sí solo no dice nada: un 29 solo significa algo si se sabe
+  // que es "Fear", y una flecha sola no dice CUÁNTO ni RESPECTO A QUÉ. Antes se pintaban dos
+  // flechas con lógicas distintas (una en el valor, otra en la señal) y la clasificación no
+  // aparecía en ninguna parte — solo en el tooltip. Reescrito el 2026-07-29:
+  //   valor  → "29 · Fear"     (la banda, que es lo que interpreta el número)
+  //   señal  → "-4 7d"         (delta NUMÉRICO con su referencia explícita)
+  // El delta es `trend_7d_change`, que ya venía en el payload y no lo mostraba nadie. Se usa
+  // el de 7 días y no el de 1 porque el índice se mueve poco a diario: la variación semanal
+  // es la que informa. La referencia va escrita para que nunca haya que adivinarla.
   if (fearGreed) {
-    const trendArrow = fearGreed.trend_1d === 'improving' ? ' ↑' : fearGreed.trend_1d === 'worsening' ? ' ↓' : '';
-    setText('fear-greed-value', `${fearGreed.value}${trendArrow}`);
+    const band = fearGreed.classification ?? null;
+    setText('fear-greed-value', band ? `${fearGreed.value} · ${band}` : `${fearGreed.value}`);
 
     const fgEl = $('fear-greed-label');
     if (fgEl) {
-      const signalClass = fgSignalClass(fearGreed.value);
-      let arrow = '→';
-      if (fearGreed.trend_1d === 'improving') {
-        arrow = fearGreed.value > 50 ? '↑↑' : '↑';
-      } else if (fearGreed.trend_1d === 'worsening') {
-        arrow = fearGreed.value < 50 ? '↓↓' : '↓';
+      const d = fearGreed.trend_7d_change;
+      if (Number.isFinite(d)) {
+        fgEl.textContent = `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d)} 7d`;
+        // Sube el índice = menos miedo = sesgo alcista de sentimiento, y al revés.
+        fgEl.className = 'sent-signal ' + (d > 0 ? 'bullish' : d < 0 ? 'bearish' : 'neutral');
       } else {
-        arrow = fearGreed.value > 50 ? '↑' : fearGreed.value < 50 ? '↓' : '→';
+        fgEl.textContent = '—';
+        fgEl.className = 'sent-signal ' + fgSignalClass(fearGreed.value);
       }
-      fgEl.textContent = arrow;
-      fgEl.className   = 'sent-signal ' + signalClass;
     }
   }
 
@@ -475,11 +503,27 @@ export function updateSentiment(state) {
   const liq = derivatives.liquidations;
   const liqEl = $('liquidations');
   if (liq && liqEl) {
-    const fmtLiq = v => v >= 1000 ? `$${(v / 1000).toFixed(1)}B` : `$${v.toFixed(0)}M`;
+    // fmtLiq recibe USD CRUDOS y elige la escala. Antes asumía que el valor ya venía en
+    // millones (`$${v}M`) y además se le pasaban MONEDAS, no dólares: con 17.281 SOL pintaba
+    // "$17281M" — diecisiete mil millones de dólares de liquidaciones en SOL. El bug de
+    // unidades tapaba el del formateador (2026-07-29).
+    const fmtLiq = (v) => {
+      if (!Number.isFinite(v)) return '—';
+      const a = Math.abs(v);
+      if (a >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
+      if (a >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+      if (a >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
+      return `$${v.toFixed(0)}`;
+    };
     liqEl.textContent = `${fmtLiq(liq.longs_usd)} L / ${fmtLiq(liq.shorts_usd)} S`;
+    // El color sale de `skew`, el eje canónico: negativo = se liquidan longs (presión bajista).
+    // Antes usaba `liq.signal`, retirado el 2026-07-29 por competir con el umbral de la
+    // cascada del Derivatives Score — el color quedaba muerto sin que se notara.
     liqEl.className   = 'sent-value ' + (
-      liq.signal === 'longs_dominant'  ? 'price-change down' :
-      liq.signal === 'shorts_dominant' ? 'price-change up'   : ''
+      !Number.isFinite(liq.skew)  ? ''
+        : liq.skew <= -0.3        ? 'price-change down'
+        : liq.skew >=  0.3        ? 'price-change up'
+        : ''
     );
   } else if (liqEl) {
     liqEl.textContent = '—';
@@ -636,7 +680,7 @@ export function updateSupportResistance(state) {
 
     if (supports[i]) {
       const sup = supports[i];
-      el.textContent = `${fmtPrice(sup.price)} (${sup.touches || 0} touches)`;
+      el.textContent = `${fmtLevel(sup.price)} (${fmtTouches(sup.touches)})`;
       const strength = sup.strength ?? 0.5;
       setClass(el, strength > 0.7 ? 'bullish' : strength > 0.4 ? 'neutral' : 'bearish');
     } else {
@@ -654,7 +698,7 @@ export function updateSupportResistance(state) {
 
     if (resistances[i]) {
       const res = resistances[i];
-      el.textContent = `${fmtPrice(res.price)} (${res.touches || 0} touches)`;
+      el.textContent = `${fmtLevel(res.price)} (${fmtTouches(res.touches)})`;
       const strength = res.strength ?? 0.5;
       setClass(el, strength > 0.7 ? 'bearish' : strength > 0.4 ? 'neutral' : 'bullish');
     } else {
@@ -691,6 +735,10 @@ export function updateLastAnalysis(state) {
 
 export function updateBinanceWalls(state) {
   const walls = state.binanceWalls;
+  // La unidad del volumen es la MONEDA ANALIZADA. Estaba hardcodeada a 'BTC', así que un
+  // muro de 2.289 SOL se mostraba como "2,289.17 BTC" — unos 148 millones de dólares en vez
+  // de 167.000. Información simplemente falsa (detectado 2026-07-29).
+  const unit = state.coin ?? '';
   const buyEl = $('binance-buy-wall');
   const sellEl = $('binance-sell-wall');
 
@@ -701,12 +749,12 @@ export function updateBinanceWalls(state) {
   }
 
   if (walls.buyWall && buyEl) {
-    buyEl.textContent = `${fmtPrice(walls.buyWall.price)} (${fmt(walls.buyWall.volume, 2)} BTC)`;
+    buyEl.textContent = `${fmtPrice(walls.buyWall.price)} (${fmt(walls.buyWall.volume, 2)} ${unit})`;
     setClass(buyEl, 'bullish');
   }
 
   if (walls.sellWall && sellEl) {
-    sellEl.textContent = `${fmtPrice(walls.sellWall.price)} (${fmt(walls.sellWall.volume, 2)} BTC)`;
+    sellEl.textContent = `${fmtPrice(walls.sellWall.price)} (${fmt(walls.sellWall.volume, 2)} ${unit})`;
     setClass(sellEl, 'bearish');
   }
 }

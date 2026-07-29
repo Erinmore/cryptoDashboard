@@ -1,6 +1,6 @@
 import { fetchOHLC, fetchCurrentPrice, fetchGlobalMarketData, fetchCoinMarketData } from '../services/coingeckoService.js';
 import { fetchFearGreed } from '../services/fearGreedService.js';
-import { fetchDerivativesData, withDerivedOiUsd } from '../services/coinalyzeService.js';
+import { fetchDerivativesData, withDerivedOiUsd, withDerivedLiqUsd } from '../services/coinalyzeService.js';
 import { fetchOrderBookWalls, fetchBinanceTicker } from '../services/binanceOrderBookService.js';
 import { getHistories, addCVDEntry, addVWAPEntry } from '../services/historyService.js';
 import { computeIndicators } from '../services/indicatorService.js';
@@ -128,7 +128,12 @@ export async function getData(req, res, next) {
       fear_greed: resolve(fearGreed),
       // OI: Coinalyze lo da en monedas base; se deriva el USD real para el sidebar
       // (antes value_usd traía monedas etiquetadas como USD — auditoría #2, hallazgo 4).
-      derivatives: withDerivedOiUsd(resolve(derivatives), price?.price),
+      // Coinalyze reporta OI **y liquidaciones** en monedas base: ambos USD se DERIVAN del
+      // spot. Faltaba el de liquidaciones (2026-07-29) y el sidebar hacía `longs_usd.toFixed()`
+      // sobre undefined → excepción en `updateSentiment` → y como `renderChart()` es lo último
+      // de `updateUI`, el GRÁFICO dejaba de dibujarse. Un contrato de datos cambiado con dos
+      // consumidores y solo uno actualizado.
+      derivatives: withDerivedLiqUsd(withDerivedOiUsd(resolve(derivatives), price?.price), price?.price),
       global_market: resolve(globalMarket),
       btc_dominance: resolve(globalMarket)?.btc_dominance ?? null,
       coin_market_data: resolve(coinMarketData),

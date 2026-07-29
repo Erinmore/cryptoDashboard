@@ -355,3 +355,52 @@ describe('buildPrompt — poda por falta de dueño (v9_0)', () => {
     expect(c.derivatives_score.rubric).toBeDefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auditoría previa al despliegue de v9_0: bloques cuyo SYSTEM se excluye pero cuyo
+// DATO seguía viajando, y la colisión de `trend_1d`.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('buildPrompt — sin datos huérfanos de bloques excluidos (v9_0)', () => {
+  const base = (coin) => ({
+    coin, primary_tf: '4h',
+    onchain: { available: false, unavailable_reason: 'not_supported_for_asset' },
+    etf_flows: { available: false, unavailable_reason: 'not_supported_for_asset' },
+    volatility: { btc_dvol: { value: 37.65, regime: 'complacent' }, eth_dvol: { value: 52.47 }, sol_dvol: null },
+    sentiment: { fear_greed: { value: 29, classification: 'Fear', trend_1d: 'stable', trend_7d_change: -4 } },
+    btc_context: { trend_1d: 'bearish', trend_1w: 'bearish' },
+  });
+
+  test('SOL: el DVOL de BTC/ETH no viaja si su sección no se monta', () => {
+    const out = buildPrompt(base('SOL'));
+    expect(out).not.toContain('btc_dvol');
+    expect(out).not.toContain('37.65');
+  });
+
+  test('BTC: sí viaja, porque ahí la sección F3 SÍ se monta', () => {
+    const out = buildPrompt(base('BTC'));
+    expect(out).toContain('btc_dvol');
+  });
+
+  test('los bloques con available:false tampoco viajan', () => {
+    const out = buildPrompt(base('SOL'));
+    expect(out).not.toContain('not_supported_for_asset');
+  });
+
+  test('`fear_greed.trend_1d` se retira: colisiona con btc_context.trend_1d', () => {
+    const out = buildPrompt(base('SOL'));
+    // El vocabulario del sentimiento desaparece...
+    expect(out).not.toContain('"trend_1d": "stable"');
+    // ...pero el de BTC, que SÍ tiene regla, se conserva.
+    expect(out).toContain('"trend_1d": "bearish"');
+    // y el resto del bloque de F&G sigue intacto
+    expect(out).toContain('trend_7d_change');
+    expect(out).toContain('Fear');
+  });
+
+  test('no muta el contexto original', () => {
+    const c = base('SOL');
+    buildPrompt(c);
+    expect(c.volatility.btc_dvol.value).toBe(37.65);
+    expect(c.sentiment.fear_greed.trend_1d).toBe('stable');
+  });
+});
