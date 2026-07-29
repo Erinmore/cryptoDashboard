@@ -100,8 +100,19 @@ describe('computeExpectedScores', () => {
       technical: { '4h': { cvd: { trend: 'rising', divergence: 'none', cvd_strength: 'moderate', source: 'taker_real' } } },
     };
     const r = computeExpectedScores(ctx, '4h');
-    expect(r.derivatives.score).toBe(2);
     expect(r.volume.score).toBe(1);
-    expect(Array.isArray(r.derivatives.basis)).toBe(true);
+    expect(Array.isArray(r.volume.basis)).toBe(true);
+  });
+
+  // La guardia dejó de emitir el término `derivatives` el 2026-07-29: el backend calcula ese
+  // score (utils/derivativesScore.js), así que no puede divergir de sí mismo. Mantenerlo era
+  // peor que inútil — implementaba OTRA rúbrica y degradaba señales legítimas a `Esperar`.
+  test('YA NO devuelve el bloque derivatives (lo calcula la rúbrica, no una guardia)', () => {
+    const r = computeExpectedScores({
+      derivatives: { funding_rate: { severity_negative: 'extreme_short_overload' } },
+      technical: { '4h': { cvd: { trend: 'rising', divergence: 'none', cvd_strength: 'moderate' } } },
+    }, '4h');
+    expect(r.derivatives).toBeUndefined();
+    expect(r.volume).toBeDefined();
   });
 });

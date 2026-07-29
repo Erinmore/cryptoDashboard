@@ -373,6 +373,24 @@ function runMigrations(db) {
   // Auditoría B2/C2: total reproducible del backend + scores esperados (guardia de
   // divergencia) — telemetría LLM vs backend, no reemplazan los scores del LLM.
   ensureColumn(db, 'analyses', 'score_total_backend', 'REAL');
+
+  // Derivatives Score determinista (2026-07-29). `score_derivatives` sigue siendo el del LLM;
+  // esto guarda el del backend y sus componentes para poder auditar a posteriori en qué celda
+  // del cuadro OI×precio cayó cada análisis, incluidas las celdas que NO puntúan.
+  // Fix de unidad de liquidaciones (2026-07-29): Coinalyze las reporta en MONEDAS BASE, no
+  // en USD. Las columnas `liq_*_24h_usd` guardan ahora USD derivado (monedas × spot); estas
+  // guardan lo canónico. Las filas anteriores al fix tienen `*_coins` NULL, que es lo que
+  // permite distinguirlas — mismo patrón que se usó con `oi_value_coins`.
+  ensureColumn(db, 'analyses', 'liq_longs_24h_coins', 'REAL');
+  ensureColumn(db, 'analyses', 'liq_shorts_24h_coins', 'REAL');
+  // M4 (2026-07-29): el trade que el análisis TOMARÍA si apareciera lo que falta. JSON, como
+  // `path_first_passage`, porque la evaluación del shadow trade (fase siguiente) solo tiene
+  // que parsearlo — no hace falta una columna por campo. Sin esto, un `Esperar` es
+  // incontestable por construcción: nunca se sabría si fue prudencia o parálisis.
+  ensureColumn(db, 'analyses', 'conditional_setup', 'TEXT');
+  ensureColumn(db, 'analyses', 'score_derivatives_backend', 'INTEGER');
+  ensureColumn(db, 'analyses', 'derivatives_score_components', 'TEXT');
+  ensureColumn(db, 'analyses', 'derivatives_data_insufficient', 'INTEGER');
   ensureColumn(db, 'analyses', 'score_derivatives_expected', 'INTEGER');
   ensureColumn(db, 'analyses', 'score_volume_expected', 'INTEGER');
   // Auditoría #2, hallazgo 3: PnL firmado por dirección (pnl_pct_24h era el movimiento

@@ -1,6 +1,6 @@
 import { fetchOHLC, fetchCurrentPrice, fetchGlobalMarketData, fetchCoinMarketData } from '../services/coingeckoService.js';
 import { fetchFearGreed } from '../services/fearGreedService.js';
-import { fetchDerivativesData } from '../services/coinalyzeService.js';
+import { fetchDerivativesData, withDerivedLiqUsd } from '../services/coinalyzeService.js';
 import { fetchOrderBookWalls } from '../services/binanceOrderBookService.js';
 import { fetchLiquidationClusters } from '../services/liquidationClustersService.js';
 import { fetchOnchainMetrics } from '../services/onchainService.js';
@@ -15,6 +15,7 @@ import { applyDecisionGates } from '../services/decisionGates.js';
 import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
 import { computeGating } from '../utils/gating.js';
+import { computeDerivativesScore, priceChange24hFromCandles } from '../utils/derivativesScore.js';
 import { computeExpectedScores, backendScoreTotal } from '../utils/expectedScores.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
@@ -314,25 +315,34 @@ export function computeHistorySummaries(histories) {
 
   // ── Liquidations summary (7d) ───────────────────────────────────────────
   const liqHistory = histories?.liquidations ?? [];
+  // ⚠️ UNIDADES: el histórico diario está en MONEDAS BASE (ver fetchLiquidations). A
+  // diferencia del valor actual, aquí NO se puede derivar el USD: haría falta el precio
+  // spot de cada día pasado y no lo guardamos. Se nombran `*_coins` en vez de mentir con
+  // un sufijo `_usd`. El RATIO y el TREND son adimensionales y no les afecta.
+  // Compatibilidad: las filas de `history_series` anteriores al fix de unidad llevan las
+  // claves `longs_usd`/`shorts_usd` (con contenido en monedas). Se aceptan ambas para no
+  // perder el histórico ya persistido.
+  const liqL = (e) => e?.longs_coins ?? e?.longs_usd ?? 0;
+  const liqS = (e) => e?.shorts_coins ?? e?.shorts_usd ?? 0;
   let liquidationsSummary = null;
   if (liqHistory.length >= 1) {
     const last24h = liqHistory.at(-1);
     // Los campos 7d solo tienen sentido con al menos 2 días de historial.
     const has7d = liqHistory.length >= 2;
-    const totalLongs  = has7d ? liqHistory.reduce((s, e) => s + e.longs_usd, 0) : null;
-    const totalShorts = has7d ? liqHistory.reduce((s, e) => s + e.shorts_usd, 0) : null;
+    const totalLongs  = has7d ? liqHistory.reduce((s, e) => s + liqL(e), 0) : null;
+    const totalShorts = has7d ? liqHistory.reduce((s, e) => s + liqS(e), 0) : null;
     const n = liqHistory.length;
-    const recent3Avg = liqHistory.slice(-3).reduce((s, e) => s + e.longs_usd + e.shorts_usd, 0) / Math.min(n, 3);
-    const older3Avg  = n >= 2 ? liqHistory.slice(0, 3).reduce((s, e) => s + e.longs_usd + e.shorts_usd, 0) / Math.min(n, 3) : 0;
+    const recent3Avg = liqHistory.slice(-3).reduce((s, e) => s + liqL(e) + liqS(e), 0) / Math.min(n, 3);
+    const older3Avg  = n >= 2 ? liqHistory.slice(0, 3).reduce((s, e) => s + liqL(e) + liqS(e), 0) / Math.min(n, 3) : 0;
     const trendRatio = has7d && older3Avg > 0 ? recent3Avg / older3Avg : null;
     liquidationsSummary = {
-      last_24h_longs_usd:         last24h?.longs_usd  ?? null,
-      last_24h_shorts_usd:        last24h?.shorts_usd ?? null,
-      last_24h_total_usd:         last24h ? last24h.longs_usd + last24h.shorts_usd : null,
-      '7d_total_longs_usd':       has7d ? parseFloat(totalLongs.toFixed(2)) : null,
-      '7d_total_shorts_usd':      has7d ? parseFloat(totalShorts.toFixed(2)) : null,
-      '7d_avg_daily_longs_usd':   has7d ? parseFloat((totalLongs / n).toFixed(2)) : null,
-      '7d_avg_daily_shorts_usd':  has7d ? parseFloat((totalShorts / n).toFixed(2)) : null,
+      last_24h_longs_coins:         last24h ? liqL(last24h) : null,
+      last_24h_shorts_coins:        last24h ? liqS(last24h) : null,
+      last_24h_total_coins:         last24h ? liqL(last24h) + liqS(last24h) : null,
+      '7d_total_longs_coins':       has7d ? parseFloat(totalLongs.toFixed(2)) : null,
+      '7d_total_shorts_coins':      has7d ? parseFloat(totalShorts.toFixed(2)) : null,
+      '7d_avg_daily_longs_coins':   has7d ? parseFloat((totalLongs / n).toFixed(2)) : null,
+      '7d_avg_daily_shorts_coins':  has7d ? parseFloat((totalShorts / n).toFixed(2)) : null,
       longs_vs_shorts_7d_ratio:   has7d && totalShorts > 0 ? parseFloat((totalLongs / totalShorts).toFixed(2)) : null,
       trend_7d: trendRatio === null ? null : trendRatio > 1.3 ? 'escalating' : trendRatio < 0.7 ? 'decreasing' : 'stable',
     };
@@ -564,6 +574,9 @@ async function buildAnalyzeContext(coin, primaryTf) {
   const oi  = derivatives?.open_interest   ?? null;
   const lsr = derivatives?.long_short_ratio ?? null;
   const liq = derivatives?.liquidations    ?? null;
+  // USD derivado de monedas × spot (Coinalyze reporta liquidaciones en monedas base, igual
+  // que el OI). Mismo helper y mismo patrón que `withDerivedOiUsd` en dataController.
+  const liqUsd = withDerivedLiqUsd(derivatives, currentPrice)?.liquidations ?? null;
   const tfConflicts = analyzeTimeframeConflicts(technical, primaryTf);
 
   // Crowded trade: funding extremo en una dirección sin que el Open Interest
@@ -596,6 +609,22 @@ async function buildAnalyzeContext(coin, primaryTf) {
     openInterest: oi ? { change_24h_pct: oi.change_24h_pct } : null,
     currentPrice,
     primaryTf,
+  });
+
+  // DERIVATIVES SCORE determinista (2026-07-29). Antes lo puntuaba el LLM desde la sección A
+  // del prompt, cuyas dos únicas reglas numéricas disparaban el 0,0 % del tiempo sobre 90
+  // días × 3 monedas → salía 0 siempre, y como `Comprar` exige >=+1 y `Vender` <=-1, el
+  // sistema no podía emitir NINGUNA decisión direccional (6/6 `Esperar` en producción).
+  // Rúbrica medida en utils/derivativesScore.js. El precio de 24h se calcula desde las VELAS
+  // del TF primario, no desde `price_change_24h_pct` (CoinGecko, rolling, otra fuente): la
+  // banda está calibrada contra cierre-a-cierre de klines en fronteras de vela.
+  const derivativesScore = computeDerivativesScore({
+    oiChange24hPct:    oi?.change_24h_pct ?? null,
+    priceChange24hPct: priceChange24hFromCandles(candles[primaryTf], primaryTf),
+    atrPct:            technical[primaryTf]?.atr?.pct ?? null,
+    primaryTf,
+    liquidations:      liq,
+    funding:           fr,
   });
 
   // Guardia de divergencia de scores (auditoría C2): score direccional ESPERADO por el
@@ -706,6 +735,12 @@ async function buildAnalyzeContext(coin, primaryTf) {
 
     gating,
 
+    // Derivatives Score determinista. A DIFERENCIA de `expected_scores` (que se excluye del
+    // dataset del LLM para que no pueda copiarlo y anular la guardia C2), este SÍ viaja al
+    // modelo: es el score, no una guardia contra él. El LLM lo lee y lo interpreta, no lo
+    // recalcula — mismo patrón que `gating`.
+    derivatives_score: derivativesScore,
+
     // Scores esperados por el backend (guardia de divergencia, C2). buildPrompt los EXCLUYE
     // del dataset que recibe el LLM (si los viera podría copiarlos y anular la guardia —
     // auditoría #2, hallazgo 1); el validador los usa para detectar que el score de la
@@ -754,10 +789,24 @@ async function buildAnalyzeContext(coin, primaryTf) {
       } : null,
 
       liquidations_24h: liq ? {
-        longs_usd:  liq.longs_usd,
-        shorts_usd: liq.shorts_usd,
-        total_usd:  liq.total_usd,
-        signal:     liq.signal,
+        longs_coins:  liq.longs_coins,
+        shorts_coins: liq.shorts_coins,
+        total_coins:  liq.total_coins,
+        unit:         liq.unit ?? 'base_coin',
+        // Eje ÚNICO de dominancia, en la escala canónica: -1 = solo longs liquidados
+        // (cascada bajista), +1 = solo shorts (squeeze). Sustituye al viejo `signal`, que
+        // era una etiqueta con su propio corte compitiendo con el de la rúbrica.
+        skew: liq.skew ?? null,
+        // Magnitud contra la mediana de 30d del propio activo: 1,0 = un día normal. Mismo
+        // patrón self-normalizing que `volume_vs_30d_median`. NO se exponen la mediana ni el
+        // nº de puntos: son internos de calibración y el modelo debe leer la lectura, no el
+        // corte con el que se generó (lección de v8_1).
+        magnitude_vs_median_30d: liq.magnitude_vs_median_30d ?? null,
+        // USD DERIVADO de monedas × spot, no reportado por Coinalyze (`usd_basis` lo dice).
+        longs_usd:  liqUsd?.longs_usd  ?? null,
+        shorts_usd: liqUsd?.shorts_usd ?? null,
+        total_usd:  liqUsd?.total_usd  ?? null,
+        usd_basis:  liqUsd?.usd_basis  ?? null,
         history:    liquidationsSummary,
         data_timestamp_utc: liq.data_timestamp_utc ?? null,
       } : null,
@@ -855,8 +904,13 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     oi_trend_7d:               oi?.history?.trend_7d ?? null,
     long_pct:                  lsr?.long_pct ?? null,
     short_pct:                 lsr?.short_pct ?? null,
-    liq_longs_24h_usd:         liq?.longs_usd ?? null,
-    liq_shorts_24h_usd:        liq?.shorts_usd ?? null,
+    // Desde el 2026-07-29 estas columnas guardan USD DE VERDAD (monedas × spot). Las filas
+    // anteriores contienen MONEDAS BASE bajo el mismo nombre — distinguibles porque
+    // `liq_longs_24h_coins` es NULL en ellas. Mismo patrón que el fix de unidad del OI.
+    liq_longs_24h_usd:         context.derivatives?.liquidations_24h?.longs_usd ?? null,
+    liq_shorts_24h_usd:        context.derivatives?.liquidations_24h?.shorts_usd ?? null,
+    liq_longs_24h_coins:       liq?.longs_coins ?? null,
+    liq_shorts_24h_coins:      liq?.shorts_coins ?? null,
 
     etf_trend_7d:          etf?.trend_7d ?? null,
     etf_net_inflow_7d_usd: etf?.net_inflow_usd_7d_sum ?? null,
@@ -904,7 +958,14 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     score_total:       structured.scores?.total ?? null,
     // B2: total reproducible desde los componentes del LLM (no el decimal libre del LLM).
     score_total_backend: backendScoreTotal(structured.scores),
+    score_derivatives_backend:     context.derivatives_score?.score ?? null,
+    derivatives_score_components:  context.derivatives_score?.components
+      ? JSON.stringify(context.derivatives_score.components) : null,
+    derivatives_data_insufficient: context.derivatives_score?.data_insufficient ? 1 : 0,
     // C2: scores esperados por el backend (guardia de divergencia) — telemetría LLM vs dato.
+    // VESTIGIAL desde el 2026-07-29: la guardia C2 ya no calcula el término `derivatives`
+    // (ver utils/expectedScores.js), así que esto queda null. Se conserva la columna para no
+    // romper las filas históricas, que sí la tienen poblada.
     score_derivatives_expected: context.expected_scores?.derivatives?.score ?? null,
     score_volume_expected:      context.expected_scores?.volume?.score ?? null,
 
@@ -913,6 +974,8 @@ function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metada
     setup_tp1_price:        setup?.tp1_price ?? null,
     setup_tp2_price:        setup?.tp2_price ?? null,
     setup_validity_candles: setup?.validity_candles ?? null,
+    conditional_setup: structured?.conditional_setup
+      ? JSON.stringify(structured.conditional_setup) : null,
     setup_tf_execution:     setup?.tf_execution ?? null,
 
     executive_summary: structured.executive_summary ?? null,

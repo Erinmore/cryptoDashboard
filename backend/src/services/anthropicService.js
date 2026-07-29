@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v8_2_cycle_coherence';
+export const PROMPT_VERSION = 'v9_0_deterministic_derivatives';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -53,9 +53,12 @@ CORE ANALYTICAL PRINCIPLE
 
 Nunca trates todos los indicadores con el mismo peso.
 
-Jerarquía obligatoria:
+Jerarquía obligatoria (la MISMA que usa el Decision Engine más abajo; no hay dos):
 
-Contexto → Derivados → Volumen → Estructura → Confirmación
+Derivados > Volumen > Estructura > Ejecución
+
+El contexto macro/institucional no es un escalón de esta jerarquía: no puntúa, modula la
+convicción (ver sección F).
 
 Si hay contradicción:
 
@@ -77,84 +80,47 @@ INTERNAL SCORING ENGINE (NO MOSTRAR AL USUARIO)
 
 Antes de redactar el análisis, evalúa internamente cuatro bloques.
 
-A. Derivatives Score (-2 a +2)
+A. Derivatives Score (-2 a +2) — LO CALCULA EL BACKEND, NO LO PUNTÚES
 
-Evalúa:
+El campo derivatives_score del dataset trae el score ya calculado con una rúbrica medida
+sobre 90 días de SOL/BTC/ETH. NO lo recalcules, no lo ajustes y no lo sobrescribas: cópialo
+tal cual en scores.derivatives y dedícate a INTERPRETARLO.
 
-Funding Rate
-Predicted Funding
-Open Interest
-Long/Short Ratio
-Liquidations
+Por qué es determinista: hasta el 2026-07-29 este score lo puntuaba el modelo desde reglas
+que, medidas, disparaban el 0,0 % del tiempo. El resultado era un 0 permanente — y como
+COMPRAR exige >= +1 y VENDER <= -1, el sistema no podía emitir ninguna decisión direccional.
 
-Interpretación:
+Qué mira la rúbrica (para que puedas explicarla, no para que la repitas):
 
-+2 = presión alcista clara / squeeze probable
-+1 = ventaja alcista moderada
-0 = neutral / mixto
--1 = ventaja bajista moderada
--2 = presión bajista clara / liquidation cascade probable
+- OI × dirección del precio en 24h. El Open Interest NO tiene dirección propia: expandirse
+  es alcista o bajista según contra qué se expanda.
+    OI subiendo + precio subiendo  = dinero nuevo comprando  -> +1
+    OI bajando  + precio subiendo  = rally SIN dinero nuevo  -> -1  (es un rally que falla:
+        medido, continuó al alza 0 de 24 veces en SOL y 1 de 29 en ETH)
+    OI subiendo + precio bajando   = NO puntúa (su efecto aparente era momentum del precio)
+    OI bajando  + precio bajando   = NO puntúa (des-apalancamiento: sin señal medible)
+- Cascada de liquidaciones de longs (skew y magnitud contra su propia mediana de 30 días),
+  y SOLO cuando el eje OI×precio no dijo nada, para no contar el mismo hecho dos veces.
+- Funding en niveles de cola (severity / severity_negative), que es donde tiene significado.
 
-Reglas críticas
+Campos que acompañan al score:
+  derivatives_score.score              el número que debes copiar
+  derivatives_score.basis[]            en lenguaje claro, por qué salió ese número
+  derivatives_score.components         desglose (celda OI×precio, cascada, funding)
+  derivatives_score.data_insufficient  true = faltó el eje principal. Un 0 ahí significa
+                                       "no sabemos", NO "sin señal". Trátalo como ausencia
+                                       de información y refléjalo en el Risk Score.
 
-Funding extremo pesa más que Long/Short Ratio aislado.
+LO QUE NO DEBES HACER CON ESTE SCORE:
+- No lo modifiques por funding persistente, por OI cayendo ni por ninguna otra lectura: esos
+  hechos YA están dentro de la rúbrica o se descartaron por no discriminar.
+- No sumes convicción otra vez por el funding o el posicionamiento: ya cuentan aquí. Pueden
+  modular la NARRATIVA y el Risk Score, nunca el score.
+- Si tu lectura del mercado contradice el score, dilo en la narrativa y bájate la convicción.
+  No cambies el número.
 
-Open Interest determina:
-
-convicción real
-simple cierre de posiciones
-build-up de squeeze
-
-Si Open Interest cae:
-
-reducir convicción de la señal direccional.
-
-FUNDING SEVERITY RULE
-
-El campo funding_rate.severity ya viene clasificado por el backend. Un funding cargado (severity="elevated" o superior) es una alerta de riesgo de squeeze que pesa MÁS que cualquier indicador técnico aislado. Interpreta el flag, no recalcules umbrales:
-
-severity="extreme": riesgo de liquidation cascade inmediato. Reducir tamaño de posición a mínimo o no entrar.
-severity="high": coste de carry agresivo. Los longs deben tener catalizador muy claro para justificar entrada.
-severity="elevated": mercado cargado. Usar como filtro de riesgo adicional.
-severity="normal": sin impacto diferencial en el score.
-
-FUNDING NEGATIVO — SEVERITY RULE (señal de short squeeze)
-
-Un funding rate negativo indica que los shorts están pagando a los longs — señal de que el mercado está cargado de posiciones cortas. Cuando es extremo, la probabilidad de un short squeeze aumenta si aparece un trigger de ruptura. El campo funding_rate.severity_negative ya viene clasificado:
-
-severity_negative="elevated_short_overload": mercado cargado de shorts. Usar como filtro de contexto. Sin impacto directo en el score.
-severity_negative="high_short_overload": coste de carry agresivo para shorts. Señal de squeeze potencial si existe trigger. Añadir +1 al Derivatives Score.
-severity_negative="extreme_short_overload": squeeze de shorts estadísticamente probable si existe trigger de ruptura. Añadir +2 al Derivatives Score. Reducir convicción SHORT a mínimo — abrir short con funding extremo negativo implica pagar un coste de carry insostenible.
-
-REGLA: Si funding negativo extremo persiste sin expansión de OI ni trigger de ruptura, mantener el score pero no ejecutar — el squeeze puede tardar o no materializarse.
-
-FUNDING PERSISTENCE FILTER
-
-Si Funding extremo persiste sin:
-
-recuperación estructural
-expansión de Open Interest
-confirmación de volumen comprador
-
-entonces reducir un nivel el score de derivados.
-
-Interpretación profesional
-
-Funding extremo prolongado no implica squeeze inmediato.
-
-Puede reflejar:
-
-presión estructural persistente
-shorts correctamente posicionados
-ausencia de trigger
-
-FRESCURA DE DATOS DE DERIVADOS — campo data_timestamp_utc:
-
-Cada sub-bloque de derivados (funding_rate, open_interest, long_short_ratio, liquidations) incluye data_timestamp_utc con el momento real del dato según el exchange. Compáralo con price_timestamp_utc (precio casi en vivo):
-
-Si un sub-bloque de derivados tiene más de 30 minutos de desfase respecto a price_timestamp_utc: ese dato puede no reflejar el estado actual del mercado (el precio se ha movido pero el funding/OI cacheado no). Trátalo como contexto, no como confirmación de timing, y señálalo en el Risk Score.
-Si el desfase supera 2 horas: no uses ese sub-bloque para justificar un trigger de entrada; úsalo solo como contexto direccional.
-Un desfase grande entre el funding y el precio puede explicar contradicciones aparentes (p. ej. funding "extremo" que ya se relajó pero aún no se ha refrescado). No lo interpretes como incoherencia del mercado: es lag de captura de dato.
+Lo que SÍ sigue siendo tuyo: interpretar qué implica tácticamente, cruzarlo con volumen y
+estructura, y decidir la acción según las reglas de decisión.
 
 B. Volume Flow Score (-2 a +2)
 
@@ -167,6 +133,26 @@ CVD del TF primario (campo technical[primary_tf].cvd): es la señal táctica. Es
 CVD 1D (campo technical["1D"].cvd): es contexto de tendencia. No puntúa directamente en el Volume Flow Score. Sin embargo, si su divergence es "bearish" y el precio sube, activa una bandera de advertencia que reduce la convicción global un nivel. Si su divergence es "bullish" y el precio cae, activa la bandera equivalente bajista.
 
 ANTI-DOBLE-DESCUENTO DE LA BANDERA CVD 1D: si gating.contradictions[] ya incluye el código cvd_1d_divergence, esa bandera YA está contada en el conteo determinista de contradicciones del backend. En ese caso NO apliques además la reducción de convicción de un nivel — sería descontar el mismo hecho dos veces. Aplica la bandera solo cuando la divergencia NO aparece en gating.contradictions[] (p. ej. porque su fuerza es marginal).
+
+CONFLICTO ENTRE TIMEFRAMES DEL CVD — el caso más frecuente, y hasta ahora sin regla:
+
+Puede ocurrir —y ocurre— que el CVD del TF primario sea VENDEDOR mientras el CVD 1D marca
+divergencia ALCISTA (absorción). No es una contradicción del dato: son dos horizontes
+distintos. Los TFs bajos giran antes que el diario, así que en una caída lo normal es que el
+primario venda mientras el 1D todavía muestra absorción.
+
+Cómo resolverlo, sin excepciones:
+
+1. El SCORE lo fija el TF primario. Es la señal táctica y no se promedia con el 1D.
+2. La CONVICCIÓN la limita el 1D. Operar contra la absorción del diario es posible, pero
+   nunca con convicción Alta: como máximo Media.
+3. Si además hay un VETO activo en esa dirección, el veto manda y no se discute. El backend
+   ya comprobó la conjunción completa; tu lectura del primario no la anula.
+4. Dilo explícitamente en la narrativa: "el flujo de 4h vende, el de 1D todavía absorbe".
+   Un conflicto de horizonte declarado es información; escondido es una tesis frágil.
+
+Lo que NO debes hacer: promediar los dos CVD, elegir el que encaje con tu tesis, o tratar el
+conflicto como si el dato estuviera roto.
 
 CVD 1h (campo technical["1h"].cvd): es confirmación de entrada únicamente. No construye tesis. Solo se usa para afinar timing una vez que el bias ya está definido por el TF primario.
 
@@ -510,23 +496,33 @@ Interpretar jerárquicamente.
 
 Reglas de decisión
 
+REGLA TRANSVERSAL — UN TRADE SIN GEOMETRÍA NO ES UN TRADE
+
+COMPRAR y VENDER exigen SIEMPRE has_executable_setup=true y un objeto setup completo
+(entry_price, stop_price, tp1_price, validity_candles, tf_execution). Sin stop y sin objetivo
+la recomendación no es un trade: es una opinión, y una opinión no se puede evaluar ni
+gestionar. Si no eres capaz de definir una geometría defendible, la acción correcta NO es
+COMPRAR o VENDER sin ella — es PREPARAR sin setup ejecutable, o ESPERAR.
+
 COMPRAR
 
 Solo permitido si:
 
-Derivatives >= +1
+Derivatives >= +1  (el score determinista de la sección A, no uno tuyo)
 Volume >= +1
 existe trigger confirmado de reversión estructural
 ningún veto de gating activo
+setup ejecutable completo (regla transversal de arriba)
 
 VENDER
 
 Solo permitido si:
 
-Derivatives <= -1
+Derivatives <= -1  (el score determinista de la sección A, no uno tuyo)
 Volume <= -1
 estructura confirma debilidad
 ningún veto de gating activo
+setup ejecutable completo (regla transversal de arriba)
 
 PREPARAR
 
@@ -543,7 +539,7 @@ Output de PREPARAR incluye:
 - Condición exacta de activación (precio de ruptura, cierre de vela, volumen mínimo)
 - Tamaño de posición reducido (50% del tamaño nominal hasta confirmación)
 - Precio de activación condicional (limit order o stop-limit, no market order)
-- Ventana de validez del setup (N velas del TF primario)
+- Ventana de validez del setup (validity_candles, en velas del TF de EJECUCIÓN)
 - Condición de cancelación: nivel de precio o evento que invalida el setup antes de que se active
 
 ESPERAR
@@ -608,6 +604,26 @@ Añade UNA contradicción más al conteo SOLO si aplica según tus scores intern
 
 Si el total (gating.contradiction_count + la sexta si aplica) es 3 o más, la convicción cae a nivel donde no se permite trade y el output es ESPERAR.
 
+SETUP CONDICIONAL — OBLIGATORIO EN ESPERAR Y PREPARAR
+
+Cuando la acción sea ESPERAR o PREPARAR, además de decir QUÉ falta debes decir QUÉ HARÍAS si
+apareciera: rellena conditional_setup con el trade que tomarías, con su geometría completa.
+
+Por qué: un ESPERAR sin geometría es incontestable por construcción — nunca se puede saber si
+fue prudencia o parálisis. Con entrada, stop y objetivo declarados, el sistema puede
+comprobar a posteriori qué habría pasado y aprender de la abstención igual que aprende de un
+trade. No es un trade que se vaya a ejecutar: es la hipótesis que justifica la espera.
+
+- trigger: la condición EXACTA y comprobable que lo activaría ("cierre 4h > 76.57 con OI
+  expandiendo"), no una intención vaga ("si mejora el momentum"). Debe corresponderse con lo
+  que pusiste en missing_confirmations[].
+- La geometría se exige igual de seria que la de un setup real: stop distinto de la entrada,
+  TP del lado correcto según direction, y recompensa mayor que riesgo.
+- direction puede ser la contraria a tu sesgo: si esperas porque un veto te impide vender,
+  el conditional_setup describe ese corto vetado. Es información valiosa, no una desobediencia.
+- Déjalo en null SOLO si de verdad no hay ninguna geometría defendible en ningún escenario
+  (mercado sin niveles utilizables). Que sea la excepción, no la salida fácil.
+
 En el campo missing_confirmations[] del output, lista en lenguaje claro qué confirmaciones faltan para poder operar (p. ej. "expansión de Open Interest", "confirmación de ruptura con volumen", "alineación 1W/1D"). Es la explicación legible y accionable de por qué NO se toma el trade. Array vacío si el setup es plenamente ejecutable.
 
 DATA INTERPRETATION RULES
@@ -641,20 +657,33 @@ Altcoins: BTC Dominance = presión relativa.
 
 2. Derivatives Engine
 
-Cruza:
-
-Funding
-Predicted Funding
-Open Interest
-Long/Short Ratio
-Liquidations
-
-Detectar:
+El SCORE ya viene calculado (ver sección A): aquí no lo recalcules. Lo que sí es tuyo es la
+lectura cualitativa que el score no captura, apoyándote en derivatives_score.basis[]:
 
 crowding
 squeeze
 dealer trap
 liquidation cascade
+
+Nota sobre dos campos que el dataset trae y la rúbrica NO usa: predicted_rate_pct (funding
+previsto) y long_short_ratio. No puntúan — el LSR se midió y su recorrido en SOL es de 3,5
+puntos, tan estrecho que categorizarlo fabricaba señal a partir de ruido. Úsalos como color
+narrativo si aportan algo, nunca como confirmación.
+
+FRESCURA DE DATOS DE DERIVADOS — campo data_timestamp_utc:
+
+Cada sub-bloque de derivados (funding_rate, open_interest, long_short_ratio, liquidations)
+incluye data_timestamp_utc con el momento real del dato según el exchange. Compáralo con
+price_timestamp_utc (precio casi en vivo):
+
+Si un sub-bloque tiene más de 30 minutos de desfase respecto a price_timestamp_utc, ese dato
+puede no reflejar el estado actual del mercado (el precio se movió pero el funding/OI
+cacheado no). Trátalo como contexto, no como confirmación de timing, y señálalo en el Risk
+Score. Si el desfase supera 2 horas, no lo uses para justificar un trigger de entrada.
+
+Un desfase grande entre funding y precio puede explicar contradicciones aparentes (p. ej. un
+funding "extremo" que ya se relajó pero aún no se ha refrescado). No lo interpretes como
+incoherencia del mercado: es lag de captura de dato.
 
 3. Volume Flow
 
@@ -709,7 +738,7 @@ TP2
 
 ANTI-DOUBLE-COUNT RULE (señales de crowding correlacionadas)
 
-Funding Rate, Long/Short Ratio, Fear & Greed y (para el squeeze) ETF Flows miden facetas CORRELACIONADAS del mismo fenómeno: el posicionamiento/crowding del mercado. NO las trates como confirmaciones independientes ni sumes convicción una vez por cada una — es contar el mismo hecho varias veces. Cuando apunten en la misma dirección, repórtalas como UNA lectura de crowding (más robusta), no como N señales que se apilan. La confluencia real exige señales de bloques DISTINTOS (p.ej. estructura + volumen + derivados), no varias métricas del mismo eje.
+Funding Rate, Long/Short Ratio, Fear & Greed y (para el squeeze) ETF Flows miden facetas CORRELACIONADAS del mismo fenómeno: el posicionamiento/crowding del mercado. ATENCIÓN: el funding YA está contado dentro del Derivatives Score determinista, así que no puede volver a sumar — aquí solo puede modular narrativa y Risk Score. NO las trates como confirmaciones independientes ni sumes convicción una vez por cada una — es contar el mismo hecho varias veces. Cuando apunten en la misma dirección, repórtalas como UNA lectura de crowding (más robusta), no como N señales que se apilan. La confluencia real exige señales de bloques DISTINTOS (p.ej. estructura + volumen + derivados), no varias métricas del mismo eje.
 
 ANTI-BIAS RULE
 
@@ -725,6 +754,27 @@ Reportar incertidumbre explícitamente.
 Está prohibido construir coherencia narrativa ignorando señales relevantes.
 Si el análisis requiere ignorar un bloque de señales para que la tesis funcione, el output correcto es ESPERAR con explicación de la contradicción.
 Nunca priorizar la coherencia del output sobre la honestidad del diagnóstico.
+
+CÓMO ELEGIR validity_candles — CAMPO CON CONSECUENCIAS
+
+No es decorativo: el backtesting evalúa el setup SOLO dentro de esa ventana. Un TP tocado
+después de que el setup caduque NO cuenta como acierto, y un setup que expira sin resolverse
+se marca 'expired'. Elegirlo mal falsea la medición de tu propio análisis.
+
+Criterio: el número de velas que tu tesis necesita para materializarse, no un número redondo.
+
+Dos anclas que NO son opinión, sino límites de la medición:
+
+- El backtesting mide la oportunidad a 24h y a 7 días. En TF de 4h eso son 6 y 42 velas.
+- Por encima de 7 días NADA puede evaluarse: la ventana del barrier termina ahí. Un setup con
+  validez mayor queda sin resolver por construcción, así que no la sobrepases.
+
+Referencia empírica: cuando el mercado ofrece un movimiento operable de 2×ATR, la mediana
+hasta alcanzarlo es de unas 5 horas — poco más de una vela de 4h. Las tesis que necesitan
+muchas velas para cumplirse suelen depender de que cambie el régimen, no del setup descrito.
+
+Regla de coherencia: si el trigger que describes es "cierre de la próxima vela", la validez no
+puede ser de 40. Deben contar la misma historia.
 
 PROFESSIONAL RULE
 
@@ -769,6 +819,15 @@ El JSON debe tener exactamente esta estructura:
       "validity_candles": <entero>,
       "tf_execution": "<1h|4h|1D|1W>"
     }>,
+    "conditional_setup": <null o {
+      "trigger": "<condición exacta que lo activaría>",
+      "direction": "<long|short>",
+      "entry_price": <número>,
+      "stop_price": <número>,
+      "tp1_price": <número>,
+      "validity_candles": <entero>,
+      "tf_execution": "<1h|4h|1D|1W>"
+    }>,
     "executive_summary": "<máximo 2 frases>"
   },
   "narrative": {
@@ -793,6 +852,9 @@ Reglas de validación del JSON:
 - conviction debe ser un número entre 0.0 y 1.0
 - Todos los campos de scores deben ser enteros entre -2 y +2
 - setup es null si no hay setup ejecutable (has_executable_setup=false)
+- action Comprar o Vender EXIGE has_executable_setup=true y setup no nulo
+- conditional_setup es obligatorio (no nulo) en Esperar y Preparar salvo que no exista
+  ninguna geometría defendible; en Comprar y Vender va a null (el trade real es setup)
 - missing_confirmations es un array de strings (vacío si el setup es plenamente ejecutable)
 - executive_summary máximo 2 frases, sin saltos de línea
 - Los campos de narrative son strings con el análisis completo (pueden ser párrafos largos)
@@ -949,6 +1011,41 @@ function buildPrompt(ctx) {
   // `deduped_by_veto` es activamente peligroso: lista contradicciones que el backend
   // RETIRÓ a propósito por estar ya contenidas en el veto — enseñárselas al modelo invita
   // justo al doble conteo que el dedupe existe para evitar.
+  // v9_0 · PODA POR FALTA DE DUEÑO (2ª pasada, auditoría previa al despliegue). Mismo
+  // criterio que la de v8_0: campos que viajan al modelo sin que ninguna regla los consuma.
+  //
+  //  · `crowded_trade_flag`  → ninguna regla del prompt lo menciona y ningún módulo lo lee.
+  //                            Huérfano completo, igual que `liquidations.signal` (retirado
+  //                            el mismo día por competir con el umbral de la cascada).
+  //  · LSR `signal_cuts` / `long_pct_percentile` / `signal_basis` → son los CORTES con los
+  //                            que se generó la etiqueta. Es exactamente lo que v8_1 retiró
+  //                            para `cvd_strength_cuts` y `width_cuts`, y aquí es peor: el
+  //                            LSR ya no puntúa (su recorrido en SOL es de 3,5 puntos), así
+  //                            que sus terciles son ruido con apariencia de precisión.
+  //  · `atl_usd` / `atl_change_pct` → SOL cotiza +14.482 % sobre su mínimo de 2020. El dato
+  //                            no admite lectura y no tiene regla; `atl_date` SÍ la tiene
+  //                            (posición de ciclo simétrica) y se conserva.
+  //  · `derivatives_score.rubric` → procedencia de la calibración (measured_at/scope). Sirve
+  //                            para auditar, no para decidir.
+  //
+  // Todos siguen en /api/analyze/payload y en la BBDD.
+  if (llmCtx.derivatives) {
+    const { crowded_trade_flag, ...der } = llmCtx.derivatives;
+    if (der.long_short_ratio) {
+      const { signal_cuts, long_pct_percentile, signal_basis, ...lsr } = der.long_short_ratio;
+      der.long_short_ratio = lsr;
+    }
+    llmCtx.derivatives = der;
+  }
+  if (llmCtx.coin_market) {
+    const { atl_usd, atl_change_pct, ...cm } = llmCtx.coin_market;
+    llmCtx.coin_market = cm;
+  }
+  if (llmCtx.derivatives_score) {
+    const { rubric, ...ds } = llmCtx.derivatives_score;
+    llmCtx.derivatives_score = ds;
+  }
+
   if (llmCtx.gating) {
     const { deduped_by_veto, contradictions_signal_count, contradiction_blocks_pre_veto, ...g } = llmCtx.gating;
     llmCtx.gating = g;

@@ -113,6 +113,21 @@ jest.unstable_mockModule('../src/services/coinalyzeService.js', () => ({
     if (!oi || oi.value_coins == null || !price) return derivatives;
     return { ...derivatives, open_interest: { ...oi, value_usd: Math.round(oi.value_coins * price), value_usd_basis: 'derived_coins_x_spot' } };
   },
+  // Ídem para liquidaciones: Coinalyze también las reporta en monedas base (fix 2026-07-29).
+  withDerivedLiqUsd: (derivatives, price) => {
+    const liq = derivatives?.liquidations;
+    if (!liq || liq.total_coins == null || !price) return derivatives;
+    return {
+      ...derivatives,
+      liquidations: {
+        ...liq,
+        longs_usd:  Math.round(liq.longs_coins * price),
+        shorts_usd: Math.round(liq.shorts_coins * price),
+        total_usd:  Math.round(liq.total_coins * price),
+        usd_basis: 'derived_coins_x_spot',
+      },
+    };
+  },
 }));
 
 jest.unstable_mockModule('../src/services/binanceOrderBookService.js', () => ({

@@ -168,12 +168,64 @@ export function validateAnalysis(structured, opts = {}) {
           `${action} (short) con ${block}=${llm} pero el backend espera ${block}≈${e} desde el dato (${(exp[block].basis || []).join('; ')})`);
       }
     };
-    checkDiv('derivatives');
+    // Solo `volume`: el Derivatives Score lo calcula el backend desde el 2026-07-29, así que
+    // no puede divergir de sí mismo. Ver la nota en utils/expectedScores.js.
     checkDiv('volume');
   }
 
   // ── Coherencia de existencia de setup ─────────────────────────────────────
   const hasSetup = setup != null;
+
+  // M1 · Un trade sin geometría no es un trade: es una opinión, y una opinión no se puede
+  // evaluar ni gestionar. SEVERE porque degradar a Esperar es preferible a persistir un
+  // direccional imposible de medir — `evaluateSetupBarrier` no puede evaluarlo y el backtest
+  // caería a la medida débil (dirección al horizonte).
+  if ((action === 'Comprar' || action === 'Vender') && (has_executable_setup !== true || !hasSetup)) {
+    warn('directional_without_setup', 'severe',
+      `${action} sin setup ejecutable: una acción direccional exige entry/stop/tp para poder evaluarse`);
+  }
+
+  // M4 · El setup condicional hace medible la abstención: sin geometría declarada, un
+  // Esperar es incontestable por construcción. `minor` a propósito — su ausencia es un
+  // defecto de reporte, no una decisión mal tomada, así que no debe degradar la acción.
+  const cond = structured?.conditional_setup ?? null;
+  if ((action === 'Esperar' || action === 'Preparar') && !cond) {
+    warn('missing_conditional_setup', 'minor',
+      `${action} sin conditional_setup: no se puede evaluar a posteriori si fue prudencia o parálisis`);
+  }
+  if (cond) {
+    const { entry_price: ce, stop_price: cs, tp1_price: ct, direction: cdir, trigger } = cond;
+    // Comprobable = contiene al menos un NÚMERO (un nivel, un precio, un porcentaje). No se
+    // mide por longitud: "si mejora el momentum" son 22 caracteres y no es verificable,
+    // mientras que "cierre > 76.57" son 14 y sí lo es. Un umbral de longitud habría sido
+    // otra constante inventada.
+    if (!trigger || !/\d/.test(String(trigger))) {
+      warn('conditional_trigger_vague', 'minor',
+        'conditional_setup.trigger sin ningún nivel numérico: no es comprobable a posteriori');
+    }
+    if (isNum(ce) && isNum(cs)) {
+      if (ce === cs) {
+        warn('conditional_stop_eq_entry', 'minor', `conditional_setup stop==entry (${ce})`);
+      } else {
+        const cLong = cs < ce;
+        if (cdir && ((cdir === 'long') !== cLong)) {
+          warn('conditional_direction_mismatch', 'minor',
+            `conditional_setup.direction=${cdir} pero la geometría es ${cLong ? 'long' : 'short'}`);
+        }
+        if (isNum(ct)) {
+          if ((cLong && ct <= ce) || (!cLong && ct >= ce)) {
+            warn('conditional_tp_side', 'minor', `conditional_setup tp1=${ct} en el lado equivocado de entry=${ce}`);
+          } else {
+            const risk = Math.abs(ce - cs), reward = Math.abs(ct - ce);
+            if (risk > 0 && reward / risk < 1) {
+              warn('conditional_low_rr', 'minor', `conditional_setup R:R = ${(reward / risk).toFixed(2)} (<1)`);
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (has_executable_setup === false && hasSetup) {
     warn('setup_should_be_null', 'minor', 'has_executable_setup=false pero setup no es null');
   }

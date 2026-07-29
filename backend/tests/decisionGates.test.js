@@ -111,10 +111,24 @@ describe('applyDecisionGates — guardia de divergencia de scores (C2)', () => {
   // El backend espera derivados bajistas pero el LLM afirma Comprar con derivatives=+2.
   const expectedBearishDeriv = { derivatives: { score: -1, basis: ['LSR contrarian bear (-1)'] }, volume: { score: 0, basis: [] } };
 
-  test('Comprar con derivatives LLM=+2 vs esperado=-1 + fail-safe ON → degrada a Esperar', () => {
+  // ⚠️ CAMBIO 2026-07-29: el término `derivatives` de la guardia se RETIRÓ. Desde que el
+  // backend calcula el Derivatives Score no hay nada que vigilar, y mantenerlo era dañino:
+  // `expectedDerivativesScore` usaba otra rúbrica (LSR contrarian, ±1 el 33 % del tiempo por
+  // terciles), así que un Comprar legítimo con derivatives=+1 chocaba con expected=-1 →
+  // SEVERE → degradado a Esperar. Habría matado ~1 de cada 3 señales direccionales.
+  test('divergencia en DERIVATIVES ya NO se vigila (el backend calcula ese score)', () => {
     const { structured, degraded, validation } = applyDecisionGates(
       buyStructured(), noGating, true, true, expectedBearishDeriv);
-    expect(validation.warnings.some((w) => w.rule === 'score_divergence_derivatives')).toBe(true);
+    expect(validation.warnings.some((w) => w.rule === 'score_divergence_derivatives')).toBe(false);
+    expect(degraded).toBe(false);
+    expect(structured.action).toBe('Comprar');
+  });
+
+  test('la guardia de VOLUME sí sigue viva (ahí el LLM sigue puntuando)', () => {
+    const expectedBearishVol = { volume: { score: -1, basis: ['CVD bajista alineado (-1)'] } };
+    const { structured, degraded, validation } = applyDecisionGates(
+      buyStructured(), noGating, true, true, expectedBearishVol);
+    expect(validation.warnings.some((w) => w.rule === 'score_divergence_volume')).toBe(true);
     expect(degraded).toBe(true);
     expect(structured.action).toBe('Esperar');
   });

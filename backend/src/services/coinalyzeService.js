@@ -336,9 +336,13 @@ export async function fetchLiquidations(coin) {
 
   try {
     const now  = Math.floor(Date.now() / 1000);
-    // 7d completos para poder rellenar de golpe el histórico de 7d (antes solo
-    // se pedían 24h y el histórico tardaba una semana real en llenarse).
-    const from = now - 7 * 24 * 3600;
+    // 30d (antes 7d, y antes de eso 24h). La ampliación a 30 la exige la MEDIANA que
+    // normaliza la magnitud de una cascada en el Derivatives Score: medido sobre 90 días,
+    // una mediana de 7 días coincide con la de 30 solo en el 65,7 % de los eventos en SOL,
+    // y **en régimen ya cargado de liquidaciones pierde el 22 % de las cascadas** — se
+    // adapta al régimen reciente y se apaga justo cuando debe detectar. Coinalyze sirve 90
+    // días; el coste de pedir 30 es una respuesta mayor una vez por TTL de cache.
+    const from = now - 30 * 24 * 3600;
 
     const { data } = await getClient().get('/liquidation-history', {
       params: { symbols: symbol, interval: '1hour', from, to: now },
@@ -350,21 +354,50 @@ export async function fetchLiquidations(coin) {
     // "current" = ventana rolling de últimas 24h (últimos 24 candles de 1h),
     // no el día calendario — l = longs liquidados (precio bajó), s = shorts (precio subió)
     const last24h = hist.slice(-24);
-    const longs_usd  = parseFloat(last24h.reduce((acc, h) => acc + (h.l ?? 0), 0).toFixed(2));
-    const shorts_usd = parseFloat(last24h.reduce((acc, h) => acc + (h.s ?? 0), 0).toFixed(2));
-    const total      = longs_usd + shorts_usd;
+    // ⚠️ UNIDAD (corregido 2026-07-29): Coinalyze devuelve `l`/`s` en MONEDAS BASE, no en USD
+    // — el mismo error que se destapó con el Open Interest el 2026-07-12, en el mismo
+    // proveedor. Evidencia: BTC suma 296 en 24h; si fueran dólares, Binance habría liquidado
+    // 296 USD de BTC en un día entero. Son 296 BTC (~$19M). Se sigue el precedente del OI:
+    // las monedas son lo CANÓNICO y el USD se DERIVA del spot (`withDerivedLiqUsd`).
+    const longs_coins  = parseFloat(last24h.reduce((acc, h) => acc + (h.l ?? 0), 0).toFixed(4));
+    const shorts_coins = parseFloat(last24h.reduce((acc, h) => acc + (h.s ?? 0), 0).toFixed(4));
+    const total        = longs_coins + shorts_coins;
 
-    // Señal: dominancia de un lado indica presión de mercado
-    const ratio = total > 0 ? longs_usd / total : 0.5;
-    const signal = ratio > 0.65 ? 'longs_dominant'   // más longs liquidados = bajada fuerte
-      : ratio < 0.35 ? 'shorts_dominant'               // más shorts liquidados = short squeeze
-      : 'balanced';
+    // `signal` (longs_dominant/shorts_dominant/balanced con corte en ratio 0,65) se RETIRÓ el
+    // 2026-07-29. Motivos: (1) no lo consumía nadie — ni el prompt ni ningún controller;
+    // (2) competía con la definición de la cascada del Derivatives Score, que exige skew
+    // <= -0,5 (≡ ratio 0,75) Y magnitud, así que había dos cortes numéricos para "dominan los
+    // longs" en el mismo objeto de respuesta. Mismo olor que `CONTRADICTION_MIN_TOUCHES` antes
+    // de unificarse con `MIN_TOUCHES`. Ahora el eje es UNO (`skew`) y su umbral tiene un solo
+    // dueño: la rúbrica en utils/derivativesScore.js.
+
+    // ── Normalizadores de cascada (los consume utils/derivativesScore.js) ──
+    // Se calculan AQUÍ, donde están los 720 puntos horarios, para que la función pura reciba
+    // flags y no tenga que rehacer la ventana — mismo principio que el resto del gating.
+    //
+    // `skew` y `magnitude_vs_median_30d` son ADIMENSIONALES (un cociente y una proporción),
+    // así que no les afecta que Coinalyze reporte las liquidaciones en monedas base y no en
+    // USD como sugieren los nombres `*_usd`. Ese error de unidad está anotado aparte.
+    const rolling24h = [];
+    for (let i = 24; i <= hist.length; i++) {
+      const w = hist.slice(i - 24, i);
+      const s = w.reduce((acc, h) => acc + (h.l ?? 0) + (h.s ?? 0), 0);
+      if (s > 0) rolling24h.push(s);
+    }
+    const sorted = rolling24h.slice().sort((a, b) => a - b);
+    const median30d = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
 
     const result = {
-      longs_usd,
-      shorts_usd,
-      total_usd: total,
-      signal,
+      longs_coins,
+      shorts_coins,
+      total_coins: total,
+      unit: 'base_coin',
+      // Quién está siendo liquidado: +1 solo shorts (squeeze al alza), -1 solo longs (cascada).
+      skew: total > 0 ? parseFloat(((shorts_coins - longs_coins) / total).toFixed(4)) : null,
+      // ¿Es una cascada o el ruido de fondo del propio activo?
+      median_24h_total_30d: median30d,
+      magnitude_vs_median_30d: median30d > 0 ? parseFloat((total / median30d).toFixed(2)) : null,
+      median_window_points: rolling24h.length,
       // Timestamp del último candle horario de la ventana rolling 24h usada arriba.
       data_timestamp_utc: last24h.length ? new Date(last24h.at(-1).t * 1000).toISOString() : null,
     };
@@ -388,7 +421,7 @@ export async function fetchLiquidations(coin) {
         addLiquidationsEntry(coin, date, longs, shorts);
       }
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-      addLiquidationsEntry(coin, today, longs_usd, shorts_usd);
+      addLiquidationsEntry(coin, today, longs_coins, shorts_coins);
     } catch (e) {
       logger.warn({ coin, err: e.message }, 'Failed to add Liquidations to history');
     }
@@ -420,6 +453,26 @@ export function withDerivedOiUsd(derivatives, price) {
       ...oi,
       value_usd: Math.round(oi.value_coins * price),
       value_usd_basis: 'derived_coins_x_spot',
+    },
+  };
+}
+
+/**
+ * Deriva los USD de las liquidaciones desde monedas base × precio spot. Mismo patrón (y misma
+ * causa) que `withDerivedOiUsd`: Coinalyze reporta en monedas y los nombres `*_usd` mentían.
+ * `*_usd_basis` deja explícito que es derivado y no reportado.
+ */
+export function withDerivedLiqUsd(derivatives, price) {
+  const liq = derivatives?.liquidations;
+  if (!liq || liq.total_coins == null || !price) return derivatives;
+  return {
+    ...derivatives,
+    liquidations: {
+      ...liq,
+      longs_usd:  Math.round(liq.longs_coins * price),
+      shorts_usd: Math.round(liq.shorts_coins * price),
+      total_usd:  Math.round(liq.total_coins * price),
+      usd_basis: 'derived_coins_x_spot',
     },
   };
 }

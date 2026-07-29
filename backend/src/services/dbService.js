@@ -32,6 +32,7 @@ export function saveAnalysis(data) {
       funding_rate_pct, funding_severity, funding_severity_negative, funding_trend,
       predicted_rate_pct, oi_value_usd, oi_value_coins, oi_change_24h_pct, oi_trend_7d,
       long_pct, short_pct, liq_longs_24h_usd, liq_shorts_24h_usd,
+      liq_longs_24h_coins, liq_shorts_24h_coins,
       etf_trend_7d, etf_net_inflow_7d_usd, etf_data_freshness,
       ob_imbalance_ratio, ob_imbalance_top5_ratio, ob_imbalance_signal,
       tf_conflict,
@@ -40,8 +41,9 @@ export function saveAnalysis(data) {
       contradiction_count, contradiction_codes, deduped_by_veto, contradictions_signal_count,
       score_derivatives, score_structure, score_volume, score_onchain, score_total,
       score_total_backend, score_derivatives_expected, score_volume_expected,
+      score_derivatives_backend, derivatives_score_components, derivatives_data_insufficient,
       setup_entry_price, setup_stop_price, setup_tp1_price, setup_tp2_price,
-      setup_validity_candles, setup_tf_execution,
+      setup_validity_candles, setup_tf_execution, conditional_setup,
       executive_summary, ai_response_full, validation_warnings,
       processing_time_ms, input_tokens, output_tokens, model_used
     ) VALUES (
@@ -54,6 +56,7 @@ export function saveAnalysis(data) {
       @funding_rate_pct, @funding_severity, @funding_severity_negative, @funding_trend,
       @predicted_rate_pct, @oi_value_usd, @oi_value_coins, @oi_change_24h_pct, @oi_trend_7d,
       @long_pct, @short_pct, @liq_longs_24h_usd, @liq_shorts_24h_usd,
+      @liq_longs_24h_coins, @liq_shorts_24h_coins,
       @etf_trend_7d, @etf_net_inflow_7d_usd, @etf_data_freshness,
       @ob_imbalance_ratio, @ob_imbalance_top5_ratio, @ob_imbalance_signal,
       @tf_conflict,
@@ -62,8 +65,9 @@ export function saveAnalysis(data) {
       @contradiction_count, @contradiction_codes, @deduped_by_veto, @contradictions_signal_count,
       @score_derivatives, @score_structure, @score_volume, @score_onchain, @score_total,
       @score_total_backend, @score_derivatives_expected, @score_volume_expected,
+      @score_derivatives_backend, @derivatives_score_components, @derivatives_data_insufficient,
       @setup_entry_price, @setup_stop_price, @setup_tp1_price, @setup_tp2_price,
-      @setup_validity_candles, @setup_tf_execution,
+      @setup_validity_candles, @setup_tf_execution, @conditional_setup,
       @executive_summary, @ai_response_full, @validation_warnings,
       @processing_time_ms, @input_tokens, @output_tokens, @model_used
     )

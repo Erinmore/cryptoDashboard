@@ -13,7 +13,7 @@
  *   addFundingRateEntry(coin, candle)                          — {t, o, h, l, c, trend}
  *   addOpenInterestEntry(coin, candle)                         — {t, o, h, l, c}
  *   addLongShortRatioEntry(coin, entry)                        — {t, long_pct, short_pct}
- *   addLiquidationsEntry(coin, date, longs_usd, shorts_usd)
+ *   addLiquidationsEntry(coin, date, longs_coins, shorts_coins)
  *   addCVDEntry(coin, date, value, trend, divergence, delta?)
  *   addVWAPEntry(coin, date, value, trend, divergence)
  *   getHistories(coin)                                         — retorna los históricos del coin + fear_greed global
@@ -194,14 +194,20 @@ export function addLongShortRatioEntry(coin, entry) {
 
 // ─── Liquidaciones ────────────────────────────────────────────────────────
 
-export function addLiquidationsEntry(coin, date, longs_usd, shorts_usd) {
-  if (!coin || date == null || longs_usd == null || shorts_usd == null) return;
+/**
+ * ⚠️ UNIDAD: en MONEDAS BASE, no en USD (Coinalyze reporta así; corregido 2026-07-29). Aquí
+ * NO se puede derivar el USD como en el valor actual, porque haría falta el precio spot de
+ * cada día pasado y no se guarda. Las filas persistidas ANTES del fix llevan las claves
+ * `longs_usd`/`shorts_usd` con contenido en monedas: los lectores aceptan ambas.
+ */
+export function addLiquidationsEntry(coin, date, longs_coins, shorts_coins) {
+  if (!coin || date == null || longs_coins == null || shorts_coins == null) return;
   const history = getCoinHistory(coin).liquidations;
 
   const entry = {
     date,  // YYYY-MM-DD format
-    longs_usd: parseFloat(longs_usd.toFixed(2)),
-    shorts_usd: parseFloat(shorts_usd.toFixed(2)),
+    longs_coins: parseFloat(longs_coins.toFixed(4)),
+    shorts_coins: parseFloat(shorts_coins.toFixed(4)),
   };
   persist(coin, METRIC_NAME.liquidations, dateToTsKey(entry.date), entry);
   upsertByKey(history, entry, 'date', LIMITS.liquidations);

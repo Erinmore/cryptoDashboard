@@ -36,10 +36,43 @@ const buyValid = base({
 const rules = (structured) => validateAnalysis(structured).warnings.map(w => w.rule);
 
 describe('validateAnalysis — baseline y estructura', () => {
-  test('Esperar neutro no genera warnings', () => {
-    const { warnings, hasSevere } = validateAnalysis(base());
+  // M4 (2026-07-29): un Esperar debe declarar el trade que tomaría si apareciera lo que
+  // falta. Sin esa geometría la abstención es incontestable por construcción — nunca se
+  // podría saber si fue prudencia o parálisis.
+  const condSetup = {
+    trigger: 'cierre 4h > 76.57 con OI expandiendo', direction: 'long',
+    entry_price: 76.6, stop_price: 74.95, tp1_price: 79.8,
+    validity_candles: 6, tf_execution: '4h',
+  };
+
+  test('Esperar CON setup condicional no genera warnings', () => {
+    const { warnings, hasSevere } = validateAnalysis(base({ conditional_setup: condSetup }));
     expect(warnings).toEqual([]);
     expect(hasSevere).toBe(false);
+  });
+
+  test('Esperar SIN setup condicional avisa, pero en minor: no degrada la acción', () => {
+    const { warnings, hasSevere } = validateAnalysis(base());
+    expect(warnings.map(w => w.rule)).toContain('missing_conditional_setup');
+    expect(warnings.find(w => w.rule === 'missing_conditional_setup').severity).toBe('minor');
+    expect(hasSevere).toBe(false);
+  });
+
+  test('M1: Comprar sin setup ejecutable es SEVERE (una opinión no es un trade)', () => {
+    const v = validateAnalysis(base({
+      action: 'Comprar', has_executable_setup: false, setup: null,
+      scores: { derivatives: 2, structure: 1, volume: 1, onchain: 0, total: 1.3 },
+    }));
+    expect(v.warnings.find(w => w.rule === 'directional_without_setup')?.severity).toBe('severe');
+    expect(v.hasSevere).toBe(true);
+  });
+
+  test('geometría condicional incoherente avisa en minor (TP del lado equivocado)', () => {
+    const v = validateAnalysis(base({
+      conditional_setup: { ...condSetup, tp1_price: 70 },   // long con TP por debajo
+    }));
+    expect(v.warnings.map(w => w.rule)).toContain('conditional_tp_side');
+    expect(v.hasSevere).toBe(false);
   });
 
   test('Comprar bien fundamentado no genera warnings', () => {
@@ -354,15 +387,26 @@ describe('validateAnalysis — puerta de PREPARAR (auditoría #2, hallazgo 5)', 
     expect(rules(ok)).not.toContain('prepare_gate');
   });
 
+  // La guardia sigue cubriendo `Preparar` accionable (la dirección sale de la geometría del
+  // setup), pero desde el 2026-07-29 solo por el bloque VOLUME: el término `derivatives` se
+  // retiró al pasar ese score a determinista. Ver utils/expectedScores.js.
   test('guardia de divergencia cubre Preparar accionable (dirección por geometría)', () => {
     const bad = base({
       action: 'Preparar', has_executable_setup: true, setup: prepSetup, // long (stop<entry)
       scores: { derivatives: 1, structure: 0, volume: 1, onchain: 0, total: 0.7 },
     });
     const v = validateAnalysis(bad, {
-      expectedScores: { derivatives: { score: -1, basis: ['funding high'] }, volume: { score: 0, basis: [] } },
+      expectedScores: { volume: { score: -1, basis: ['CVD bajista alineado'] } },
     });
-    expect(v.warnings.find(w => w.rule === 'score_divergence_derivatives')?.severity).toBe('severe');
+    expect(v.warnings.find(w => w.rule === 'score_divergence_volume')?.severity).toBe('severe');
+  });
+
+  test('un expected de DERIVATIVES ya no genera aviso (lo calcula el backend)', () => {
+    const v = validateAnalysis(base({
+      action: 'Preparar', has_executable_setup: true, setup: prepSetup,
+      scores: { derivatives: 1, structure: 0, volume: 1, onchain: 0, total: 0.7 },
+    }), { expectedScores: { derivatives: { score: -1, basis: ['obsoleto'] } } });
+    expect(v.warnings.some(w => w.rule === 'score_divergence_derivatives')).toBe(false);
   });
 });
 

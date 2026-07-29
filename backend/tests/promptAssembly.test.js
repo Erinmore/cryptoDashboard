@@ -306,3 +306,52 @@ describe('v8_1 — sentimiento auto-normalizado, idioma y telemetría fuera del 
     expect(d.gating.contradiction_count).toBe(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Poda v9_0 (auditoría previa al despliegue): campos que viajaban sin dueño.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('buildPrompt — poda por falta de dueño (v9_0)', () => {
+  const ctx = () => ({
+    coin: 'SOL', primary_tf: '4h',
+    derivatives: {
+      crowded_trade_flag: { active: true, side: 'long' },
+      long_short_ratio: { long_pct: 72.6, signal: 'balanced', long_pct_percentile: 53.6, signal_cuts: [71.79, 73.13], signal_basis: 'percentile_7d' },
+    },
+    coin_market: { ath_change_pct: -74.2, ath_date: '2025-01-19', atl_usd: 0.5, atl_change_pct: 14482.38, atl_date: '2020-05-11' },
+    derivatives_score: { score: 1, basis: ['x'], components: { oi_price_cell: 'new_money_long' }, rubric: { measured_at: '2026-07-29' } },
+  });
+
+  test('crowded_trade_flag no llega al modelo (huérfano: sin regla ni consumidor)', () => {
+    expect(buildPrompt(ctx())).not.toContain('crowded_trade_flag');
+  });
+
+  test('los CORTES del LSR no llegan, pero sí la etiqueta y el valor', () => {
+    const out = buildPrompt(ctx());
+    expect(out).not.toContain('signal_cuts');
+    expect(out).not.toContain('long_pct_percentile');
+    expect(out).toContain('long_pct');
+    expect(out).toContain('balanced');
+  });
+
+  test('atl_usd/atl_change_pct fuera; atl_date se conserva (sí tiene regla)', () => {
+    const out = buildPrompt(ctx());
+    expect(out).not.toContain('atl_change_pct');
+    expect(out).not.toContain('atl_usd');
+    expect(out).toContain('atl_date');
+  });
+
+  test('el score de derivados llega entero salvo su procedencia de calibración', () => {
+    const out = buildPrompt(ctx());
+    expect(out).toContain('derivatives_score');
+    expect(out).toContain('new_money_long');   // components sí: explican el score
+    expect(out).not.toContain('measured_at');  // rubric no: sirve para auditar, no para decidir
+  });
+
+  test('no muta el contexto original (el payload conserva todo para auditoría)', () => {
+    const c = ctx();
+    buildPrompt(c);
+    expect(c.derivatives.crowded_trade_flag).toBeDefined();
+    expect(c.derivatives.long_short_ratio.signal_cuts).toBeDefined();
+    expect(c.derivatives_score.rubric).toBeDefined();
+  });
+});

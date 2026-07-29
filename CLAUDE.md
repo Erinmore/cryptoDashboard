@@ -19,27 +19,34 @@ El documento de referencia arquitectónica es [BLUEPRINT.md](./doc/BLUEPRINT.md)
 
 ---
 
-## 🧊 DESARROLLO CONGELADO hasta ~2026-08-10 — LEER ANTES DE TOCAR NADA
+## 🔓 CONGELACIÓN LEVANTADA (2026-07-29) — leer antes de tocar la ruta de decisión
 
-**La ruta de decisión está congelada.** Desde que se automatizó la recogida se acumularon ~10
-versiones de prompt y 5+ puntos cero, con saldo de **0 días de datos evaluables**: cada mejora
-tiraba la muestra, y sin muestra el único avance posible era inspeccionar código, que producía
-más hallazgos, que forzaban otro punto cero. El bucle se retroalimentaba.
+**La congelación del 2026-07-27 se levantó a los 2 días, y con motivo.** Se creó para dejar
+correr una muestra evaluable. Pero la propia congelación permitía medir, y medir destapó que
+**el sistema no podía emitir ninguna decisión direccional**: el Derivatives Score —cima de la
+jerarquía y exigido por AMBAS puertas (`Comprar` >= +1, `Vender` <= -1)— tenía dos reglas
+numéricas que disparaban el **0,0 % del tiempo** sobre 90 días × 3 monedas. Salía 0 en 6 de 6
+análisis y las 6 acciones fueron `Esperar`.
 
-**NO tocar durante la congelación:** `services/anthropicService.js` (prompt), `utils/gating.js`,
-`utils/expectedScores.js`, `services/decisionGates.js`, `services/analysisValidator.js`, ni
-ninguna constante de umbral — **por muy mal calibrada que parezca**.
+Seguir recogiendo habría producido 12 días más de datos no evaluables **por construcción** —
+exactamente el fallo que la congelación existía para terminar, alcanzado por el otro lado.
 
-**Sí se puede:** medición que no altera la decisión, telemetría, scripts de auditoría, y bugs
-que **corrompan o pierdan datos**.
+**Lo que la hace distinta de los 5 puntos cero anteriores:**
 
-**Criterio ante la duda:** si el cambio movería `PROMPT_VERSION` o cambiaría qué decide el
-sistema ante el mismo input → se ANOTA en la tabla de hallazgos de SESSION_STATE.md §0 y se
-decide en el checkpoint. No se aplica.
+| Antes | Este lote |
+|---|---|
+| Cambios por hallazgos de inspección de código | Cambios por **distribuciones medidas** (90d × 3 monedas) |
+| Un arreglo → punto cero → siguiente hallazgo → repetir | **Lista cerrada** acordada antes de empezar, **un solo punto cero** |
+| Umbrales elegidos a ojo | **Ningún umbral sin ver antes su distribución** |
 
-El motivo no es burocrático: el instrumento mejoró mucho y está medido, pero la calidad de las
-DECISIONES sigue con n=0 —nunca se ha reportado un win-rate— y eso solo lo arregla dejar correr
-la muestra. Ver SESSION_STATE.md §0.
+**La regla que sobrevive y no se negocia:** ninguna constante de corte se escribe sin medir
+antes la distribución de la magnitud que bucketiza. Es lo que destapó T1-T6, el F&G inerte al
+87,8 %, el LSR contrarian constante y el propio Derivatives Score. Si vas a escribir un
+número, mídelo primero — y si no se puede medir, no lo escribas.
+
+**Criterio de salida del siguiente periodo (definido de antemano, para no improvisarlo):** el
+checkpoint mira `offered_pct` contra su tasa base (`lift`), el reparto de acciones y la
+calibración de convicción. Ver SESSION_STATE.md §0.
 
 ---
 
@@ -141,7 +148,7 @@ src/controllers/             ← Orquestación, validación de params, formato r
   analysisController.js      ← POST /api/analyze — fetcha datos, llama Anthropic, guarda en DB
   historyController.js       ← GET /api/history/:coin — paginación, valida coin
 src/services/                ← Lógica de negocio, I/O externo, cache
-  anthropicService.js        ← Modelo SELECCIONABLE desde el frontend: `resolveModel(id)` valida contra `ANALYSIS_MODELS` (constants) y cae al default `claude-opus-4-8` — nunca deja pasar un id arbitrario. `buildLlmRequest(context, modelId)` / `analyzeMarket(context, modelId)`; `thinking:{type:'disabled'}` SÓLO en Sonnet 5 (Opus/Haiku sin thinking). PROMPT_VERSION v7_1_conditional_blocks (system ENSAMBLADO CONDICIONALMENTE por `buildSystemPrompt` — los bloques de on-chain/ETF/DVOL solo viajan si el dato existe; `llm_request.prompt_blocks` dice cuáles fueron; vetos, contradicciones —`contradiction_count` cuenta BLOQUES distintos volume/derivados/estructura, no señales sueltas—, decay SMC y umbrales de %/severidad movidos al backend → el LLM interpreta flags, no recalcula); OUTPUT FORMAT JSON puro {structured, narrative} — `structured.missing_confirmations[]` lista en lenguaje claro qué falta para operar; `extractJson()` — parse robusto que extrae el JSON de preámbulo/fences markdown (Sonnet 5 no da JSON puro; Opus sí); AppError 502 si tras extraer no es JSON válido
+  anthropicService.js        ← Modelo SELECCIONABLE desde el frontend: `resolveModel(id)` valida contra `ANALYSIS_MODELS` (constants) y cae al default `claude-opus-4-8` — nunca deja pasar un id arbitrario. `buildLlmRequest(context, modelId)` / `analyzeMarket(context, modelId)`; `thinking:{type:'disabled'}` SÓLO en Sonnet 5 (Opus/Haiku sin thinking). PROMPT_VERSION **v9_0_deterministic_derivatives** — la sección A ya NO puntúa: el modelo COPIA `derivatives_score.score` que calcula el backend (ver `utils/derivativesScore.js`). Reglas nuevas del lote v9_0: **setup obligatorio en `Comprar`/`Vender`** (un trade sin geometría es una opinión y no se puede evaluar), **`conditional_setup` obligatorio en `Esperar`/`Preparar`** (el trade que se tomaría si apareciera lo que falta — hace la abstención medible y convierte cada espera en un shadow trade evaluable), **criterio para `validity_candles`** anclado a las ventanas del backtest (24h=6 velas, 7d=42; por encima de 7d nada puede evaluarse) y **regla para el conflicto CVD por TF** (el primario fija el score, el 1D limita la convicción, el veto manda). System ENSAMBLADO CONDICIONALMENTE por `buildSystemPrompt` — los bloques de on-chain/ETF/DVOL solo viajan si el dato existe; `llm_request.prompt_blocks` dice cuáles fueron; vetos, contradicciones —`contradiction_count` cuenta BLOQUES distintos volume/derivados/estructura, no señales sueltas—, decay SMC y umbrales de %/severidad movidos al backend → el LLM interpreta flags, no recalcula); OUTPUT FORMAT JSON puro {structured, narrative} — `structured.missing_confirmations[]` lista en lenguaje claro qué falta para operar; `extractJson()` — parse robusto que extrae el JSON de preámbulo/fences markdown (Sonnet 5 no da JSON puro; Opus sí); AppError 502 si tras extraer no es JSON válido
   dbService.js               ← saveAnalysis({ header, tfSnapshots, clusters }) — transacción 4 tablas; getAnalysisHistory() devuelve action/confidence/risk_score/executive_summary/score_total; pruning en cascada
   indicatorService.js        ← computeIndicators() — orquesta los 14 indicadores + Volume Profile + computeTrend ponderado
   coingeckoService.js        ← fetchOHLC (Binance klines: 1h/4h/1D/1W con taker_buy_base real), fetchCurrentPrice, fetchBTCDominance, fetchGlobalMarketData, fetchCoinMarketData
@@ -163,6 +170,7 @@ src/utils/
   indicators.js              ← Funciones matemáticas puras (sin I/O)
   volumeProfile.js           ← Volume Profile (POC, VAH, VAL, HVN, LVN) — función pura
   smc.js                     ← Smart Money Concepts: detectSwings, detectLastBOS, detectLastCHoCH, detectUnmitigatedFVGs, calculateSMC — funciones puras. `calculateSMC` anota `signal_status` (active/context/expired) por evento y FVG (decay precalculado, antes lo hacía el LLM)
+  derivativesScore.js        ← **Derivatives Score determinista (v9_0, 2026-07-29)**. Sustituye al scoring del LLM, que era estructuralmente incapaz de salir de 0: sus dos reglas numéricas disparaban el **0,0 %** del tiempo (90d × SOL/BTC/ETH), y como ese score gobierna AMBAS puertas direccionales el sistema no podía emitir `Comprar` ni `Vender`. Rúbrica MEDIDA: eje **OI × dirección del precio 24h** (el OI no tiene dirección propia — expandirse es alcista o bajista según contra qué); solo puntúan las dos celdas que **sobreviven al control de momentum** — `OI↑px↑` = dinero nuevo (+1) y `OI↓px↑` = rally sin dinero nuevo (−1, el efecto mejor evidenciado: continuó al alza 0/24 en SOL y 1/29 en ETH). **`OI↑px↓` NO puntúa**: su efecto aparente era momentum del precio, y meterlo contaminaría con precio un score que está POR ENCIMA de Structure en la jerarquía. Suma la **cascada de liquidaciones de longs** solo si la celda calló (anti-doble-conteo B1: solapan el 33-44 %) y el **funding de cola** (0 % en 90d, correcto: son eventos extremos). Banda de precio = 0,5×ATR%×√n (nunca un % absoluto: fallo T5). FAIL-CLOSED con `data_insufficient` si falta el eje. `measured_at` viaja en la salida: la rúbrica caduca con el régimen
   gating.js                  ← Gating determinista (funciones puras): `computeVetos()` (HARD GATING — AND de 3 condiciones de VETO LONG/SHORT sobre S/R del TF primario; la pata CVD 1D exige divergencia con `cvd_strength` moderate/strong — una divergencia marginal es ruido y la lectura de absorción del prompt hace la señal ambigua) + `computeContradictions()` (5 de las 6 del CONVICTION DECAY; la 6ª depende de scores del LLM). Umbral de cercanía a niveles NORMALIZADO POR VOLATILIDAD (`dynamicNearLevelPct(atrPct, tf)` = 1.5×ATR% del TF primario, suelo 0.5% y **techo POR TF** 2/4/10/25% para 1h/4h/1D/1W, fallback 1.5% fijo → `gating.near_level_pct_used`); `gating.borderline[]` = telemetría de condiciones pegadas al umbral. DEDUPE veto↔contradicciones cubre las TRES patas (CVD 1D, nivel, OI). El controller inyecta el resultado en el bloque `gating` del payload; el LLM obedece los flags en vez de recalcular umbrales
   pathMetrics.js             ← **Fase 5** — recorrido del precio tras un análisis (funciones puras): `computeExcursions` (máximos al alza/baja + hora), `computeFirstPassage` (horas hasta el primer cruce de cada múltiplo de ATR — 0.5/1/1.5/2/3/4 — al alza y a la baja), `computeAtrPct`, `computePathMetrics`. Convención: el instante reportado es el CIERRE de la vela que contiene el evento (cota superior). Límite conocido: si el cruce al alza y el adverso caen en la MISMA vela 1h su orden no es resoluble — el desempate (adverso primero) lo aplica stats.js, igual que `evaluateSetupBarrier` con TP1/stop
   episodes.js                ← **Fase 5** — `episodeKey` / `dedupeByEpisode` / `countEpisodes`: un episodio = una vela del TF primario. Dos análisis de la misma vela 4h comparten casi todo el input, así que contarlos por separado estrecha el IC de Wilson por debajo de la incertidumbre real
@@ -403,7 +411,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **567 tests totales** (tras la Fase 5, el lote de afinado y la vigencia del setup): `indicators.test.js` + `integration.test.js` + `analysisValidator.test.js` + `outcome.test.js` + `outcomeService.test.js` + `gating.test.js` + `decisionGates.test.js` + `expectedScores.test.js` + `stats.test.js` + `timeSeries.test.js` + `timeframeConflicts.test.js` + `levelStrength.test.js` + `historyPersistence.test.js` + `fvgSnapshot.test.js` + `fvgPersistence.test.js` + `extractJson.test.js` + `fundingSummary.test.js` + `modelSelection.test.js` + `lsrSummary.test.js` + `percentiles.test.js` + `cvdStrengthPersistence.test.js` + `promptAssembly.test.js` + `pathMetrics.test.js` + `episodes.test.js` + `opportunityPersistence.test.js` + `historicalKlines.test.js`
+- **620 tests totales** (tras la Fase 5, el afinado, la vigencia del setup y el lote v9_0): `derivativesScore.test.js` + `indicators.test.js` + `integration.test.js` + `analysisValidator.test.js` + `outcome.test.js` + `outcomeService.test.js` + `gating.test.js` + `decisionGates.test.js` + `expectedScores.test.js` + `stats.test.js` + `timeSeries.test.js` + `timeframeConflicts.test.js` + `levelStrength.test.js` + `historyPersistence.test.js` + `fvgSnapshot.test.js` + `fvgPersistence.test.js` + `extractJson.test.js` + `fundingSummary.test.js` + `modelSelection.test.js` + `lsrSummary.test.js` + `percentiles.test.js` + `cvdStrengthPersistence.test.js` + `promptAssembly.test.js` + `pathMetrics.test.js` + `episodes.test.js` + `opportunityPersistence.test.js` + `historicalKlines.test.js`
 
 **Tests que tocan la BD: imports dinámicos obligatorios.** `config/env.js` captura `dbPath` al evaluarse el módulo, así que un `import` estático de cualquier cosa que arrastre `config/db.js` (p. ej. un controller) congela la ruta por defecto **antes** de que `beforeAll` fije `DB_PATH` → el test escribe en `backend/data/cryptex.db`, la BD real. Patrón correcto (`historyPersistence.test.js`, `fvgPersistence.test.js`): fijar `process.env.DB_PATH` primero y luego `await import()` de todo lo de `src/`, con una aserción de guarda sobre `PRAGMA database_list` que falle ruidosamente si la BD activa no es la temporal.
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
@@ -670,6 +678,17 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
     - **Pares de oportunidad POR HORIZONTE**: 24h 2×/1× · 7d **4×/1×**. Un múltiplo fijo se vuelve trivial según crece la ventana (a 7d, 2×/1× saturaba al 67-69 %). El recorrido escala con √t: de 24h a 7d hay 7× de tiempo (√7≈2,6) y el objetivo pasa de 2× a 4×. Verificado: la tasa base a 7d con 4×/1× es 30-42 %, la misma banda que 24h → los dos horizontes pasan a ser comparables.
   - **Endpoint:** `GET /api/outcome/stats` añade `opportunity_cost` (24h/7d), `path_win_rate` (con `by_episode`), `conviction_calibration` y `episodes`. El modal de historial muestra el bloque **antes** del win-rate clásico — enterrarlo bajo un "muestra insuficiente" repetiría el problema que vino a resolver.
 
+- **Lote v9_0 — el Derivatives Score pasa al backend (2026-07-29, `v8_2` → `v9_0_deterministic_derivatives`)** — 567 → **620 tests**. Levantó la congelación a los 2 días, con motivo medido (ver §CONGELACIÓN LEVANTADA).
+  - **El hallazgo que lo desencadena:** el Derivatives Score es la cima de la jerarquía y lo exigen AMBAS puertas (`Comprar` >= +1, `Vender` <= −1). Medido con `scripts/auditDerivativesScore.mjs` sobre 90d × SOL/BTC/ETH, sus **dos únicas reglas numéricas disparaban el 0,0 %** del tiempo y **ninguna producía negativo**: `Vender` no era difícil, era **inalcanzable por construcción**. En producción salió 0 en 6/6 análisis, todos `Esperar`. Es el mismo defecto que v8_0 arregló para Execution ("+2 = timing limpio", sin criterio), aplicado esta vez al score que está PRIMERO en la jerarquía.
+  - **La rúbrica y cómo se midió** (`scripts/auditDerivativesRubric.mjs`, n≈534 anclajes/moneda). Dos correcciones metodológicas propias durante el diseño, ambas encontradas al revisar críticamente la medición: **(1) confundido de momentum** — comparar cada celda contra la tasa base GLOBAL mezcla la información del OI con el hecho de que el precio ya venía moviéndose; al controlar por dirección de precio pasada, `OI↑px↓` **se cae** (+3,7/+4,7/−3,4: ruido) mientras `OI↓px↑` **se refuerza** (−20,2/−24,2). Sin ese control habríamos escrito una celda con el signo invertido. **(2) calentamiento de la mediana** — un tercio de los anclajes se calibró con una mediana a medio formar, **diluyendo la señal de la cascada casi a la mitad** (+14,5 → +31,3 de lift).
+  - **Anti-doble-conteo en la composición:** la cascada solo suma **si la celda OI×precio calló** — medido que duplican el signo el 33-44 % de las veces. Es la regla B1 aplicada dentro del propio score.
+  - **La guardia C2 habría anulado la rúbrica en silencio.** `expectedDerivativesScore` implementaba OTRA rúbrica (funding + LSR contrarian, ±1 el 33 % del tiempo por terciles): un `Comprar` legítimo con derivatives=+1 chocaba con expected=−1 → divergencia ≥2 → **SEVERE → degradado a `Esperar`**. Habría matado ~1 de cada 3 señales direccionales y en BBDD habría parecido una decisión del modelo. Término retirado; la guardia de `volume` sigue viva.
+  - **Fix de unidad de liquidaciones** (`*_coins` canónico + `withDerivedLiqUsd`) y **ventana de 7 → 30 días**: con 7d la mediana coincide con la de 30 solo en el 65,7 % de los EVENTOS pese a tener casi la misma frecuencia agregada, y **en régimen ya cargado pierde el 22 % de las cascadas**. Comparar solo frecuencias lo habría ocultado.
+  - **`setup_validity_candles` deja de ignorarse** (arreglo previo del mismo día): el barrier recorría los 7d completos y acreditaba como `tp1` un TP tocado tras la caducidad del setup — sesgo no neutro, porque el stop suele estar más cerca que el TP.
+  - **Reglas nuevas del prompt:** setup obligatorio en direccionales (`directional_without_setup`, severe) · `conditional_setup` en `Esperar`/`Preparar` (severidad `minor`: su ausencia es defecto de reporte, no decisión mal tomada) · criterio para `validity_candles` anclado a las ventanas del backtest · precedencia explícita ante conflicto CVD entre TFs.
+  - **Poda por falta de dueño (2ª pasada):** `crowded_trade_flag` (sin regla ni consumidor), los CORTES del LSR (`signal_cuts`, `long_pct_percentile` — lo mismo que v8_1 retiró para `cvd_strength_cuts`), `atl_change_pct` (+14.482 % sin lectura posible) y `derivatives_score.rubric`. Todos siguen en el payload y en BBDD.
+  - **Columnas nuevas:** `score_derivatives_backend`, `derivatives_score_components`, `derivatives_data_insufficient`, `conditional_setup`, `liq_longs_24h_coins`, `liq_shorts_24h_coins`. Migraciones idempotentes; el esquema es aditivo.
+
 ---
 
 ## Sistema de Históricos para Análisis LLM
@@ -867,7 +886,8 @@ CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `-
 
 ## Lo que NO hacer
 
-- **No tocar el prompt ni el gating hasta el checkpoint (~2026-08-10)** — ver §DESARROLLO CONGELADO arriba y SESSION_STATE.md §0. Los hallazgos se anotan, no se aplican.
+- **No escribir NINGUNA constante de corte sin medir antes su distribución** — es la regla que destapó T1-T6, el F&G inerte al 87,8 %, el LSR constante y el Derivatives Score al 0,0 %. Si no se puede medir, no se escribe. Ver §CONGELACIÓN LEVANTADA arriba.
+- **No dejar campos huérfanos en el dataset del LLM** — cada dato, un dueño y un papel. Los cortes de calibración (`*_cuts`, `*_pctile`) NO viajan al modelo: lee la etiqueta, no el umbral con el que se generó.
 - No cambiar PixiJS a v8 — se eligió v7.4.x deliberadamente
 - No añadir TypeScript — el proyecto usa JS puro con tipos via JSDoc si es necesario
 - No usar `require()` — solo ES modules

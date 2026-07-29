@@ -126,7 +126,16 @@ export function backendScoreTotal(scores) {
 export function computeExpectedScores(context, primaryTf) {
   const cvd = context?.technical?.[primaryTf]?.cvd ?? null;
   return {
-    derivatives: expectedDerivativesScore(context?.derivatives ?? null),
+    // `derivatives` RETIRADO el 2026-07-29. La guardia existía para detectar que el LLM
+    // contradijera el dato; desde que el backend CALCULA el Derivatives Score
+    // (utils/derivativesScore.js) no hay nada que vigilar — el modelo lo lee, no lo puntúa.
+    //
+    // Y era ACTIVAMENTE DAÑINA: `expectedDerivativesScore` implementa otra rúbrica (funding +
+    // LSR contrarian) y su término de LSR devuelve ±1 el 33 % del tiempo POR CONSTRUCCIÓN
+    // (terciles). Con la rúbrica nueva, un `Comprar` legítimo con derivatives=+1 chocaba con
+    // un expected=-1 → divergencia >=2 → SEVERE → el fail-safe lo degradaba a `Esperar`.
+    // Habría matado ~1 de cada 3 señales direccionales, y en BBDD habría parecido una
+    // decisión del modelo. `expectedVolumeScore` SÍ se conserva: ahí el LLM sigue puntuando.
     volume: expectedVolumeScore(cvd),
   };
 }
