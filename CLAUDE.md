@@ -193,12 +193,12 @@ frontend/
   assets/
     css/styles.css           ← Dark mode completo (variables CSS, todos los componentes)
     js/
-      app.js                 ← Entry point: init PixiJS, carga datos, conecta eventos, persistencia. runAnalysis() lee el modelo del desplegable `#model-select` (persistido en localStorage `cryptex_model`), muestra "⏳ Analizando…" en el botón y al terminar abre el modal de Historial (openHistory) con el resultado + previos
+      app.js                 ← Entry point: init PixiJS, carga datos, conecta eventos, persistencia. **`restoreRecommendationPanel(rec, {serverAnswered})`**: el orden de precedencia es SERVIDOR → puente local → vacío. La copia de `localStorage` es un PUENTE para que el panel no parpadee mientras llega `/api/data`, **no una memoria paralela**: en cuanto el backend contesta (`serverAnswered:true`), un `last_analysis` nulo significa "no hay análisis" y la copia local se PURGA (`clearCoinRecommendation`). Sin esa distinción el fallback no separaba "aún no ha contestado" de "ha dicho que no hay nada", y un análisis viejo sobrevivía a un borrado de BBDD y a un redespliegue, repintado idéntico a uno recién hecho (bug detectado en el punto cero 5, 2026-07-29). runAnalysis() lee el modelo del desplegable `#model-select` (persistido en localStorage `cryptex_model`), muestra "⏳ Analizando…" en el botón y al terminar abre el modal de Historial (openHistory) con el resultado + previos
       api/
         client.js            ← fetchData(coin, tf) + postAnalyze(coin, tf)
       state/
         store.js             ← Estado global: getState(), setState(), subscribe()
-        storage.js           ← Persistencia por coin en localStorage (coin, tf, recommendation)
+        storage.js           ← Persistencia por coin en localStorage (coin, tf, recommendation) + `clearCoinRecommendation(coin)` — borra SOLO la recomendación conservando el `tf`
       ui/
         sidebar.js           ← updateHeader, updateIndicators, updateSentiment, updateRecommendation (schema {structured,narrative}), updateLastAnalysis. show/hideRecommendationLoading fijan `style.display` INLINE (los divs se ocultan con inline en el HTML → togglear sólo la clase `.hidden` no bastaba). Panel "Análisis IA" + "Análisis Previo" son las 2 primeras secciones del sidebar
         history.js           ← Modal historial IA (Fase 12): fetchHistory + fetchOutcomeStats. Cabecera de backtesting (win-rate/PnL/TP-stop) + tarjetas (acción, scores, gating, setup, validation_warnings, resultado outcome por horizonte)

@@ -13,7 +13,7 @@ import { createViewport, drawGrid, drawCandles } from './renderer/draw.js';
 import { initInteractions }              from './renderer/interactions.js';
 import { fetchData, postAnalyze, fetchAnalyzePayload } from './api/client.js';
 import { getState, setState, subscribe } from './state/store.js';
-import { saveLastCoin, loadLastCoin, saveCoinState, loadCoinState } from './state/storage.js';
+import { saveLastCoin, loadLastCoin, saveCoinState, loadCoinState, clearCoinRecommendation } from './state/storage.js';
 import { Timer }                         from './timer.js';
 import {
   updateHeader,
@@ -76,15 +76,29 @@ function syncTfButtons(tf) {
  * localStorage del navegador que lanzó el análisis → no aparecía en la Pi).
  * No emite llamadas a la API — solo actualiza el DOM.
  */
-function restoreRecommendationPanel(localRec) {
+function restoreRecommendationPanel(localRec, { serverAnswered = false } = {}) {
   const serverLast = getState().lastAnalysis;
+
   if (serverLast?.full?.structured) {
     updateRecommendation(serverLast.full, serverLast.timestamp);
-  } else if (localRec) {
-    updateRecommendation(localRec);
-  } else {
-    hideRecommendationLoading();
+    return;
   }
+
+  // El servidor CONTESTÓ y dice que no hay análisis: eso es autoritativo. La copia local es
+  // un PUENTE para que el panel no parpadee mientras llega la respuesta, no una memoria
+  // paralela — si se usara aquí, un análisis de hace semanas sobreviviría a un borrado de
+  // BBDD y a un redespliegue, y se pintaría idéntico a uno recién hecho. En una herramienta
+  // de decisión eso es peor que un panel vacío: no se distingue una recomendación viva de un
+  // fósil. (Detectado el 2026-07-29 tras el punto cero 5: la BBDD estaba a 0 y el panel
+  // seguía mostrando el último análisis de v8_2.)
+  if (serverAnswered) {
+    clearCoinRecommendation(getState().coin);   // purga el fósil: no debe resucitar al recargar
+    hideRecommendationLoading();
+    return;
+  }
+
+  if (localRec) updateRecommendation(localRec);
+  else hideRecommendationLoading();
 }
 
 // ── Carga de datos del backend ─────────────────────────────────────
@@ -373,7 +387,7 @@ function init() {
     // último análisis del servidor (state.lastAnalysis.full) para esta moneda.
     restoreRecommendationPanel(savedRec);
 
-    loadData().then(() => restoreRecommendationPanel(savedRec));
+    loadData().then(() => restoreRecommendationPanel(savedRec, { serverAnswered: true }));
     timer.reset();
   });
 
@@ -382,8 +396,10 @@ function init() {
   setState({ recommendation: initialRec });
 
   loadData().then(() => {
-    // Restaurar panel recomendación tras cargar datos (así no compite con el spinner)
-    restoreRecommendationPanel(initialRec);
+    // Restaurar panel recomendación tras cargar datos (así no compite con el spinner).
+    // `serverAnswered` marca que la respuesta del backend ya llegó: a partir de aquí un
+    // `last_analysis` nulo significa "no hay análisis", no "todavía no lo sé".
+    restoreRecommendationPanel(initialRec, { serverAnswered: true });
   });
 
   saveLastCoin(savedCoin);

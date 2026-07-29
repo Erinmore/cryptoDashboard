@@ -53,3 +53,23 @@ export function saveCoinState(coin, patch) {
 export function loadCoinState(coin) {
   return load(`${P}_state_${coin}`, {});
 }
+
+/**
+ * Borra SOLO la recomendación persistida de una moneda, conservando su `tf`.
+ *
+ * La copia local del análisis es un PUENTE para que el panel no parpadee mientras llega la
+ * respuesta del backend, NO una memoria paralela. Cuando el servidor contesta que no hay
+ * análisis, esta copia debe desaparecer: si no, sobrevive a un borrado de BBDD y a un
+ * redespliegue, y se repinta idéntica a un análisis recién hecho. En una herramienta de
+ * decisión eso es peor que un panel vacío — no se distingue una recomendación viva de un
+ * fósil. (Detectado el 2026-07-29 tras el punto cero 5.)
+ *
+ * @param {string} coin
+ */
+export function clearCoinRecommendation(coin) {
+  if (!coin) return;
+  const prev = loadCoinState(coin);
+  if (prev?.recommendation == null) return;
+  const { recommendation, ...rest } = prev;
+  save(`${P}_state_${coin}`, rest);
+}
