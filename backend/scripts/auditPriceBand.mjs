@@ -34,6 +34,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { calculateATRSeries } from '../src/utils/indicators.js';
+import { wilsonInterval } from '../src/utils/stats.js';
 
 const COINS = (process.env.COINS ?? 'SOL,BTC,ETH').split(',').map((s) => s.trim());
 const DAYS = 90;                 // límite de Coinalyze para el OI
@@ -42,6 +43,10 @@ const SQRTW = Math.sqrt(LOOKBACK);
 const OI_BAND = 1.0;             // ±1 %, en producción (gating.js)
 const FWD_BAND = 0.5;            // banda del movimiento FUTURO, fija en todos los candidatos
 const CANDIDATES = [0.25, 0.35, 0.50, 0.75, 1.00];
+// Por debajo de esto la celda NO se reporta como evidencia. Sin la guarda, la fila de 1,00×
+// salía con n=3-4 y su lift (+17,0 / -20,8 = 1 de 4 y 0 de 3) se leía junto a filas de n=42
+// como si fueran comparables. Es el error que este script vino a evitar en el prompt.
+const MIN_N = 15;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const API_KEY = readFileSync(path.join(here, '../../.env'), 'utf8').match(/COINALYZE_API_KEY=(.+)/)?.[1]?.trim();
@@ -95,10 +100,20 @@ async function auditCoin(coin) {
   const oiLive = rows.filter((r) => Math.abs(r.oiChange) > OI_BAND).length;
 
   console.log(`\n  n=${n} anclajes · eje de OI vivo (|ΔOI|>${OI_BAND}%): ${pct(oiLive, n)}\n`);
-  console.log('  ── FUGA: anclajes con el OI VIVO que la banda de precio silencia ──\n');
+  // Dos cifras distintas: el eje silenciado y la señal REALMENTE perdida. Si el precio
+  // saliera de banda, solo DOS de las cuatro celdas puntúan (OI↑px↑ y OI↓px↑), así que
+  // "silencia el 55 %" exagera la pérdida — la señal perdida es la que habría CAÍDO EN UNA
+  // CELDA QUE PUNTÚA, y se estima con la proporción observada de px↑ entre los que sí salen.
+  console.log('  ── FUGA de la banda de precio ──\n');
+  console.log('    banda   eje vivo silenciado   señal que habría puntuado');
   for (const b of CANDIDATES) {
-    const lost = rows.filter((r) => Math.abs(r.oiChange) > OI_BAND && Math.abs(r.pxAtr) <= b).length;
-    console.log(`    banda ${b.toFixed(2)}×   silencia ${pct(lost, oiLive)} del eje vivo`);
+    const live = rows.filter((r) => Math.abs(r.oiChange) > OI_BAND);
+    const lost = live.filter((r) => Math.abs(r.pxAtr) <= b);
+    const out = live.filter((r) => Math.abs(r.pxAtr) > b);
+    // De los que SÍ salen de banda, ¿qué fracción cae en una celda que puntúa? (px↑, ambos OI)
+    const scoreShare = out.length ? out.filter((r) => r.pxAtr > b).length / out.length : 0;
+    console.log(`    ${b.toFixed(2)}×      ${pct(lost.length, live.length)}`
+      + `              ~${(lost.length * scoreShare / live.length * 100).toFixed(1)}%`);
   }
 
   console.log('\n  ── ¿SOBREVIVE EL EFECTO? lift vs la base DEL GRUPO de precio ──\n');
@@ -118,9 +133,13 @@ async function auditCoin(coin) {
       if (!sel.length) { console.log(`   ${b.toFixed(2)}×   ${label}   celda vacía`); continue; }
       const hit = sel.filter((r) => (dir > 0 ? r.fwdAtr > FWD_BAND : r.fwdAtr < -FWD_BAND)).length;
       const rate = (hit / sel.length) * 100;
-      console.log(`   ${b.toFixed(2)}×   ${label} ${String(sel.length).padStart(4)}   ${pct(sel.length, n)}`
-        + `     ${rate.toFixed(1).padStart(5)}%   ${sig(rate - base)}`);
-      out[`${b}|${oSign}`] = { lift: rate - base, cov: (sel.length / n) * 100 };
+      const ci = wilsonInterval(hit, sel.length);
+      const thin = sel.length < MIN_N;
+      console.log(`   ${b.toFixed(2)}×   ${label} ${String(sel.length).padStart(4)}   ${pct(sel.length, withFwd.length)}`
+        + `     ${rate.toFixed(1).padStart(5)}%   ${sig(rate - base)}`
+        + `   IC[${String(ci.low).padStart(4)}-${String(ci.high).padStart(4)}]`
+        + (thin ? `  ⚠ n<${MIN_N}: NO es evidencia` : ''));
+      out[`${b}|${oSign}`] = { lift: rate - base, cov: (sel.length / withFwd.length) * 100, n: sel.length, thin };
     }
     console.log('');
   }
@@ -143,7 +162,8 @@ console.log('  banda    ' + res.map((r) => `${r.coin} OI↑ / OI↓`).join('   '
 for (const b of CANDIDATES) {
   const cells = res.map((r) => {
     const a = r[`${b}|1`], d = r[`${b}|-1`];
-    return `${a ? sig(a.lift) : '   —  '} /${d ? sig(d.lift) : '   —  '}`;
+    const f = (c) => (!c ? '   —  ' : c.thin ? '  n<15' : sig(c.lift));
+    return `${f(a)} /${f(d)}`;
   });
   console.log(`  ${b.toFixed(2)}×   ` + cells.join('  '));
 }
