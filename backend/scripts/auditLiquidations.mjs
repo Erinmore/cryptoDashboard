@@ -133,9 +133,16 @@ async function auditCoin(coin) {
   if (!anchors.length) { console.log('  Sin anclajes utilizables.'); return null; }
 
   // Mediana rodante de 30 días del total (self-normalizing, sin constante nueva).
+  // ⚠️ CALENTAMIENTO (corregido 2026-07-30): `Math.max(0, i - per30d)` deja los primeros 30
+  // días con una mediana sobre menos puntos que la de producción, que siempre usa 30 días
+  // completos (guard `cascade_min_points: 620`). Es el mismo defecto que hubo que corregir en
+  // `auditDerivativesRubric`, donde diluía el lift de la cascada casi a la mitad
+  // (+14,5 → +31,3). Aquí el anclaje se MARCA en vez de descartarse, para poder reportar la
+  // cifra con y sin calentamiento y ver cuánto se movía.
   const per30d = Math.floor((30 * 24) / STEP_H);
   for (let i = 0; i < anchors.length; i++) {
     const from = Math.max(0, i - per30d);
+    anchors[i].warm = i >= per30d;
     const med = median(anchors.slice(from, i + 1).map((a) => a.total));
     anchors[i].vsMedian = med > 0 ? anchors[i].total / med : null;
     anchors[i].pctOi = anchors[i].oiCoins > 0 ? (anchors[i].total / anchors[i].oiCoins) * 100 : null;
@@ -177,15 +184,23 @@ async function auditCoin(coin) {
   // ── 3 · CONJUNCIÓN (lo que sería una regla de verdad) ──────────────────────
   // Una cascada útil no es "hubo liquidaciones": es magnitud ANORMAL con un lado claro.
   console.log(`\n3 · CONJUNCIÓN skew × magnitud — % de anclajes que dispararían la regla\n`);
-  console.log('              mag>=1.5×   mag>=2×    mag>=3×');
-  for (const sc of [0.3, 0.5, 0.7]) {
-    const row = (sign) => [1.5, 2, 3].map((mc) => {
-      const k = anchors.filter((a) => Number.isFinite(a.vsMedian) && a.vsMedian >= mc
-        && (sign > 0 ? a.skew >= sc : a.skew <= -sc)).length;
-      return pct(k, n);
-    }).join('  ');
-    console.log(`   skew>=+${sc}  ${row(1)}`);
-    console.log(`   skew<=-${sc}  ${row(-1)}`);
+  // Se reportan las DOS cifras: con todos los anclajes y solo con los que tienen la mediana
+  // de 30 días COMPLETA — que es el régimen en el que opera producción. Si difieren mucho, la
+  // cifra "todos" no describe lo que hará el sistema.
+  const warm = anchors.filter((a) => a.warm);
+  for (const [etiqueta, set] of [['TODOS los anclajes', anchors], [`mediana 30d COMPLETA (n=${warm.length})`, warm]]) {
+    console.log(`   ── ${etiqueta} ──`);
+    console.log('              mag>=1.5×   mag>=2×    mag>=3×');
+    for (const sc of [0.3, 0.5, 0.7]) {
+      const row = (sign) => [1.5, 2, 3].map((mc) => {
+        const k = set.filter((a) => Number.isFinite(a.vsMedian) && a.vsMedian >= mc
+          && (sign > 0 ? a.skew >= sc : a.skew <= -sc)).length;
+        return pct(k, set.length);
+      }).join('  ');
+      console.log(`   skew>=+${sc}  ${row(1)}`);
+      console.log(`   skew<=-${sc}  ${row(-1)}`);
+    }
+    console.log('');
   }
 
   return {
