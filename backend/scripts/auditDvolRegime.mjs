@@ -37,6 +37,10 @@ const DAYS = Number(process.env.DAYS) || 365;
 const TARGET_K = 2;    // múltiplos ya calibrados para el horizonte de 24h
 const ADVERSE_K = 1;
 const FWD_CANDLES = 6; // 24h en velas de 4h
+// Igual que en auditPriceBand: por debajo de esto el lift NO es evidencia y no entra en el
+// resumen. `elevated` y `panic` salen con n=6, y reportar su lift junto al de n=832 fue el
+// mismo error de presentación que ya hubo que corregir en el otro script.
+const MIN_N = 30;
 
 const pct = (n, t) => (t === 0 ? '   —  ' : `${((n / t) * 100).toFixed(1).padStart(5)}%`);
 const verdict = (p) => (p < 5 ? ' ← RAMA MUERTA' : p >= 45 && p <= 55 ? ' ← MONEDA AL AIRE' : '');
@@ -87,18 +91,32 @@ function offered(candles, i, atrPct) {
   if (!(atrPct > 0) || !(entry > 0)) return null;
   const tgt = (TARGET_K * atrPct) / 100 * entry;
   const adv = (ADVERSE_K * atrPct) / 100 * entry;
+
+  // ⚠️ CORREGIDO (revisión crítica): la versión anterior hacía `if (dnAdv) return null`, y
+  // `dnAdv` significa "el precio SUBIÓ 1×ATR" — que es FAVORABLE para la tesis alcista, no
+  // adverso. Descartaba el ancla entera en cuanto el precio se movía 1×ATR en cualquier
+  // dirección antes de alcanzar 2×, así que subestimaba las oportunidades por un factor ~3:
+  // la tasa base salía 11-15 % cuando `auditOpportunityThresholds.mjs` midió 34,8 % para el
+  // MISMO par a 24h. Esa discrepancia era la señal y no la cuestioné.
+  //
+  // Ahora cada tesis se sigue por separado: una sube 1×ATR en contra solo mata a la ALCISTA.
+  // Convención conservadora dentro de una misma vela: si se tocan objetivo y adverso, gana el
+  // adverso (no es resoluble con velas de 4h, igual que en `evaluateSetupBarrier`).
+  let up = null, dn = null;
   for (let k = i + 1; k <= i + FWD_CANDLES && k < candles.length; k++) {
     const { high, low } = candles[k];
-    const upHit = high - entry >= tgt, dnHit = entry - low >= tgt;
-    const upAdv = entry - low >= adv, dnAdv = high - entry >= adv;
-    // Convención conservadora: si el objetivo y el adverso caen en la MISMA vela, gana el
-    // adverso (no es resoluble con velas de 4h y así no se inventa un acierto).
-    if (upHit && !upAdv) return 'up';
-    if (dnHit && !dnAdv) return 'down';
-    if (upAdv && dnAdv) return null;   // barrida en ambos sentidos: latigazo, no oportunidad
-    if (upAdv) return null;            // el adverso del alza llegó antes
-    if (dnAdv) return null;
+    if (up === null) {
+      if (entry - low >= adv) up = 'stopped';
+      else if (high - entry >= tgt) up = 'hit';
+    }
+    if (dn === null) {
+      if (high - entry >= adv) dn = 'stopped';
+      else if (entry - low >= tgt) dn = 'hit';
+    }
+    if (up !== null && dn !== null) break;
   }
+  if (up === 'hit') return 'up';
+  if (dn === 'hit') return 'down';
   return null;
 }
 
@@ -165,7 +183,7 @@ for (const c of COINS) {
 console.log(`\n${'═'.repeat(78)}\nRESUMEN — lift de la tasa de oportunidad por régimen (puntos)\n${'═'.repeat(78)}`);
 console.log('  moneda   base    complacent   normal   elevated   panic');
 for (const r of res) {
-  const f = (g) => (r[g] ? `${(r[g].lift >= 0 ? '+' : '') + r[g].lift.toFixed(1)}`.padStart(8) : '     —  ');
+    const f = (g) => (!r[g] ? '     —  ' : r[g].n < MIN_N ? `  n<${MIN_N}`.padStart(8) : `${(r[g].lift >= 0 ? '+' : '') + r[g].lift.toFixed(1)}`.padStart(8));
   console.log(`  ${r.coin.padEnd(7)} ${r.baseOff.toFixed(1).padStart(5)}%${f('complacent')}${f('normal')}${f('elevated')}${f('panic')}`);
 }
 console.log('\n  Para que merezca una regla: buckets no muertos, lift consistente entre monedas,');
