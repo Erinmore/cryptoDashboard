@@ -1044,6 +1044,51 @@ html, body {
   color: var(--text-secondary);
   line-height: 1.5;
 }
+/* Contradicciones por EJE. Se pintan los tres siempre —no solo los que fallan— porque el
+   conteo solo se entiende viendo la escala completa: "2 de 3" no dice nada si no ves cuáles
+   son los 3 ni cuáles están en contra. */
+.hist-contra {
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-md) var(--sp-lg);
+  margin-bottom: var(--sp-sm);
+}
+.hist-contra-label {
+  display: block;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: var(--sp-md);
+}
+.hist-contra-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-md);
+}
+.hist-contra-chip {
+  font-size: var(--fs-sm);
+  padding: var(--sp-xs) var(--sp-lg);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: help;
+}
+.hist-contra-chip.on {
+  background: var(--alert-danger-bg);
+  color: var(--alert-danger-text);
+  border-color: var(--bearish);
+}
+.hist-contra-chip.off {
+  background: var(--bg-surface);
+  color: var(--text-muted);
+}
+.hist-contra-note {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  margin-top: var(--sp-md);
+  line-height: 1.4;
+}
+
 /* Setup CONDICIONAL — el trade que se tomaría si apareciera lo que falta. Se distingue del
    setup real (`.hist-setup`) con borde punteado: no es ejecutable, es la hipótesis que
    justifica la espera y permite evaluarla a posteriori. */

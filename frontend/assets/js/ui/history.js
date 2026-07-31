@@ -134,7 +134,7 @@ function renderCard(a) {
   const badges = el('div', 'hist-badges');
   if (a.gating_active) {
     const b = el('span', 'hist-badge warn', 'gating');
-    if (a.gating_reason) b.title = a.gating_reason;
+    if (a.gating_reason) b.dataset.tooltip = a.gating_reason;
     badges.appendChild(b);
   }
   if (a.tf_conflict) {
@@ -146,35 +146,62 @@ function renderCard(a) {
     const severe = warns.filter(w => w.severity === 'severe').length;
     const label = severe > 0 ? `${warns.length} avisos (${severe} sev.)` : `${warns.length} avisos`;
     const b = el('span', `hist-badge ${severe > 0 ? 'warn' : 'watch'}`, label);
-    b.title = warns.map(w => `${w.severity}: ${w.rule}`).join('\n');
-    badges.appendChild(b);
-  }
-  // Contradicciones deterministas del backend. Se muestra el conteo que gobierna la puerta
-  // (bloques) y, en el tooltip, los códigos crudos + lo que absorbió el veto — que es donde
-  // se ve el efecto real del dedupe.
-  if (a.contradiction_count != null && a.contradiction_count > 0) {
-    const parse = (s) => { try { return JSON.parse(s) ?? []; } catch { return []; } };
-    const codes = parse(a.contradiction_codes);
-    const deduped = parse(a.deduped_by_veto);
-    const raw = a.contradictions_signal_count;
-    // El conteo cuenta BLOQUES analíticos distintos (volumen/derivados/estructura), máximo 3,
-    // y con 3 la convicción decae y se fuerza `Esperar`. La etiqueta anterior era
-    // "2 contradic. (de 3)", que se lee como "2 de 3 bloques" cuando en realidad el 3 era el
-    // número de señales CRUDAS. Ahora se nombra la escala y se dicen cuáles fallan.
-    const blocks = parse(a.contradiction_blocks);
-    const ES = { volume: 'volumen', derivatives: 'derivados', structure: 'estructura' };
-    const nombres = blocks.map((x) => ES[x] ?? x);
-    const b = el('span', 'hist-badge watch',
-      `${a.contradiction_count}/3 bloques${nombres.length ? ': ' + nombres.join(' + ') : ''}`);
-    const lines = ['Bloques posibles: volumen · derivados · estructura',
-      'Con los 3 en contradicción la convicción decae y se fuerza Esperar.'];
-    if (codes.length) lines.push(`\nSeñales que cuentan: ${codes.join(', ')}`);
-    if (deduped.length) lines.push(`Absorbidas por el veto: ${deduped.join(', ')}`);
-    if (raw != null) lines.push(`${raw} señales crudas → ${a.contradiction_count} bloques distintos`);
-    b.title = lines.join('\n');
+    b.dataset.tooltip = warns.map(w => `${w.severity}: ${w.rule}`).join('\n');
     badges.appendChild(b);
   }
   if (badges.childNodes.length) card.appendChild(badges);
+
+  // ── Contradicciones ────────────────────────────────────────────────────────
+  // NO se pintan como insignia: hace falta ver LOS TRES ejes y cuáles fallan. La versión
+  // anterior decía "2 contradic. (de 3)" y era ambigua por partida doble — ese 3 eran las
+  // señales CRUDAS y no los bloques, y no se veía cuáles estaban en contra. Si una etiqueta
+  // necesita un tooltip para entenderse, la etiqueta está mal (2026-07-31).
+  //
+  // El conteo cuenta BLOQUES analíticos distintos (volumen/derivados/estructura, máximo 3);
+  // con los tres en contra la convicción decae y el output se fuerza a `Esperar`.
+  if (a.contradiction_blocks != null || a.contradiction_count != null) {
+    const parse = (v) => { try { return JSON.parse(v) ?? []; } catch { return []; } };
+    const blocks  = parse(a.contradiction_blocks);
+    const codes   = parse(a.contradiction_codes);
+    const deduped = parse(a.deduped_by_veto);
+    // Mismo mapa que utils/gating.js. Solo se usa para repartir los códigos entre los ejes
+    // en el detalle; el dato que manda es `contradiction_blocks`, que llega del backend.
+    const BLOCK_OF = {
+      cvd_1d_divergence: 'volume', oi_flat_or_falling: 'derivatives',
+      price_near_key_level: 'structure', htf_conflict_1w_1d: 'structure',
+      smc_structural_conflict: 'structure',
+    };
+    const ES = { volume: 'volumen', derivatives: 'derivados', structure: 'estructura' };
+    const n = a.contradiction_count ?? blocks.length;
+
+    const box = el('div', 'hist-contra');
+    box.appendChild(el('span', 'hist-contra-label', `Contradicciones · ${n} de 3 ejes`));
+
+    const chips = el('div', 'hist-contra-chips');
+    for (const key of ['volume', 'derivatives', 'structure']) {
+      const on = blocks.includes(key);
+      const chip = el('span', `hist-contra-chip ${on ? 'on' : 'off'}`,
+        `${on ? '✕' : '✓'} ${ES[key]}`);
+      const suyos = codes.filter((c) => BLOCK_OF[c] === key);
+      // `data-tooltip` = sistema propio del proyecto. El `title` nativo apenas se ve, y era
+      // lo que hacía invisible la ayuda que había puesto aquí.
+      chip.dataset.tooltip = suyos.length
+        ? `En contra:\n· ${suyos.join('\n· ')}`
+        : 'Sin contradicción en este eje';
+      chips.appendChild(chip);
+    }
+    box.appendChild(chips);
+
+    const nota = el('div', 'hist-contra-note', n >= 3
+      ? 'Los 3 ejes en contra → la convicción decae y se fuerza Esperar.'
+      : `Con los 3 en contra se forzaría Esperar. Este análisis lo decidió el modelo.`);
+    if (deduped.length) {
+      nota.dataset.tooltip = `El veto ya cubría estas, por eso no cuentan aparte:\n· ${deduped.join('\n· ')}`;
+    }
+    box.appendChild(nota);
+    card.appendChild(box);
+  }
+
 
   // Qué falta para poder operar. Es la única salida accionable de un sistema que dice
   // "Esperar" casi siempre: se persistía y se devolvía por la API, pero no se pintaba en

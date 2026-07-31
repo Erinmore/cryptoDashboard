@@ -161,6 +161,7 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   macroService.js            ← Macro context DXY/SPX/Gold (Yahoo Finance v8, sin auth) — value, change_24h_pct, trend_5d
   deribitService.js          ← DVOL volatility index BTC/ETH (Deribit public API, sin auth) — value, regime, change_24h_pct; SOL null. Cache 5min
   historyService.js          ← Históricos por coin para análisis LLM (7-30 días) — en memoria (ventana LLM) + persistencia SQLite write-through (tabla history_series). CVD/VWAP se hidratan al arrancar (únicas sin API que sirva su histórico ya calculado — pero SÍ reconstruibles con `scripts/backfillHistorySeries.mjs`, ver abajo); el resto se persiste para acumular pero se rellena fresco de su API
+  (scripts) auditVetoFrequency.mjs ← Mide la FRECUENCIA real del veto y del grupo 2 de umbrales (funding severity, LSR contrarian) sobre 90 días de Coinalyze — lo que no se puede medir solo con klines. Resultado vigente: el veto dispara el **8,2 %** del tiempo (11 episodios/90d), así que NO se aflojó de más al recalibrar; el LSR contrarian con corte 60/40 daba `contrarian_bear` el 95,7 % y se corrigió a terciles (y en v9_0 acabó saliendo de la rúbrica)
   (scripts) auditLiquidations.mjs ← Mide skew y magnitud de las liquidaciones (el 3er input sin regla del Derivatives Score). Umbral resultante: `skew <= -0,5` Y `magnitud >= 2×` la mediana de 30d. ⚠️ **Calentamiento de mediana corregido el 2026-07-30** (mismo defecto que en `auditDerivativesRubric`): ahora reporta las cifras con TODOS los anclajes y solo con la mediana de 30d COMPLETA, que es el régimen en el que opera producción por el guard `cascade_min_points: 620`. **El umbral aguanta**: cascada de longs al 8,8→9,9 % (SOL), 10,6→7,0 % (BTC), 8,9→6,5 % (ETH) — se mueve 1-3,6 puntos y las tres siguen en la banda discriminante. Confirma que el calentamiento diluía la FUERZA del efecto (+14,5→+31,3 de lift en el otro script) y no desplazaba el corte. Hallazgo colateral: la cascada ALCISTA cae al **2,0 %** con mediana completa → rama muerta, segunda razón independiente para haberla descartado
   (scripts) auditPriceBand.mjs ← **La banda se MANTIENE en 0,50×, pero no por ser demostrablemente mejor (2026-07-30)**. Nació de que los 2 primeros análisis de `v9_0` dieran `oi_price_cell: "no_signal"`, el segundo con el eje de OI VIVO (+1,68 %) y el precio dentro de banda (−0,81 % vs ~1,6 %): a UNA celda del primer `Vender`. **Fuga real: ~24 % de la señal que habría puntuado** (el 55 % del "eje vivo silenciado" exagera, porque solo 2 de las 4 celdas puntúan). **Aflojar no se justifica**: la celda `OI↑` —con n suficiente— degrada monótonamente (SOL 16,1→11,0→13,1→8,6→4,7) y la `OI↓` deja de ser medible (n<15), así que iríamos a ciegas. **Pero apretar a 0,35× es alternativa real**: las 6 celdas positivas, fuga al ~18 % y MEJOR n (41-59 vs 24-29); ETH lo prefiere. Con 90 días de Coinalyze **los datos NO separan 0,35× de 0,50×**. Se mantiene porque nada obliga a cambiarlo y cambiarlo cuesta un punto cero; 0,35× es el primer candidato si el `no_signal` resulta dominante con más muestra. ⚠️ **Guarda `MIN_N=15` y IC de Wilson añadidos tras una revisión crítica**: la primera versión reportó las filas de 0,75×/1,00× (n=3-7) junto a las de n=42 como si fueran comparables, y la conclusión inicial ("aflojar se va a negativo") se apoyaba en ese ruido
   (scripts) auditDvolRegime.mjs ← **Resultado NEGATIVO: el DVOL de BTC no merece regla (2026-07-29, revisado 2026-07-30)**. Medido sobre 365d × SOL/ETH/BTC (n=2.170 anclajes 4h). Tres razones: (1) **dos de los cuatro buckets están muertos** — `elevated`+`panic` suman 12 anclajes (**0,3 %**) porque el índice pasó el año entre 33,8 y 48,3, así que los cortes en 60/80 son ramas muertas; (2) **el efecto de los dos vivos cae dentro del ruido** — `complacent` +0,5/+1,2/+2,6 y `normal` −0,3/−0,6/−2,0 sobre una base del 36-38 %, con IC muy solapados ([32,5-48,6] vs [28,9-41,3]); (3) **redundancia**: lo único con mecanismo real es que la implícita predice la realizada (ATR% 1,90→2,38→2,34→5,73 en SOL, monótono en las tres), y eso ya lo mide el `ATR%` del propio activo, que además normaliza todos los umbrales → sería doble conteo con un proxy indirecto y con retardo. **Nota de método:** la métrica de oportunidad está ATR-normalizada, así que era incapaz de detectar una señal de volatilidad por construcción — la pregunta estaba mal planteada. ⚠️ **Dos bugs corregidos el 2026-07-30 tras revisión crítica:** la lógica de oportunidad hacía `if (dnAdv) return null`, y `dnAdv` (el precio SUBIÓ 1×ATR) es favorable para la tesis alcista, no adverso — descartaba el ancla entera y subestimaba las oportunidades por un factor 3 (base 11-15 % en vez de 35,8-38,1 %). **La discrepancia con el 34,8 % de `auditOpportunityThresholds` era la señal y no se cuestionó.** Además faltaba la guarda de n en el resumen. Corregirlo tumbó el argumento original de "signos invertidos = ruido": los signos SÍ son consistentes; lo que descarta la regla es la magnitud y la redundancia. Revisar solo con DVOL > 60 sostenido, y por la puerta de RIESGO (tamaño de posición), no la direccional
@@ -415,7 +416,7 @@ npm test
 
 - Framework: **Jest 29** con soporte ES modules vía `--experimental-vm-modules`
 - Los tests están en `backend/tests/`
-- **630 tests totales** (tras la Fase 5, el afinado, la vigencia del setup, el lote v9_0 y el preflight F1/F2): `derivativesScore.test.js` + `indicators.test.js` + `integration.test.js` + `analysisValidator.test.js` + `outcome.test.js` + `outcomeService.test.js` + `gating.test.js` + `decisionGates.test.js` + `expectedScores.test.js` + `stats.test.js` + `timeSeries.test.js` + `timeframeConflicts.test.js` + `levelStrength.test.js` + `historyPersistence.test.js` + `fvgSnapshot.test.js` + `fvgPersistence.test.js` + `extractJson.test.js` + `fundingSummary.test.js` + `modelSelection.test.js` + `lsrSummary.test.js` + `percentiles.test.js` + `cvdStrengthPersistence.test.js` + `promptAssembly.test.js` + `pathMetrics.test.js` + `episodes.test.js` + `opportunityPersistence.test.js` + `historicalKlines.test.js` + `btcContextPersistence.test.js`
+- **635 tests totales** (tras la Fase 5, el afinado, la vigencia del setup, el lote v9_0, el preflight y el historial): `derivativesScore.test.js` + `indicators.test.js` + `integration.test.js` + `analysisValidator.test.js` + `outcome.test.js` + `outcomeService.test.js` + `gating.test.js` + `decisionGates.test.js` + `expectedScores.test.js` + `stats.test.js` + `timeSeries.test.js` + `timeframeConflicts.test.js` + `levelStrength.test.js` + `historyPersistence.test.js` + `fvgSnapshot.test.js` + `fvgPersistence.test.js` + `extractJson.test.js` + `fundingSummary.test.js` + `modelSelection.test.js` + `lsrSummary.test.js` + `percentiles.test.js` + `cvdStrengthPersistence.test.js` + `promptAssembly.test.js` + `pathMetrics.test.js` + `episodes.test.js` + `opportunityPersistence.test.js` + `historicalKlines.test.js` + `btcContextPersistence.test.js`
 
 **Tests que tocan la BD: imports dinámicos obligatorios.** `config/env.js` captura `dbPath` al evaluarse el módulo, así que un `import` estático de cualquier cosa que arrastre `config/db.js` (p. ej. un controller) congela la ruta por defecto **antes** de que `beforeAll` fije `DB_PATH` → el test escribe en `backend/data/cryptex.db`, la BD real. Patrón correcto (`historyPersistence.test.js`, `fvgPersistence.test.js`): fijar `process.env.DB_PATH` primero y luego `await import()` de todo lo de `src/`, con una aserción de guarda sobre `PRAGMA database_list` que falle ruidosamente si la BD activa no es la temporal.
 - Los tests de indicadores usan datos sintéticos diseñados para ejercitar comportamiento, no valores exactos de mercado
@@ -459,7 +460,30 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 
 ---
 
-## Estado del proyecto (2026-04-27)
+## Estado ACTUAL — leer esto antes que la tabla histórica
+
+| | |
+|---|---|
+| Código | **`v9_0_deterministic_derivatives`** · 635 tests |
+| Fase | **Periodo de medición ACTIVO** desde el punto cero 5 (2026-07-29 23:17 CEST) |
+| Producción | Pi `192.168.1.250:8080` · crons A+B+C+D activos · BBDD desde cero |
+| Revisión temprana | **2026-08-02** (~7-9 análisis) — NO es el checkpoint |
+| Dónde mirar | **`SESSION_STATE.md §0`** — tabla de hallazgos abiertos, criterio de salida y calendario |
+
+**Qué se está midiendo y por qué:** hasta v9_0 el sistema **no podía emitir ninguna decisión
+direccional** — el Derivatives Score, cima de la jerarquía y exigido por ambas puertas, tenía
+dos reglas que disparaban el 0,0 % del tiempo. Con la rúbrica medida ese score alcanza
+`|>=1|` el 23-25 % del tiempo, así que este periodo responde tres preguntas: ¿sale de 0?, si
+sigue todo `Esperar` ¿quién bloquea ahora?, y ¿vienen los `conditional_setup` bien formados?
+
+**Hallazgos ABIERTOS que un ingeniero nuevo debe conocer antes de tocar la ruta de decisión**
+(detalle en `SESSION_STATE.md §0`): el `veto_short` puede tener coste direccional · el veto
+dispara al 50 % en muestra vs 8,2 % en 90d · `offered_pct` es la cifra del checkpoint · la
+evaluación del shadow trade está sin montar · hay cuatro "vigencias" implícitas sin unificar.
+
+---
+
+## Estado histórico por bloques (hasta 2026-04-27)
 
 | Bloque | Contenido | Estado |
 |--------|-----------|--------|
@@ -623,7 +647,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
   - **Churn del backtest acotado** (`services/outcomeService.js`): un setup con `has_executable_setup=1` pero `entry_price` nulo (geometría irreconstruible y **permanente**) se marca `setup_outcome='invalid'` de inmediato en vez de esperar al horizonte de 7d re-evaluando el barrier en balde cada ciclo. Cubierto por `tests/outcomeService.test.js` (4 tests: `runOutcomeJob` con mocks ESM de coingecko/dbService — invalid inmediato, preservación, y contraste con setup válido open/tp1).
   - **Desplegado a la Pi (2026-07-10)** con `deploy.sh` y **verificado en vivo** contra `/api/analyze/payload` (SOL/4h): `prompt_version=v6_5_block_dedup` sirviéndose; el dedupe por bloque colapsa 3 señales (`oi_flat_or_falling`+`price_near_key_level`+`htf_conflict_1w_1d`) → **2 bloques** (`derivatives`+`structure`); la guardia de volumen se **abstiene** con CVD 4h `marginal`. `.env` de la Pi saneado de paso: `NODE_ENV`/`PORT` alineados a production/8080 (eran inertes — systemd los sobrescribe) y retirada la key huérfana `OPENROUTER_AI_API_KEY` (no la usa ningún módulo).
 
-- **Sprint 2ª Auditoría Red-Team (2026-07-10/12, PROMPT_VERSION v6_5 → v6_8_atr_levels)** — auditoría interna exhaustiva del pipeline de decisión (18 perspectivas) que encontró 3 críticos nuevos + serie de altos/medios. Remediación en 5 fases (0-4), cada una con tests y commit. **372 → 399 tests.** Detalle completo en SESSION_STATE.md §26.
+- **Sprint 2ª Auditoría Red-Team (2026-07-10/12, PROMPT_VERSION v6_5 → v6_8_atr_levels)** — auditoría interna exhaustiva del pipeline de decisión (18 perspectivas) que encontró 3 críticos nuevos + serie de altos/medios. Remediación en 5 fases (0-4), cada una con tests y commit. **372 → 399 tests.** Detalle completo en `doc/SESSION_STATE_2026-07-26_pre-fase-afinado.md` §26.
   - **Fase 0 (verificación)**: OI de Coinalyze confirmado en MONEDAS BASE (103.610 BTC vs $6,64B con `convert_to_usd=true`); telemetría de la Pi vía `auditStats.mjs`: 10 análisis, 100% Esperar, la pata CVD del veto nunca había disparado.
   - **Fase 1 (críticos, `cce76c4`)**: (1) **leak de `expected_scores` al LLM cerrado** — `buildPrompt` lo excluye del dataset (el modelo podía copiar el score esperado y anular la guardia C2; sigue en payload/BD para telemetría); (2) **PnL firmado** — `pnl_signed_pct_24h` (× dir, solo Comprar/Vender) + `avg_pnl_signed_pct_24h` agrega SOLO direccionales (el promedio del pnl crudo sobre todas las acciones era deriva del mercado, y un short ganador restaba); (3) dedupe OI↔veto (`oi_flat_or_falling` en `DEDUPE_CODES`); (4) validador: `primary_driver_enum`, `setup_tp_side`/`setup_stop_eq_entry` → SEVERE con setup ejecutable.
   - **Fase 2 (`9ae2d12`, v6_6)**: **semántica CVD/absorción unificada** — la divergencia CVD 1D tenía 3 tratamientos incompatibles (prompt: absorción MUY ALCISTA sobre soporte / guardia C2: abstención / veto: evidencia bajista inapelable). La pata CVD del veto y la contradicción exigen ahora `cvd_strength` no-marginal; prompt añade DESAMBIGUACIÓN ESTRUCTURAL (la tesis de absorción no puede argumentar contra un veto activo — la conjunción divergencia real + resistencia probada + OI estancado ya la descartó) y ANTI-DOBLE-DESCUENTO (si `cvd_1d_divergence` está en `gating.contradictions`, la bandera CVD 1D no reduce convicción otra vez).
@@ -875,7 +899,7 @@ CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `-
 - **Framing (`frameguard: false`)** — helmet emite por defecto `X-Frame-Options: SAMEORIGIN`, que bloqueaba el iframe cross-origin (ni se veía). `X-Frame-Options` no admite un origen concreto (solo `DENY`/`SAMEORIGIN`) y la alternativa CSP `frame-ancestors` no sirve porque la CSP ya está apagada (SPA con `style=` inline). → `helmet({ contentSecurityPolicy: false, frameguard: false })`.
 - **CORS (`cb(null, false)`)** — los assets del build de Vite llevan `crossorigin` → el navegador los pide en modo CORS con cabecera `Origin`. El callback de CORS **lanzaba** ante orígenes fuera de la allow-list (vacía en producción) → `throw` = HTTP 500 → CSS/JS no cargaban (página plana). (`curl` no lo destapaba: no manda `Origin`.) Fix: `cb(null, false)` en vez de `cb(new Error(...))` — no añade cabeceras CORS pero **no rompe**: same-origin no las necesita y una cross-origin real sigue bloqueada por el navegador al faltar `Access-Control-Allow-Origin` (no abre agujero).
 
-**Si algún día se expone CRYPTEX fuera de la LAN, reconsiderar ambos** (reacotar framing vía CSP `frame-ancestors` y restringir CORS a orígenes concretos). Ver SESSION_STATE.md §19.
+**Si algún día se expone CRYPTEX fuera de la LAN, reconsiderar ambos** (reacotar framing vía CSP `frame-ancestors` y restringir CORS a orígenes concretos). Ver `doc/SESSION_STATE_2026-07-12_pre-archivo-audit2.md` §19.
 
 ### Ficheros Docker (alternativa, NO en uso)
 
@@ -885,7 +909,13 @@ CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `-
 
 ## Próximo paso
 
-**Bloque 5 — COMPLETO ✅:**
+**AHORA (2026-07-31): recoger muestra y no tocar la ruta de decisión sin medir.** La lista de
+lo que se revisa, cuándo y con qué criterio está en `SESSION_STATE.md §0`. Lo que NO conviene
+hacer: cambiar un umbral porque "se ve mal" — de las cuatro mediciones de los últimos dos días,
+**dos dijeron "no cambies nada"** (banda de precio, DVOL) y una tercera corrigió el signo de una
+celda que se iba a escribir al revés.
+
+**Bloque 5 — COMPLETO ✅ (histórico):**
 1. ~~Tests de integración de endpoints (Fase 15)~~ ✅
 2. ~~Rediseño schema persistencia IA (Sprint Schema)~~ ✅
 3. ~~Panel frontend de histórico análisis IA (Fase 12)~~ ✅ — modal con backtesting + outcome
@@ -897,7 +927,7 @@ CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `-
 
 **Deuda menor pendiente:**
 - Entrada DNS `cryptex.lan → 192.168.1.250` en el router Zyxel (URL bonita, opcional).
-- ~~Integración en el kiosko del asistente (`:8000`)~~ ✅ (2026-07-03/04) — CRYPTEX se embebe en un `<iframe>` del kiosko; 2 fixes de cabeceras en `security.js` (`frameguard: false` + CORS `cb(null, false)`). Ver §Integración kiosko (iframe) y SESSION_STATE.md §19.
+- ~~Integración en el kiosko del asistente (`:8000`)~~ ✅ (2026-07-03/04) — CRYPTEX se embebe en un `<iframe>` del kiosko; 2 fixes de cabeceras en `security.js` (`frameguard: false` + CORS `cb(null, false)`). Ver §Integración kiosko (iframe) y [`doc/SESSION_STATE_2026-07-12_pre-archivo-audit2.md`](./doc/SESSION_STATE_2026-07-12_pre-archivo-audit2.md) §19 (archivado).
 - ~~Deuda §6~~ ✅ **CERRADA (2026-07-26)**: FVGs detallados (tabla `analysis_fvg_snapshot`) ✅; S/R strength ✅, SuperTrend level ✅ (2026-07-03); `volume_history.vwap` ya resuelto por §12. Todos eran de *persistencia* (historial/backtesting), no de contexto al LLM.
 
 **API keys configuradas en `.env`:** `ANTHROPIC_API_KEY` operativa. **Modelo IA seleccionable desde el frontend** (desplegable en el header): Opus 4.8 (~$0.20, default) / Sonnet 5 (~$0.09) / Haiku 4.5 (~$0.04). Whitelist `ANALYSIS_MODELS` en `constants.js`; validado por `resolveModel`; persistido en localStorage; el modelo usado se guarda en `analyses.model_used` y se muestra en cada tarjeta del historial. `COINALYZE_API_KEY` y `COINGECKO_API_KEY` activas.
