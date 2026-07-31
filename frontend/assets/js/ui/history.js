@@ -157,12 +157,20 @@ function renderCard(a) {
     const codes = parse(a.contradiction_codes);
     const deduped = parse(a.deduped_by_veto);
     const raw = a.contradictions_signal_count;
+    // El conteo cuenta BLOQUES analíticos distintos (volumen/derivados/estructura), máximo 3,
+    // y con 3 la convicción decae y se fuerza `Esperar`. La etiqueta anterior era
+    // "2 contradic. (de 3)", que se lee como "2 de 3 bloques" cuando en realidad el 3 era el
+    // número de señales CRUDAS. Ahora se nombra la escala y se dicen cuáles fallan.
+    const blocks = parse(a.contradiction_blocks);
+    const ES = { volume: 'volumen', derivatives: 'derivados', structure: 'estructura' };
+    const nombres = blocks.map((x) => ES[x] ?? x);
     const b = el('span', 'hist-badge watch',
-      `${a.contradiction_count} contradic.${raw != null && raw > a.contradiction_count ? ` (de ${raw})` : ''}`);
-    const lines = [];
-    if (codes.length) lines.push(`Cuentan: ${codes.join(', ')}`);
+      `${a.contradiction_count}/3 bloques${nombres.length ? ': ' + nombres.join(' + ') : ''}`);
+    const lines = ['Bloques posibles: volumen · derivados · estructura',
+      'Con los 3 en contradicción la convicción decae y se fuerza Esperar.'];
+    if (codes.length) lines.push(`\nSeñales que cuentan: ${codes.join(', ')}`);
     if (deduped.length) lines.push(`Absorbidas por el veto: ${deduped.join(', ')}`);
-    if (raw != null) lines.push(`Señales crudas: ${raw} → ${a.contradiction_count} bloques`);
+    if (raw != null) lines.push(`${raw} señales crudas → ${a.contradiction_count} bloques distintos`);
     b.title = lines.join('\n');
     badges.appendChild(b);
   }
@@ -171,6 +179,36 @@ function renderCard(a) {
   // Qué falta para poder operar. Es la única salida accionable de un sistema que dice
   // "Esperar" casi siempre: se persistía y se devolvía por la API, pero no se pintaba en
   // ninguna pantalla (revisión crítica 2026-07-26, M4).
+  // Setup CONDICIONAL: el trade que se tomaría si apareciera lo que falta. Es lo que hace
+  // medible una abstención — sin geometría declarada, un `Esperar` es incontestable. Se
+  // persistía desde v9_0 pero no se devolvía por la API ni se pintaba (corregido 2026-07-31).
+  if (a.conditional_setup) {
+    let cs = null;
+    try { cs = JSON.parse(a.conditional_setup); } catch { /* ignore */ }
+    if (cs && cs.entry_price != null) {
+      const box = el('div', 'hist-conditional');
+      const dir = cs.direction === 'short' ? 'CORTO' : 'LARGO';
+      box.appendChild(el('span', 'hist-conditional-label', `Si se cumpliera · ${dir}`));
+      const geo = el('div', 'hist-conditional-geo');
+      geo.textContent = `Entrada ${fmtPrice(cs.entry_price)}  ·  SL ${fmtPrice(cs.stop_price)}`
+        + `  ·  TP ${fmtPrice(cs.tp1_price)}`
+        + (cs.validity_candles ? `  ·  ${cs.validity_candles} velas ${cs.tf_execution ?? ''}` : '');
+      box.appendChild(geo);
+      if (cs.trigger) {
+        const trg = el('div', 'hist-conditional-trigger');
+        trg.textContent = `Disparo: ${cs.trigger}`;
+        box.appendChild(trg);
+      }
+      // R:R calculado aquí y no en el backend: es una lectura de la geometría, no un dato.
+      const risk = Math.abs(cs.entry_price - cs.stop_price);
+      const reward = Math.abs((cs.tp1_price ?? cs.entry_price) - cs.entry_price);
+      if (risk > 0 && reward > 0) {
+        box.appendChild(el('div', 'hist-conditional-rr', `R:R ${(reward / risk).toFixed(2)}`));
+      }
+      card.appendChild(box);
+    }
+  }
+
   if (a.missing_confirmations) {
     let items = [];
     try { items = JSON.parse(a.missing_confirmations) ?? []; } catch { /* ignore */ }

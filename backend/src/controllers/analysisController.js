@@ -945,6 +945,11 @@ export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai
     // Contradicciones deterministas del backend (utils/gating.js) — telemetría separada
     // del booleano contradictions_found del LLM. Persistimos conteo + códigos.
     contradiction_count: context.gating?.contradiction_count ?? null,
+    // Los BLOQUES (volume/derivatives/structure) — `gating.js` ya los calcula y se tiraban.
+    // Son los que gobiernan la puerta del decay: el conteo cuenta BLOQUES, no señales.
+    contradiction_blocks: Array.isArray(context.gating?.contradiction_blocks) && context.gating.contradiction_blocks.length > 0
+      ? JSON.stringify(context.gating.contradiction_blocks)
+      : null,
     // OJO: esta lista es POST-dedupe. Lo que el veto absorbió va en `deduped_by_veto`.
     contradiction_codes: Array.isArray(context.gating?.contradictions) && context.gating.contradictions.length > 0
       ? JSON.stringify(context.gating.contradictions.map((c) => c.code))

@@ -38,7 +38,7 @@ export function saveAnalysis(data) {
       tf_conflict, btc_trend_1d, btc_trend_1w,
       action, confidence, risk_score, conviction, primary_driver,
       has_executable_setup, gating_active, gating_reason, contradictions_found, missing_confirmations,
-      contradiction_count, contradiction_codes, deduped_by_veto, contradictions_signal_count,
+      contradiction_count, contradiction_codes, contradiction_blocks, deduped_by_veto, contradictions_signal_count,
       score_derivatives, score_structure, score_volume, score_onchain, score_total,
       score_total_backend, score_derivatives_expected, score_volume_expected,
       score_derivatives_backend, derivatives_score_components, derivatives_data_insufficient,
@@ -62,7 +62,7 @@ export function saveAnalysis(data) {
       @tf_conflict, @btc_trend_1d, @btc_trend_1w,
       @action, @confidence, @risk_score, @conviction, @primary_driver,
       @has_executable_setup, @gating_active, @gating_reason, @contradictions_found, @missing_confirmations,
-      @contradiction_count, @contradiction_codes, @deduped_by_veto, @contradictions_signal_count,
+      @contradiction_count, @contradiction_codes, @contradiction_blocks, @deduped_by_veto, @contradictions_signal_count,
       @score_derivatives, @score_structure, @score_volume, @score_onchain, @score_total,
       @score_total_backend, @score_derivatives_expected, @score_volume_expected,
       @score_derivatives_backend, @derivatives_score_components, @derivatives_data_insufficient,
@@ -171,8 +171,13 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       a.primary_driver,
       a.has_executable_setup, a.gating_active, a.gating_reason,
       a.contradictions_found, a.contradiction_count, a.contradiction_codes,
+      a.contradiction_blocks,
       a.deduped_by_veto, a.contradictions_signal_count,
       a.setup_entry_price, a.setup_stop_price, a.setup_tp1_price,
+      -- v9_0: se persistían y NO se devolvían, así que el modal no podía pintarlos. El
+      -- conditional_setup es lo que hace medible una abstención; sin él, el historial
+      -- muestra un Esperar sin decir qué trade se estaba descartando.
+      a.conditional_setup, a.score_derivatives_backend, a.derivatives_data_insufficient,
 
       a.tf_conflict, a.macro_regime,
       a.executive_summary, a.validation_warnings, a.missing_confirmations,

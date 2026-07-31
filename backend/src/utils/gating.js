@@ -105,7 +105,13 @@ const OI_CONTRACTION_PCT = -OI_FLAT_BAND_PCT; // "se contrae"  = change_24h_pct 
 // `contradiction_count` mide bloques distintos, no señales sueltas, para que la puerta de
 // >=3 → Esperar no se dispare por hechos correlacionados del mismo bloque (mismo criterio
 // que el dedupe veto↔contradicciones de H4, aplicado también a la ruta sin veto).
-const CONTRADICTION_BLOCK = {
+/**
+ * Mapa código → BLOQUE analítico. Exportado para que el backfill de `contradiction_blocks`
+ * use ESTE mapa y no una copia: el conteo de contradicciones que gobierna el decay se apoya
+ * en él, y dos definiciones distintas de "qué bloque es cada señal" sería justo el tipo de
+ * duplicidad que el proyecto lleva sprints eliminando.
+ */
+export const CONTRADICTION_BLOCK = {
   cvd_1d_divergence:       'volume',
   oi_flat_or_falling:      'derivatives',
   price_near_key_level:    'structure',

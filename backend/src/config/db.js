@@ -387,6 +387,11 @@ function runMigrations(db) {
   // `path_first_passage`, porque la evaluación del shadow trade (fase siguiente) solo tiene
   // que parsearlo — no hace falta una columna por campo. Sin esto, un `Esperar` es
   // incontestable por construcción: nunca se sabría si fue prudencia o parálisis.
+  // Los BLOQUES de la contradicción (volume/derivatives/structure). `gating.js` ya los
+  // calcula y se tiraban: solo se guardaban los códigos. Sin ellos, el modal no puede decir
+  // CUÁLES de los tres fallan y hay que re-derivar el mapeo código→bloque en el frontend,
+  // que sería un segundo dueño para la misma regla.
+  ensureColumn(db, 'analyses', 'contradiction_blocks', 'TEXT');
   ensureColumn(db, 'analyses', 'conditional_setup', 'TEXT');
   ensureColumn(db, 'analyses', 'score_derivatives_backend', 'INTEGER');
   ensureColumn(db, 'analyses', 'derivatives_score_components', 'TEXT');

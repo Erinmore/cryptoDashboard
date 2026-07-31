@@ -1044,6 +1044,40 @@ html, body {
   color: var(--text-secondary);
   line-height: 1.5;
 }
+/* Setup CONDICIONAL — el trade que se tomaría si apareciera lo que falta. Se distingue del
+   setup real (`.hist-setup`) con borde punteado: no es ejecutable, es la hipótesis que
+   justifica la espera y permite evaluarla a posteriori. */
+.hist-conditional {
+  background: var(--bg-hover);
+  border-left: 2px dashed var(--neutral);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-md) var(--sp-lg);
+  margin-bottom: var(--sp-sm);
+}
+.hist-conditional-label {
+  display: block;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: var(--sp-xs);
+}
+.hist-conditional-geo {
+  font-size: var(--fs-sm);
+  color: var(--text-primary);
+}
+.hist-conditional-trigger {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  margin-top: var(--sp-xs);
+  line-height: 1.4;
+}
+.hist-conditional-rr {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  margin-top: var(--sp-xs);
+}
+
 .hist-badge {
   font-size: var(--fs-xs);
   text-transform: uppercase;
