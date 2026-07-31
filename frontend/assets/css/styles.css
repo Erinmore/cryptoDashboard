@@ -953,6 +953,35 @@ html, body {
 }
 .history-count { text-align: left; padding: 0 0 var(--sp-lg) 0; }
 
+/* ── Modal de confirmación del análisis IA ── */
+.confirm-modal { width: min(380px, 100%); }
+.confirm-text {
+  color: var(--text-secondary);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  margin: 0 0 var(--sp-xl) 0;
+}
+.confirm-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+}
+.confirm-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--fs-md);
+}
+.confirm-label { color: var(--text-muted); }
+.confirm-value { color: var(--text-primary); font-weight: 500; }
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-lg);
+  padding: var(--sp-lg) var(--sp-2xl);
+  border-top: 1px solid var(--bg-hover);
+}
+
 /* ── Tarjeta de análisis ── */
 .hist-card {
   border: 1px solid var(--bg-hover);

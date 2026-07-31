@@ -206,7 +206,57 @@ async function runDownloadData() {
 
 // ── Análisis IA ────────────────────────────────────────────────────
 
+/**
+ * Confirmación previa al análisis: el LLM cuesta dinero y tarda ~40s, así que
+ * un clic accidental en el rayo no debe dispararlo. Puramente cliente — los
+ * crons de la Pi llaman a POST /api/analyze por curl y no pasan por aquí.
+ * @returns {Promise<boolean>} true si el usuario confirma.
+ */
+function confirmAnalysis() {
+  const overlay = document.getElementById('confirm-overlay');
+  if (!overlay) return Promise.resolve(true);   // sin modal en el DOM, no bloquear
+
+  const { coin, tf } = getState();
+  const modelSel = document.getElementById('model-select');
+  const opt = modelSel?.selectedOptions?.[0];
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('confirm-coin',  coin);
+  set('confirm-tf',    tf);
+  set('confirm-model', opt?.dataset.name  ?? modelSel?.value ?? '—');
+  set('confirm-price', opt?.dataset.price ?? '—');
+
+  overlay.classList.remove('hidden');
+  document.getElementById('confirm-accept')?.focus();
+
+  return new Promise((resolve) => {
+    const finish = (ok) => {
+      overlay.classList.add('hidden');
+      document.getElementById('confirm-accept')?.removeEventListener('click', onAccept);
+      document.getElementById('confirm-cancel')?.removeEventListener('click', onCancel);
+      document.getElementById('confirm-close')?.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(ok);
+    };
+    const onAccept   = () => finish(true);
+    const onCancel   = () => finish(false);
+    const onBackdrop = (e) => { if (e.target === overlay) finish(false); };
+    const onKey      = (e) => {
+      if (e.key === 'Escape') finish(false);
+      if (e.key === 'Enter')  finish(true);
+    };
+
+    document.getElementById('confirm-accept')?.addEventListener('click', onAccept);
+    document.getElementById('confirm-cancel')?.addEventListener('click', onCancel);
+    document.getElementById('confirm-close')?.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
 async function runAnalysis() {
+  if (!(await confirmAnalysis())) return;
+
   const { coin, tf } = getState();
   const btn = document.getElementById('btn-analyze');
   const btnLabel = btn?.innerHTML;

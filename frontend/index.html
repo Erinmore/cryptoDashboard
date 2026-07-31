@@ -399,6 +399,33 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL — Confirmación antes de lanzar el análisis IA
+       El análisis cuesta dinero (llamada al LLM) y tarda ~40s:
+       un clic accidental en el rayo no debe dispararlo.
+  ═══════════════════════════════════════════════════════ -->
+  <div id="confirm-overlay" class="history-overlay hidden">
+    <div class="history-modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="history-modal-header">
+        <h2 id="confirm-title" class="history-modal-title">Lanzar análisis IA</h2>
+        <button id="confirm-close" class="history-close" title="Cerrar" aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="history-modal-body">
+        <p class="confirm-text">Se enviará el mercado actual al modelo para obtener una recomendación. Tarda unos 40 segundos y tiene coste por análisis.</p>
+        <div class="confirm-details">
+          <div class="confirm-row"><span class="confirm-label">Moneda</span><span class="confirm-value" id="confirm-coin">—</span></div>
+          <div class="confirm-row"><span class="confirm-label">Timeframe</span><span class="confirm-value" id="confirm-tf">—</span></div>
+          <div class="confirm-row"><span class="confirm-label">Modelo</span><span class="confirm-value" id="confirm-model">—</span></div>
+          <div class="confirm-row"><span class="confirm-label">Coste aprox.</span><span class="confirm-value" id="confirm-price">—</span></div>
+        </div>
+      </div>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="btn btn-secondary">Cancelar</button>
+        <button id="confirm-accept" class="btn btn-primary">Analizar</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="/assets/js/app.js"></script>
 </body>
 </html>
