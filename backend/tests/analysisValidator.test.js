@@ -75,6 +75,22 @@ describe('validateAnalysis — baseline y estructura', () => {
     expect(v.hasSevere).toBe(false);
   });
 
+  // Retirado el 2026-08-01 tras medirlo (`scripts/auditConditionalRR.mjs`): con la
+  // expectativa PLANA y ≈0 en todo el rango de R:R —el acierto baja exactamente lo que sube
+  // el premio— el corte en 1 no separaba nada. El test existe para que reinstaurarlo exija
+  // borrarlo, y con él el argumento. La 8ª medición trajo un R:R de 1,00 exacto: el caso que
+  // destapó que el umbral estaba justo donde caen las geometrías reales.
+  test('R:R < 1 NO genera aviso: se midió y la expectativa es plana en R:R', () => {
+    const v = validateAnalysis(base({
+      conditional_setup: { ...condSetup, tp1_price: 77.4 },   // R:R = 0.48
+    }));
+    expect(v.warnings.map(w => w.rule)).not.toContain('conditional_low_rr');
+    expect(v.warnings).toEqual([]);
+    // Lo que SÍ sigue avisando es la geometría imposible, que no es cuestión de grado.
+    expect(rules(base({ conditional_setup: { ...condSetup, stop_price: 76.6 } })))
+      .toContain('conditional_stop_eq_entry');
+  });
+
   test('Comprar bien fundamentado no genera warnings', () => {
     const { warnings, hasSevere } = validateAnalysis(buyValid);
     expect(warnings).toEqual([]);

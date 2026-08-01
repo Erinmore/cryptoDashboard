@@ -215,12 +215,28 @@ export function validateAnalysis(structured, opts = {}) {
         if (isNum(ct)) {
           if ((cLong && ct <= ce) || (!cLong && ct >= ce)) {
             warn('conditional_tp_side', 'minor', `conditional_setup tp1=${ct} en el lado equivocado de entry=${ce}`);
-          } else {
-            const risk = Math.abs(ce - cs), reward = Math.abs(ct - ce);
-            if (risk > 0 && reward / risk < 1) {
-              warn('conditional_low_rr', 'minor', `conditional_setup R:R = ${(reward / risk).toFixed(2)} (<1)`);
-            }
           }
+          // ⚠️ AQUÍ HABÍA UN `conditional_low_rr` CON CORTE EN R:R < 1. Retirado el
+          // 2026-08-01 tras MEDIRLO (`scripts/auditConditionalRR.mjs`): el aviso presuponía
+          // que por debajo de 1 la geometría rinde peor, y no hay tal cosa. Barridas 7
+          // geometrías × 2 formas de mover el cociente sobre 3 monedas (n≈1.945-3.204
+          // réplicas por celda, evaluador y agregador REALES), **la expectativa es plana y
+          // ≈0 en todo el rango** y el acierto calca el equilibrio (67,1 vs 66,7 · 57,5 vs
+          // 57,1 · 50,0 vs 50,0 · 43,5 vs 44,4): es la identidad del paseo sin deriva,
+          // P(TP primero) ≈ riesgo/(riesgo+recompensa), o sea que el acierto BAJA
+          // exactamente lo que sube el premio. Un R:R bajo no es una geometría peor, es
+          // otra apuesta — y lo único que cambia con él, el win-rate de equilibrio, ya
+          // viaja calculado en `breakeven_win_rate_pct`. El corte en 1 era un número
+          // redondo sin distribución detrás, del mismo tipo que T1-T6.
+          // (Un barrido daba +0,204R a R:R 0,5, pero el control con la entrada EN el precio
+          // lo aplana a −0,004R: era selección por el llenado —entrar tras 0,75×ATR en
+          // contra— y no una propiedad del R:R. Publicarlo habría sido otra cifra que no
+          // significa lo que dice.)
+          // Lo que la medición SÍ deja sobre la mesa, con datos ya recogidos: el objetivo
+          // declarado caduca sin tocarse el 4-7 % de las veces a 0,5×ATR y el 43-50 % a
+          // 3×ATR dentro de una vigencia de 24h. "Objetivo inalcanzable en la vigencia
+          // declarada" es un defecto real y medible — pero exige elegir su corte con su
+          // propia medición, y no se escribe un número sin ella.
         }
       }
     }
