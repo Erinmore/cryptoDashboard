@@ -1601,10 +1601,13 @@ de la bandera CVD 1D) son consecuencias de este principio.
 | Fear & Greed | Contexto (solo extremos <15/>85) | — | — | ANTI-DOUBLE-COUNT: crowding correlacionado con funding/LSR |
 | ETF flows | Ajuste conviction (±cualitativo, B3) | — | — | ANTI-DOUBLE-COUNT con funding (co-ocurrencia cualitativa) |
 | Order book imbalance | Ajuste Volume (±0.5) — **pendiente de validar con backtest (mismo caso que B3)** | — | — | — |
+| **ATR% del TF primario** *(NORMALIZADOR, no vota dirección)* | — (el LLM lee etiquetas, no el ATR crudo) | `dynamicNearLevelPct` (umbral de cercanía) | — | `priceBandPct` (banda del eje OI×precio) · `normalizedTriggerDistance`/`normalizedTargetDistance` · `classifyOpportunity`/`classifyPathOutcome` · `atr.pct_percentile` (telemetría de régimen) |
+| **Geometría del `conditional_setup`** *(output del LLM, no hecho de mercado)* | — | — | — | `analysisValidator` (coherencia: `tp_side`, `stop_eq_entry`, `direction_mismatch`, `target_unreachable`) · `utils/shadowTrade.js` (evaluación a posteriori) |
 
 Notas:
 - El conteo `contradiction_count` es por BLOQUES (volume/derivatives/structure, máx 3), no por señales.
 - `expected_scores` NO llega al LLM (se excluye en `buildPrompt`) — es la guardia independiente del validador.
+- **El ATR% aparece en muchas casillas y NO es doble conteo (comprobado al añadir `conditional_target_unreachable`, 2026-08-01):** es una ESCALA, nunca una dirección. Un normalizador puede entrar en todas las capas que quiera porque no aporta signo — lo que la regla prohíbe es que un mismo hecho DIRECCIONAL vote dos veces en la misma capa. Si algún día el ATR% pasara a inclinar una decisión por sí mismo (p. ej. un score de volatilidad), habría que revisar esta fila entera.
 - Doble conteo residual conocido: el mismo OI/funding puede influir score del LLM (capa prompt) Y una
   contradicción (capa gating). Es *inter-capa* y deliberado (el score gradúa, la contradicción cuenta
   ejes); lo prohibido es votar dos veces en la MISMA capa.
