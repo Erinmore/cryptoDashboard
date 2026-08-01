@@ -20,6 +20,7 @@ import {
 } from '../src/utils/shadowTrade.js';
 import {
   summarizeShadowTrades, normalizedTriggerDistance, triggerBaseRateFor, TRIGGER_BASE_RATE,
+  expectancyR,
 } from '../src/utils/stats.js';
 
 const HOUR = 3600 * 1000;
@@ -456,10 +457,12 @@ describe('summarizeShadowTrades — tasa base del gatillo y expectativa', () => 
     for (let i = 0; i < 6; i++) filas.push(filaGeo('tp1', { h: i * 8 }));
     for (let i = 0; i < 4; i++) filas.push(filaGeo('stop', { h: 100 + i * 8 }));
     // 6 aciertos a +2R y 4 fallos a -1R → (6×2 - 4)/10 = +0.8
-    expect(sum(filas, { minSample: 5 }).expectancy_r).toBeCloseTo(0.8, 3);
-    expect(sum(filas, { minSample: 5 }).expectancy_r_n).toBe(10);
-    // Con el gate por encima de la muestra se silencia, igual que el win-rate
-    expect(sum(filas, { minSample: 20 }).expectancy_r).toBeNull();
+    const ex = sum(filas).expectancy_r;
+    expect(ex.point).toBeCloseTo(0.8, 3);
+    expect(ex.n).toBe(10);
+    // NO tiene gate de muestra (a diferencia del win-rate): a n=20 el IC seguiría siendo
+    // ±0,57R, así que esconderlo hasta ahí solo cambia cuándo empieza a parecer fiable.
+    expect(sum(filas, { minSample: 20 }).expectancy_r.point).toBeCloseTo(0.8, 3);
     expect(sum(filas, { minSample: 20 }).win_rate).toBeNull();
   });
 
@@ -470,8 +473,67 @@ describe('summarizeShadowTrades — tasa base del gatillo y expectativa', () => 
     // 4 aciertos / 6 fallos con R:R 2 → (8-6)/10 = +0.2 pese a un win-rate del 40 %
     const g = sum(gana, { minSample: 5 });
     expect(g.win_rate).toBe(40);
-    expect(g.expectancy_r).toBeGreaterThan(0);          // 40 % > 33,3 % de equilibrio
+    expect(g.expectancy_r.point).toBeGreaterThan(0);    // 40 % > 33,3 % de equilibrio
     expect(g.win_rate).toBeGreaterThan(g.breakeven_win_rate_pct);
-    expect(sum(pierde, { minSample: 5 }).expectancy_r).toBe(-1);
+    expect(sum(pierde, { minSample: 5 }).expectancy_r.point).toBe(-1);
+  });
+});
+
+/**
+ * La expectativa se devuelve como OBJETO para que el punto no se pueda leer sin su intervalo
+ * — misma disciplina que `fill_rule` con `trigger_rate`. Y sin gate de muestra, porque el de
+ * 20 está calibrado para una proporción: a n=20 el IC de la expectativa sigue siendo ±0,57R.
+ */
+describe('expectancyR — la media con su incertidumbre', () => {
+  test('sin datos devuelve el hueco explícito, no un cero', () => {
+    const e = expectancyR([]);
+    expect(e).toEqual({ point: null, ci_low: null, ci_high: null, n: 0, inconclusive: null });
+  });
+
+  test('con n=1 da el punto pero NO un intervalo inventado', () => {
+    const e = expectancyR([2]);
+    expect(e.point).toBe(2);
+    expect(e.ci_low).toBeNull();
+    expect(e.ci_high).toBeNull();
+    expect(e.inconclusive).toBe(true);   // un solo trade nunca concluye
+  });
+
+  test('el punto es la media de los múltiplos de R', () => {
+    expect(expectancyR([2, 2, -1, -1]).point).toBeCloseTo(0.5, 3);
+  });
+
+  test('usa la t de Student, no z: con n pequeño el intervalo es MÁS ancho', () => {
+    // 8 valores con dispersión: el margen con t(7)=2.365 supera al de z=1.96 en ~21 %.
+    const xs = [1.65, 1.65, 1.65, -1, -1, -1, -1, -1];
+    const e = expectancyR(xs);
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1));
+    const margenZ = 1.959963984540054 * sd / Math.sqrt(xs.length);
+    const margenReal = e.ci_high - e.point;
+    expect(margenReal).toBeGreaterThan(margenZ);
+    expect(margenReal / margenZ).toBeCloseTo(2.365 / 1.96, 1);
+  });
+
+  test('`inconclusive` marca que el intervalo cruza cero — el caso real del checkpoint', () => {
+    // Mezcla realista a n=8: el signo NO se puede afirmar.
+    expect(expectancyR([1.65, 1.65, 1.65, -1, -1, -1, -1, -1]).inconclusive).toBe(true);
+    // Todo aciertos: el intervalo se va arriba y el signo sí se afirma.
+    const claro = expectancyR([1.6, 1.7, 1.65, 1.6, 1.7, 1.65]);
+    expect(claro.inconclusive).toBe(false);
+    expect(claro.ci_low).toBeGreaterThan(0);
+  });
+
+  test('el intervalo se estrecha con √n, así que n=8 no vale lo que n=50', () => {
+    const patron = [1.65, -1];
+    const ancho = (veces) => {
+      const e = expectancyR(Array.from({ length: veces * 2 }, (_, i) => patron[i % 2]));
+      return e.ci_high - e.ci_low;
+    };
+    expect(ancho(4)).toBeGreaterThan(ancho(25));       // n=8 vs n=50
+    expect(ancho(25)).toBeGreaterThan(ancho(85));      // n=50 vs n=170
+  });
+
+  test('ignora valores no finitos en vez de propagar NaN', () => {
+    expect(expectancyR([2, null, -1, undefined, NaN, 2]).n).toBe(3);
   });
 });

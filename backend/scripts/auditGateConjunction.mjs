@@ -262,8 +262,17 @@ async function auditCoin(coin) {
       technical, openInterest: { change_24h_pct: oiChange }, currentPrice, primaryTf: PRIMARY_TF,
     });
 
+    // CONTRAFACTUAL (solo telemetría, no cambia nada): ¿y si `new_money_short` puntuara -1?
+    // Es la celda que hoy enmudece por diseño, y la razón por la que `Vender` en una caída
+    // ordenada depende casi entera de la cascada. La composición se respeta: si la celda
+    // pasara a puntuar, la cascada se abstendría (anti-doble-conteo), así que el score
+    // contrafactual es clamp(-1 + funding, -2, 2).
+    const cf = deriv.components.oi_price_cell === 'new_money_short'
+      ? Math.max(-2, Math.min(2, -1 + deriv.components.funding_score))
+      : deriv.score;
+
     rows.push({
-      t, deriv: deriv.score, derivCC: derivCC?.score ?? null, cell: deriv.components.oi_price_cell,
+      t, deriv: deriv.score, derivCF: cf, derivCC: derivCC?.score ?? null, cell: deriv.components.oi_price_cell,
       vol: vol.score, cvdStrength: cvd4h?.cvd_strength ?? null, cvdDiv: cvd4h?.divergence ?? null,
       cvdSource: cvd4h?.source ?? null,
       vetoLong: gating.veto_long, vetoShort: gating.veto_short,
@@ -334,6 +343,13 @@ async function auditCoin(coin) {
   // ── 5 · Reparto de la celda OI×precio (contexto del score) ────────────────
   const cells = {};
   for (const r of rows) cells[r.cell] = (cells[r.cell] ?? 0) + 1;
+  // ── 4b · Contrafactual: la celda muda ─────────────────────────────────────
+  const sellCF = c((r) => r.derivCF <= -1 && r.vol <= -1 && clean(r));
+  const derivCF = c((r) => r.derivCF <= -1);
+  console.log('\n4b · CONTRAFACTUAL · ¿y si `new_money_short` puntuara -1?');
+  console.log(`   Derivatives <= -1   ${pct(dSell, n)} → ${pct(derivCF, n)}`);
+  console.log(`   VENDER (conjunción) ${pct(sell, n)} → ${pct(sellCF, n)}`);
+
   console.log('\n5 · CELDA OI×PRECIO');
   for (const [k, v] of Object.entries(cells).sort((a, b) => b[1] - a[1])) {
     console.log(`   ${k.padEnd(18)} ${pct(v, n)}`);

@@ -77,6 +77,58 @@ export const OPPORTUNITY_BASE_RATE = {
 };
 
 /**
+ * t de Student de dos colas al 95 %. Con n pequeño el z=1,96 se queda corto: a n=8 el t es
+ * 2,365, un 21 % más ancho — y n=8 es exactamente el tamaño que tendrá la muestra en el
+ * primer checkpoint, así que usar z ahí estrecharía el intervalo justo donde más engaña.
+ */
+const T_95 = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+  2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+  2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042];
+const tCrit = (df) => (df < 1 ? null : df <= T_95.length ? T_95[df - 1] : Z_95);
+
+/**
+ * EXPECTATIVA en múltiplos de R, con su intervalo. Cada trade resuelto vale `+R` si tocó el
+ * TP y `-1` si tocó el stop, así que la media responde a la única pregunta que importa:
+ * ¿estas geometrías ganan dinero?
+ *
+ * SE DEVUELVE COMO OBJETO A PROPÓSITO. Un `expectancy_r: 0.06` suelto se cita como si fuera
+ * una conclusión; `{point: 0.06, ci_low: -0.84, ci_high: 0.96, inconclusive: true}` no se
+ * puede citar sin su incertidumbre. Es la misma disciplina que hace viajar `fill_rule` con
+ * `trigger_rate` y `base_rate_pct` con `offered_pct`: la cifra no se lee sin su regla.
+ *
+ * POR QUÉ SIN GATE DE MUESTRA (a diferencia del win-rate). `MIN_DIRECTIONAL_SAMPLE=20` está
+ * calibrado para una PROPORCIÓN; para la media de un múltiplo de R con cola es demasiado
+ * pequeño: a n=20 el IC sigue siendo ±0,57R, más ancho que cualquier ventaja realista. Un
+ * gate ahí no protege — esconde la cifra mientras es obviamente inútil y la muestra justo
+ * cuando sigue siéndolo pero ya no lo parece. Medido con los R:R reales (mediana 1,65), el n
+ * necesario para que el intervalo no cruce cero es ~64 con ventaja fuerte (+0,32R) y ~181 con
+ * ventaja moderada (+0,19R): es una pregunta de meses, no de checkpoint. `inconclusive` lo
+ * dice en cada respuesta para que la cifra no se lea como veredicto.
+ *
+ * @param {number[]} rMultiples - +R por cada TP, -1 por cada stop.
+ */
+export function expectancyR(rMultiples) {
+  const xs = (rMultiples ?? []).filter(Number.isFinite);
+  const n = xs.length;
+  if (!n) return { point: null, ci_low: null, ci_high: null, n: 0, inconclusive: null };
+  const mean = xs.reduce((a, b) => a + b, 0) / n;
+  const round3 = (x) => parseFloat(x.toFixed(3));
+  if (n < 2) {
+    // Un solo trade no tiene dispersión que estimar: punto sin intervalo, e `inconclusive`
+    // en true, que es la lectura correcta con n=1.
+    return { point: round3(mean), ci_low: null, ci_high: null, n, inconclusive: true };
+  }
+  const variance = xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1);
+  const margin = tCrit(n - 1) * Math.sqrt(variance / n);
+  const low = mean - margin, high = mean + margin;
+  return {
+    point: round3(mean), ci_low: round3(low), ci_high: round3(high), n,
+    // El intervalo cruza cero ⇒ no se puede afirmar ni que gana ni que pierde.
+    inconclusive: low <= 0 && high >= 0,
+  };
+}
+
+/**
  * TASA BASE DEL GATILLO de un shadow trade — la referencia que le faltaba a
  * `trigger_rate_pct`. Sin ella es un número suelto: si el precio alcanza esa distancia en esa
  * dirección y en esa ventana tan a menudo como en un instante CUALQUIERA, que el gatillo se
@@ -566,8 +618,7 @@ export function summarizeShadowTrades(rows, opts = {}) {
     const rMultiples = resolvedRows
       .map((r) => { const g = geomOf(r); return g?.rr == null ? null : (r.cond_outcome === 'tp1' ? g.rr : -1); })
       .filter(Number.isFinite);
-    const expectancy = rMultiples.length
-      ? parseFloat((rMultiples.reduce((a, b) => a + b, 0) / rMultiples.length).toFixed(3)) : null;
+    const expectancy = expectancyR(rMultiples);
 
     return {
       trigger_base_rate_pct: baseRate,
@@ -581,8 +632,10 @@ export function summarizeShadowTrades(rows, opts = {}) {
       // los R:R son heterogéneos — `expectancy_r` es la respuesta exacta.
       breakeven_win_rate_pct: rrMedian != null && rrMedian > 0
         ? parseFloat((100 / (1 + rrMedian)).toFixed(1)) : null,
-      expectancy_r: insufficient ? null : expectancy,
-      expectancy_r_n: rMultiples.length,
+      // Objeto, no número: el punto no se puede leer sin su intervalo. Sin gate de muestra
+      // —ver `expectancyR`—, porque a n=20 el IC sigue siendo ±0,57R y esconderlo hasta ahí
+      // solo cambia el momento en que la cifra empieza a parecer fiable sin serlo.
+      expectancy_r: expectancy,
       n: list.length,
       tp1, stop, expired, not_triggered: notTriggered,
       open: n('open'),

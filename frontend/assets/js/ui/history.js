@@ -491,13 +491,28 @@ function renderStats(s) {
         be == null ? '' : sh.win_rate >= be ? 'win' : 'loss',
         `IC 95% (Wilson): ${sh.win_rate_ci_low}–${sh.win_rate_ci_high}% sobre ${sh.resolved_n} resueltos.`
         + (be == null ? '' : ` Equilibrio en ${be}%.`));
-      if (sh.expectancy_r != null) {
-        m('Expectativa', `${sh.expectancy_r > 0 ? '+' : ''}${sh.expectancy_r} R`,
-          sh.expectancy_r > 0 ? 'win' : 'loss',
-          'Resultado medio por trade arriesgando 1. Es la respuesta exacta a "¿estas '
-          + 'geometrías ganan dinero?": el acierto y el equilibrio son la versión '
-          + 'orientativa cuando los R:R son heterogéneos.');
-      }
+    }
+    // Expectativa: SIEMPRE con su intervalo, y sin gate de muestra. El punto solo se colorea
+    // cuando el intervalo NO cruza cero — si lo cruza, no se puede afirmar el signo y pintarlo
+    // de verde o rojo sería afirmarlo.
+    const ex = sh.expectancy_r;
+    if (ex?.point != null) {
+      const punto = `${ex.point > 0 ? '+' : ''}${ex.point} R`;
+      const rango = ex.ci_low == null ? 'sin intervalo (n=1)' : `IC 95%: ${ex.ci_low} a ${ex.ci_high} R`;
+      // Cuando el intervalo cruza cero, el TITULAR es el rango y el punto baja al tooltip.
+      // Un `+0,33 R` como valor principal se cita solo, por mucho que al lado ponga que va
+      // de -0,86 a +1,51; si el titular es el rango, el número no puede leerse sin él.
+      const titular = ex.inconclusive && ex.ci_low != null
+        ? `${ex.ci_low} a ${ex.ci_high} R` : punto;
+      m('Expectativa', titular,
+        ex.inconclusive ? '' : ex.point > 0 ? 'win' : 'loss',
+        `Resultado medio por trade arriesgando 1, sobre ${ex.n} resueltos. `
+        + (ex.inconclusive && ex.ci_low != null ? `Punto: ${punto}. ` : `${rango}. `)
+        + (ex.inconclusive
+          ? 'El intervalo cruza cero: NO se puede afirmar todavía que estas geometrías ganen '
+            + 'ni que pierdan. Con R:R 1,65 hacen falta ~64 resueltos para distinguir una '
+            + 'ventaja fuerte y ~181 para una moderada — es una pregunta de meses.'
+          : 'El intervalo no cruza cero: el signo sí se puede afirmar.'));
     }
     m('TP / Stop / caducados', `${sh.tp1} / ${sh.stop} / ${sh.expired}`, '',
       `Sin disparar: ${sh.not_triggered}.`);
