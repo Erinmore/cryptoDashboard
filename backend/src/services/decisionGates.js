@@ -30,9 +30,13 @@ import { validateAnalysis, applyFailSafe } from './analysisValidator.js';
  *   validan contra la copia — sin esto, una copia infiel contaminaría la muestra en
  *   silencio (inflada abre la puerta sin respaldo determinista; desinflada bloquea un
  *   direccional legítimo y en BBDD parece decisión del modelo).
+ * @param {{pct:number, min:number, d:number}|null} [targetReachability=null] - alcanzabilidad
+ *   del TP1 del `conditional_setup` dentro de su vigencia, YA calculada por el caller (que es
+ *   quien tiene el ATR% y el TF). Viaja calculada porque `analysisValidator` se declara sin
+ *   dependencias y la curva medida tiene un único dueño en `utils/stats.js`.
  * @returns {{ structured: object, validation: object, degraded: boolean, hardGate: boolean }}
  */
-export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failClosedOnMissing = true, expectedScores = null, currentPrice = null, derivativesScore = null) {
+export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failClosedOnMissing = true, expectedScores = null, currentPrice = null, derivativesScore = null, targetReachability = null) {
   // Derivatives Score: el backend es autoritativo (misma filosofía que gating_active).
   // Se impone ANTES de validar para que buy/sell/prepare_gate y la 6ª contradicción operen
   // siempre sobre el número verdadero, copie bien o mal el modelo. La discrepancia queda en
@@ -75,6 +79,7 @@ export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failC
     backendContradictionCount: gating?.contradiction_count ?? 0,
     expectedScores,
     currentPrice,
+    targetReachability,
   });
   if (copyMismatch) validation.warnings.push(copyMismatch);
 

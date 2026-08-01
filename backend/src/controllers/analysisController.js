@@ -17,6 +17,9 @@ import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/tim
 import { computeGating } from '../utils/gating.js';
 import { computeDerivativesScore, priceChange24hFromCandles } from '../utils/derivativesScore.js';
 import { computeExpectedScores, backendScoreTotal } from '../utils/expectedScores.js';
+import {
+  normalizedTargetDistance, targetReachabilityFor, TARGET_UNREACHABLE_PCT,
+} from '../utils/stats.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 
 // CVD/VWAP se persisten y pueden tener huecos tras un apagado prolongado; un salto mayor
@@ -25,6 +28,33 @@ const HISTORY_MAX_GAP_DAYS = 3;
 import { ValidationError } from '../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../middleware/logger.js';
+
+/**
+ * ¿Es alcanzable el TP1 del `conditional_setup` dentro de la vigencia que él mismo declara?
+ *
+ * Se calcula AQUÍ y no en el validador porque las piezas son de CONTEXTO (el ATR% del TF
+ * primario y el propio TF), no del output del LLM — y porque `analysisValidator` se declara
+ * sin dependencias, mientras que la curva medida (`TARGET_REACHABILITY`) tiene un único
+ * dueño en `utils/stats.js`. Duplicarla serían dos verdades sobre lo mismo.
+ *
+ * @returns {{pct:number, min:number, d:number}|null} null si falta cualquier pieza: sin ATR%
+ *   la alcanzabilidad no es evaluable, y avisar a ciegas sería peor que no avisar.
+ */
+export function computeTargetReachability(conditionalSetup, context, primaryTf) {
+  const cs = conditionalSetup;
+  if (!cs || typeof cs !== 'object') return null;
+  const atrPct = context?.technical?.[primaryTf]?.atr?.pct;
+  const d = normalizedTargetDistance({
+    tp1Price: cs.tp1_price,
+    entryPrice: cs.entry_price,
+    atrPct,
+    validityCandles: cs.validity_candles,
+    tfExecution: cs.tf_execution,
+    primaryTf,
+  });
+  const pct = targetReachabilityFor(d);
+  return pct == null ? null : { pct, min: TARGET_UNREACHABLE_PCT, d };
+}
 
 /**
  * Calcula distancias en porcentaje a support/resistance más cercano.
@@ -1192,6 +1222,7 @@ export async function analyze(req, res, next) {
       context.expected_scores,
       context.price_current,
       context.derivatives_score,
+      computeTargetReachability(rawStructured?.conditional_setup, context, primaryTf),
     );
     if (validation.warnings.length > 0) {
       logger.warn(

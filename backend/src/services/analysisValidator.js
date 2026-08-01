@@ -232,11 +232,23 @@ export function validateAnalysis(structured, opts = {}) {
           // lo aplana a −0,004R: era selección por el llenado —entrar tras 0,75×ATR en
           // contra— y no una propiedad del R:R. Publicarlo habría sido otra cifra que no
           // significa lo que dice.)
-          // Lo que la medición SÍ deja sobre la mesa, con datos ya recogidos: el objetivo
-          // declarado caduca sin tocarse el 4-7 % de las veces a 0,5×ATR y el 43-50 % a
-          // 3×ATR dentro de una vigencia de 24h. "Objetivo inalcanzable en la vigencia
-          // declarada" es un defecto real y medible — pero exige elegir su corte con su
-          // propia medición, y no se escribe un número sin ella.
+          // Lo que SÍ resultó medible es otra cosa, y ocupa ahora su sitio: no la CALIDAD de
+          // la geometría sino la COHERENCIA de la declaración. Si el objetivo está a una
+          // distancia que el mercado no recorre en las velas que el propio análisis declara,
+          // el resultado no vendrá del objetivo sino de la caducidad — la declaración es
+          // inerte, igual que un `trigger` sin números. Eje y corte medidos en
+          // `scripts/auditTargetReachability.mjs` (curva `TARGET_REACHABILITY` en stats.js).
+          //
+          // Llega YA CALCULADO en vez de importarse: este módulo se declara sin dependencias
+          // y la curva tiene un único dueño en stats.js. Duplicarla aquí serían dos verdades
+          // sobre lo mismo, que es el fallo que este proyecto persigue.
+          const reach = opts.targetReachability;   // { pct, min, d } | null
+          if (isNum(reach?.pct) && isNum(reach?.min) && reach.pct < reach.min) {
+            warn('conditional_target_unreachable', 'minor',
+              `conditional_setup: tp1 a ${Number(reach.d).toFixed(2)} unidades de recorrido de la `
+              + `vigencia declarada → alcanzable el ${reach.pct}% de las veces (umbral ${reach.min}%); `
+              + 'el resultado lo decidiría la caducidad, no el objetivo');
+          }
         }
       }
     }

@@ -201,6 +201,91 @@ export function normalizedTriggerDistance({ entryPrice, priceAtAnalysis, atrPct,
 }
 
 /**
+ * Distancia normalizada del OBJETIVO: cuántas unidades de recorrido esperado hay entre la
+ * entrada condicional y su TP1. Mismo eje y misma conversión de TF que el gatillo — un solo
+ * dueño de "cuánto recorrido cabe en N velas".
+ *
+ * @returns {number|null} null si falta cualquier pieza (no se inventa).
+ */
+export function normalizedTargetDistance({ tp1Price, entryPrice, atrPct, validityCandles, tfExecution, primaryTf }) {
+  return normalizedTriggerDistance({
+    entryPrice: tp1Price, priceAtAnalysis: entryPrice, atrPct, validityCandles, tfExecution, primaryTf,
+  });
+}
+
+/**
+ * ALCANZABILIDAD DEL OBJETIVO: con qué frecuencia el precio recorre una distancia
+ * normalizada `d` dentro de la vigencia declarada. Medida con `scripts/auditTargetReachability.mjs`
+ * (2026-08-01) sobre 3 monedas × anclajes de 4h × 4 vigencias (6/12/24/42 velas), con
+ * `computeFirstPassage` REAL y las dos direcciones agregadas para cancelar la deriva.
+ *
+ * PARA QUÉ. Un `conditional_setup` que nombra un objetivo que el mercado no recorre en las
+ * velas que el propio análisis declara no es una geometría MALA —eso ya se midió y la
+ * expectativa es plana en R:R— sino una declaración INERTE: el resultado no vendrá del
+ * objetivo, vendrá de la caducidad. Es el mismo tipo de defecto que `conditional_trigger_vague`.
+ *
+ * POR QUÉ ESTE EJE. `d = distancia% / (ATR% × √velas)` hace que el ATR se cancele cuando la
+ * distancia se expresa en múltiplos de ATR: `d = k/√V`. **La hipótesis se comprobó y aguanta**:
+ * celdas con la misma `d` pero `k` y `V` distintas coinciden dentro de **0,3-2,6 pt**
+ * (74,2 vs 73,7 · 50,6 vs 53,2 · 32,8 vs 35,3 · 22,2 vs 21,2 · 13,9 vs 13,6 · 8,8 vs 8,2),
+ * el mismo grado de colapso que dio `TRIGGER_BASE_RATE`. Es una curva de UNA variable.
+ *
+ * ⚠️ EL NIVEL DEL CORTE NO SE PUDO HEREDAR. Se intentó anclarlo a `OPPORTUNITY_BY_HORIZON`,
+ * que ya está calibrado: si sus dos puntos (2×ATR en 6 velas · 4×ATR en 42) dieran la MISMA
+ * alcanzabilidad, ese valor sería el corte sin inventar nada. **Dan 22,2 % [20,8-23,7] y
+ * 32,0 % [30,4-33,7]** — no se rozan, así que no hay anclaje. La razón, a posteriori: aquel
+ * par se calibró sobre la oportunidad LIMPIA (con la condición adversa), que no es esta
+ * magnitud. Se deja escrito para que nadie repita el intento creyéndolo pendiente.
+ *
+ * LO QUE SÍ SOSTIENE EL NIVEL: **cualquier corte entre el 3 % y el 10 % produce la misma
+ * partición exacta** de las geometrías reales observadas. El nivel no está sobre una
+ * pendiente donde un pelo cambia la respuesta — que es justo el fallo T2 (ADX=25 cayendo
+ * sobre la mediana). Se toma el 5 %, centro de esa banda y coherente con el listón de rama
+ * muerta que este proyecto ya ha aplicado cinco veces (F&G 1,0 % · DVOL 0,3 % · funding de
+ * cola 0 % · `high_volatility` 0,0 %). Y NO es rama muerta él mismo: marca 2 de los 7
+ * condicionales reales.
+ */
+export const TARGET_REACHABILITY = {
+  // d = distancia normalizada · valor = % de veces que el precio la recorre en la vigencia.
+  points: {
+    0.1: 88.1, 0.2: 74.6, 0.4: 51.3, 0.6: 34.0, 0.8: 21.1,
+    1.0: 12.9, 1.2: 9.2, 1.5: 5.8, 2.0: 1.7, 2.5: 0.5,
+  },
+  measured_at: '2026-08-01',
+  source: 'scripts/auditTargetReachability.mjs · SOL/BTC/ETH · anclajes 4h · vigencias 6/12/24/42 velas · n≈3000/celda · ATR de 180 velas',
+  // ⚠️ Medida con el ATR de 180 velas — el de DECISIÓN (`technical[tf].atr`), que es el que
+  // usa el consumidor. La regla del proyecto es que tabla y consumidor usen el mismo ATR
+  // (el de Wilder es recursivo: 19 y 180 velas dan números distintos). Comprobado que aquí
+  // da igual —la versión con 19 velas difiere ≤1,6 pt, porque `d` normaliza por el MISMO
+  // ATR con el que se mide la distancia y la elección se cancela—, pero se alinean de todos
+  // modos: comprobar que un riesgo no se materializa no es razón para dejarlo abierto.
+};
+
+/** Por debajo de esta alcanzabilidad, el objetivo declarado se considera inerte. */
+export const TARGET_UNREACHABLE_PCT = 5;
+
+/**
+ * % de veces que el precio recorre una distancia normalizada `d` dentro de su vigencia.
+ * Interpola entre los puntos medidos y se ancla a los extremos: extrapolar es inventar.
+ * @returns {number|null} % o null si `d` no es utilizable.
+ */
+export function targetReachabilityFor(d) {
+  if (!Number.isFinite(d) || d < 0) return null;
+  const xs = Object.keys(TARGET_REACHABILITY.points).map(Number).sort((a, b) => a - b);
+  const at = (x) => TARGET_REACHABILITY.points[x];
+  if (d <= xs[0]) return at(xs[0]);
+  if (d >= xs.at(-1)) return at(xs.at(-1));
+  for (let i = 1; i < xs.length; i++) {
+    if (d <= xs[i]) {
+      const [x0, x1] = [xs[i - 1], xs[i]];
+      const w = (d - x0) / (x1 - x0);
+      return parseFloat((at(x0) + w * (at(x1) - at(x0))).toFixed(1));
+    }
+  }
+  return null;
+}
+
+/**
  * Tasa base para una distancia normalizada, interpolando linealmente entre los puntos
  * medidos. Fuera de rejilla se ancla al extremo: extrapolar una curva medida es inventar.
  * @returns {number|null} % o null si `d` no es utilizable.

@@ -6,6 +6,7 @@ import { describe, test, expect } from '@jest/globals';
 import {
   wilsonInterval, classifyOpportunity, maxExcursionAtr,
   classifyPathOutcome, convictionBucket, summarizeOpportunity, OPPORTUNITY_BASE_RATE,
+  normalizedTargetDistance, targetReachabilityFor, TARGET_UNREACHABLE_PCT,
 } from '../src/utils/stats.js';
 
 describe('wilsonInterval', () => {
@@ -342,5 +343,58 @@ describe('classifyOpportunity — censura por horizonte no vencido', () => {
     expect(s.evaluable_n).toBe(0);
     expect(s.offered_pct).toBeNull();
     expect(s.lift_pct).toBeNull();        // antes: 0,0 % con lift −36
+  });
+});
+
+// ─── Alcanzabilidad del objetivo (2026-08-01) ────────────────────────────────
+// Reemplaza al retirado `conditional_low_rr`: no juzga la calidad de la geometría (plana
+// en R:R) sino si el objetivo declarado es alcanzable en las velas que el propio análisis
+// declara. Eje y curva medidos en `scripts/auditTargetReachability.mjs`.
+describe('normalizedTargetDistance + targetReachabilityFor', () => {
+  test('el ATR se cancela: d depende solo de k/√velas', () => {
+    // Mismo k=2 y V=6 con ATR% muy distintos → la MISMA distancia normalizada.
+    const d1 = normalizedTargetDistance({
+      tp1Price: 104, entryPrice: 100, atrPct: 2, validityCandles: 6, tfExecution: '4h', primaryTf: '4h',
+    });
+    const d2 = normalizedTargetDistance({
+      tp1Price: 101, entryPrice: 100, atrPct: 0.5, validityCandles: 6, tfExecution: '4h', primaryTf: '4h',
+    });
+    expect(d1).toBeCloseTo(2 / Math.sqrt(6), 6);
+    expect(d2).toBeCloseTo(d1, 6);
+  });
+
+  test('convierte la vigencia al TF del ATR (no mezcla velas de distinto tamaño)', () => {
+    // 24 velas de 1h = 6 velas de 4h: la misma vigencia real debe dar la misma d.
+    const en1h = normalizedTargetDistance({
+      tp1Price: 104, entryPrice: 100, atrPct: 2, validityCandles: 24, tfExecution: '1h', primaryTf: '4h',
+    });
+    expect(en1h).toBeCloseTo(2 / Math.sqrt(6), 6);
+  });
+
+  test('sin ATR% no se inventa una distancia', () => {
+    expect(normalizedTargetDistance({
+      tp1Price: 104, entryPrice: 100, atrPct: null, validityCandles: 6, tfExecution: '4h', primaryTf: '4h',
+    })).toBeNull();
+    expect(targetReachabilityFor(null)).toBeNull();
+  });
+
+  test('la curva es monótona decreciente y se ancla en los extremos (no extrapola)', () => {
+    const ds = [0.1, 0.4, 0.8, 1.2, 1.5, 2.0, 2.5];
+    const ps = ds.map(targetReachabilityFor);
+    for (let i = 1; i < ps.length; i++) expect(ps[i]).toBeLessThan(ps[i - 1]);
+    expect(targetReachabilityFor(0)).toBe(targetReachabilityFor(0.1));
+    expect(targetReachabilityFor(99)).toBe(targetReachabilityFor(2.5));
+  });
+
+  test('los dos condicionales reales que motivaron la regla caen bajo el umbral', () => {
+    // 01-08 04:07 y 08:05: tp1 a 4,55/4,63×ATR con vigencia de 6 velas de 4h.
+    for (const k of [4.55, 4.63]) {
+      const d = k / Math.sqrt(6);
+      expect(targetReachabilityFor(d)).toBeLessThan(TARGET_UNREACHABLE_PCT);
+    }
+    // Y el resto NO: la regla discrimina en vez de marcarlo todo.
+    for (const [k, V] of [[2.83, 12], [2.12, 6], [2.50, 12], [1.69, 6], [2.86, 6]]) {
+      expect(targetReachabilityFor(k / Math.sqrt(V))).toBeGreaterThan(TARGET_UNREACHABLE_PCT);
+    }
   });
 });

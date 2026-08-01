@@ -91,6 +91,36 @@ describe('validateAnalysis — baseline y estructura', () => {
       .toContain('conditional_stop_eq_entry');
   });
 
+  // Lo que ocupó el sitio del corte de R:R: no calidad de la geometría (plana en R:R) sino
+  // COHERENCIA de la declaración. Corte medido en `scripts/auditTargetReachability.mjs`.
+  describe('objetivo inalcanzable dentro de la vigencia declarada', () => {
+    const conVigencia = (targetReachability) => validateAnalysis(
+      base({ conditional_setup: condSetup }), { targetReachability },
+    ).warnings.map((w) => w.rule);
+
+    test('objetivo alcanzable → sin aviso', () => {
+      expect(conVigencia({ pct: 21.7, min: 5, d: 0.817 }))
+        .not.toContain('conditional_target_unreachable');
+    });
+
+    test('objetivo por debajo del umbral → aviso minor', () => {
+      // El caso real del 01-08 04:07: tp1 a 4,55×ATR con vigencia de 6 velas de 4h → d=1,86,
+      // alcanzable el 2,2 % de las veces. El resultado lo decide la caducidad, no el objetivo.
+      const v = validateAnalysis(base({ conditional_setup: condSetup }),
+        { targetReachability: { pct: 2.2, min: 5, d: 1.858 } });
+      const w = v.warnings.find((x) => x.rule === 'conditional_target_unreachable');
+      expect(w?.severity).toBe('minor');
+      expect(w.message).toContain('2.2%');
+      expect(v.hasSevere).toBe(false);   // es defecto de declaración, no decisión mal tomada
+    });
+
+    test('sin alcanzabilidad calculable NO se avisa (dato ausente ≠ defecto)', () => {
+      expect(conVigencia(null)).not.toContain('conditional_target_unreachable');
+      expect(conVigencia({ pct: null, min: 5, d: null }))
+        .not.toContain('conditional_target_unreachable');
+    });
+  });
+
   test('Comprar bien fundamentado no genera warnings', () => {
     const { warnings, hasSevere } = validateAnalysis(buyValid);
     expect(warnings).toEqual([]);
