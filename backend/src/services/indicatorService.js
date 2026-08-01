@@ -1,6 +1,7 @@
 import {
   calculateRSI,
   calculateATR,
+  calculateATRSeries,
   calculateMACD,
   calculateBollingerBands,
   calculateStochRSI,
@@ -16,6 +17,7 @@ import {
   detectMarketRegime,
 } from '../utils/indicators.js';
 
+import { percentileRank } from '../utils/percentiles.js';
 import { calculateVolumeProfile } from '../utils/volumeProfile.js';
 import { calculateSMC } from '../utils/smc.js';
 import { RSI_OVERBOUGHT, RSI_OVERSOLD, VOLUME_PROFILE_VALID_THRESHOLD_PCT, TIMEFRAME_MINUTES } from '../config/constants.js';
@@ -96,9 +98,32 @@ export function computeIndicators(candles, timeframe) {
   // Se calcula ANTES que CVD/VWAP/VolumeProfile porque `priceSide` lo usa para dimensionar
   // su banda neutral (auditoría de umbrales T6).
   const atrValue = calculateATR(candles);
+  // `pct_percentile`: posición del ATR% actual dentro de SU PROPIA ventana (telemetría de
+  // calibración, 2026-08-01). Sin él no se puede saber a posteriori en qué régimen de
+  // volatilidad se tomó cada decisión, y esa es la covariable que el checkpoint necesita
+  // para condicionar cualquier tasa base: el ATR% ABSOLUTO no sirve porque ordena por
+  // MONEDA (SOL es estructuralmente más volátil que BTC) y confundiría activo con régimen.
+  // Se calcula aquí porque las velas ya están en memoria — cero peticiones nuevas.
+  // NO decide nada: no entra en ningún umbral ni viaja al LLM (se poda en `buildPrompt`,
+  // misma regla que `width_pctile` y `cvd_strength_pctile`).
+  const atrPctSeries = (calculateATRSeries(candles) ?? [])
+    .map(({ idx, atr: a }) => {
+      const c = candles[idx]?.close;
+      return Number.isFinite(a) && c > 0 ? (a / c) * 100 : null;
+    })
+    .filter(Number.isFinite);
+  // El percentil se rankea contra el ÚLTIMO ELEMENTO DE LA PROPIA SERIE, no contra un ATR%
+  // recalculado desde `calculateATR`. Motivo medido: `calculateATR` devuelve el valor
+  // REDONDEADO a 2 decimales (3.87) mientras `calculateATRSeries` va sin redondear
+  // (3.873507…), así que el escalar puede caer a cualquiera de los dos lados de su propia
+  // entrada en la muestra y el percentil se movía medio punto según la ESCALA del activo —
+  // exactamente lo contrario de lo que este campo existe para dar. Lo destapó el test de
+  // invariancia de escala. Así el valor rankeado pertenece a la muestra por construcción.
+  const atrPctNow = atrPctSeries.length ? atrPctSeries[atrPctSeries.length - 1] : null;
   const atr = atrValue !== null ? {
     value: atrValue,
     pct: currentPrice ? parseFloat((atrValue / currentPrice * 100).toFixed(2)) : null,
+    pct_percentile: atrPctSeries.length >= 20 ? percentileRank(atrPctSeries, atrPctNow) : null,
     period: 14,
   } : null;
 

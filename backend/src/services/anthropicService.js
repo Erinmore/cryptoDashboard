@@ -984,6 +984,7 @@ function buildPrompt(ctx) {
   // modelo debe leer la etiqueta (`volatility_state`, `cvd_strength`), no el corte con el
   // que se generó, o acabará re-derivando el umbral que el backend ya fijó.
   const CALIBRATION_TELEMETRY = {
+    atr: ['pct_percentile'],
     bollinger_bands: ['width_pctile', 'width_cuts'],
     cvd: ['cvd_strength_pctile', 'cvd_strength_cuts'],
     super_trend: ['adaptive_multiplier'],

@@ -1042,6 +1042,8 @@ export function buildTfSnapshots(analysisId, technical) {
       supertrend_direction: st?.trend ?? null,
       supertrend_level:     supertrendLevel(st),
       wave_trend_signal:   wt?.signal ?? null,
+      atr_pct:             data.atr?.pct ?? null,
+      atr_pct_percentile:  data.atr?.pct_percentile ?? null,
       bb_position:         bb?.position ?? null,
       bb_width_pct:        bb?.width_pct ?? null,
 

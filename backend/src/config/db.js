@@ -421,6 +421,17 @@ function runMigrations(db) {
   // oportunidad" vive en stats.js y se puede cambiar sin volver a pedir datos a Binance.
   // Filas viejas → NULL; el job las rellena retroactivamente al reprocesar.
   ensureColumn(db, 'analysis_outcome', 'atr_pct_at_analysis', 'REAL');
+  // Telemetría de RÉGIMEN DE VOLATILIDAD (2026-08-01). `atr_pct` es el ATR% de decisión (180
+  // velas, el de `indicatorService`) y `atr_pct_percentile` su posición dentro de su PROPIA
+  // ventana. Sin el percentil no se puede condicionar ninguna tasa base a posteriori: el
+  // ATR% absoluto ordena por MONEDA, no por régimen (SOL es estructuralmente más volátil que
+  // BTC), así que confundiría activo con régimen — medido el 2026-08-01, los cuartiles
+  // absolutos resultaron ser casi una clasificación por moneda. Aditivas, fuera de la ruta de
+  // decisión: no exigen punto cero. ⚠️ NO confundir `atr_pct` con `analysis_outcome.
+  // atr_pct_at_analysis`, que el job reconstruye sobre 19 velas: el ATR de Wilder es
+  // recursivo y son dos números distintos.
+  ensureColumn(db, 'analysis_tf_snapshot', 'atr_pct', 'REAL');
+  ensureColumn(db, 'analysis_tf_snapshot', 'atr_pct_percentile', 'REAL');
   ensureColumn(db, 'analysis_outcome', 'max_up_pct_24h', 'REAL');
   ensureColumn(db, 'analysis_outcome', 'max_down_pct_24h', 'REAL');
   ensureColumn(db, 'analysis_outcome', 'max_up_pct_7d', 'REAL');
