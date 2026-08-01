@@ -76,6 +76,39 @@ function fmtSignedPct(v) {
   return `${v > 0 ? '+' : ''}${v}%`;
 }
 
+// Lectura del resultado del shadow trade (evaluación del conditional_setup).
+// El texto dice lo que PASÓ, no un veredicto sobre la abstención: que el trade declarado
+// hubiera ganado no convierte el `Esperar` en error — el análisis es una foto y el disparo
+// lo recogería el análisis siguiente. Ver la cabecera de backend/src/utils/shadowTrade.js.
+function shadowResult(outcome, filled, invalidReason) {
+  const PERMISIVO = 'Se evalúa la GEOMETRÍA: la entrada cuenta como llena al tocarla '
+    + 'intravela. El disparo textual (p. ej. "cierre 4h < X") no se comprueba, así que '
+    + 'esta lectura es más permisiva que el gatillo declarado.';
+  switch (outcome) {
+    case 'tp1':
+      return { text: '↪ Se dio · habría llegado al TP', cls: 'win', tip: PERMISIVO };
+    case 'stop':
+      return { text: '↪ Se dio · habría saltado el stop', cls: 'loss', tip: PERMISIVO };
+    case 'expired':
+      return { text: '↪ Se dio · caducó sin TP ni stop', cls: 'muted',
+        tip: `La entrada se llenó pero ni TP ni stop se tocaron dentro de la vigencia declarada. ${PERMISIVO}` };
+    case 'not_triggered':
+      return { text: '↪ No se dio · la condición nunca apareció', cls: 'muted',
+        tip: `El precio no llegó a la entrada dentro de la vigencia declarada: la abstención fue consistente con lo que el análisis dijo que esperaba. ${PERMISIVO}` };
+    case 'open':
+      return { text: `↪ Vigente${filled ? ' · entrada llena' : ''}`, cls: 'muted',
+        tip: 'La vigencia declarada aún no ha vencido: el resultado no está cerrado.' };
+    case 'truncated':
+      return { text: '↪ Sin cerrar · vigencia > 7 días', cls: 'muted',
+        tip: 'La vigencia declarada supera los 7 días de velas que mide el job, así que no se puede afirmar que no disparase.' };
+    case 'invalid':
+      return { text: '↪ No evaluable', cls: 'muted',
+        tip: `Geometría inevaluable (${invalidReason ?? 'sin motivo'}): se cuenta aparte para que no ensucie el win-rate.` };
+    default:
+      return { text: `↪ ${outcome}`, cls: 'muted', tip: '' };
+  }
+}
+
 // ── Render de una tarjeta ──────────────────────────────────────────
 
 function el(tag, className, text) {
@@ -232,6 +265,14 @@ function renderCard(a) {
       if (risk > 0 && reward > 0) {
         box.appendChild(el('div', 'hist-conditional-rr', `R:R ${(reward / risk).toFixed(2)}`));
       }
+      // Resultado del SHADOW TRADE: ¿llegó a darse la condición que este análisis nombró,
+      // y qué habría hecho el trade? Es lo que convierte una abstención en algo evaluable.
+      if (a.cond_outcome) {
+        const r = shadowResult(a.cond_outcome, a.cond_filled, a.cond_invalid_reason);
+        const badge = el('div', `hist-conditional-result ${r.cls}`, r.text);
+        badge.dataset.tooltip = r.tip;
+        box.appendChild(badge);
+      }
       card.appendChild(box);
     }
   }
@@ -355,7 +396,9 @@ function renderStats(s) {
     const g = el('div', 'hist-stats-grid');
     const m = (label, value, cls, title) => {
       const d = el('div', 'hist-stat');
-      if (title) d.title = title;
+      // `data-tooltip` (sistema propio) y no `title`: el nativo apenas se ve y quedaría
+      // incoherente con el bloque de shadow trades, que está justo debajo.
+      if (title) d.dataset.tooltip = title;
       d.appendChild(el('span', 'hist-stat-label', label));
       d.appendChild(el('span', `hist-stat-value ${cls ?? ''}`, value));
       g.appendChild(d);
@@ -389,6 +432,50 @@ function renderStats(s) {
     if (s.episodes && s.episodes.episodes_n < s.episodes.analyses_n) {
       m('Episodios', `${s.episodes.episodes_n} de ${s.episodes.analyses_n}`, '',
         'Análisis de la misma vela del TF primario cuentan como una sola observación.');
+    }
+    sub.appendChild(g);
+    box.appendChild(sub);
+  }
+
+  // Shadow trades: el conditional_setup evaluado. Va junto al coste de oportunidad y por
+  // encima del win-rate clásico porque, mientras el sistema apenas emita direccionales,
+  // es el único bloque con denominador que crece (los gatillos condicionales se resuelven
+  // mucho más a menudo que las puertas direccionales).
+  const sh = s.shadow_trades;
+  if (sh?.evaluated_n) {
+    const sub = el('div', 'hist-stats-sub');
+    sub.appendChild(el('span', 'hist-stats-subtitle', 'Shadow trades (el trade que se habría tomado)'));
+    const g = el('div', 'hist-stats-grid');
+    const m = (label, value, cls, title) => {
+      const d = el('div', 'hist-stat');
+      if (title) d.dataset.tooltip = title;
+      d.appendChild(el('span', 'hist-stat-label', label));
+      d.appendChild(el('span', `hist-stat-value ${cls ?? ''}`, value));
+      g.appendChild(d);
+    };
+    m('Con vigencia vencida', `${sh.n} de ${sh.evaluated_n}`, '',
+      `${sh.pending_n} siguen con la vigencia abierta y no cuentan todavía: un condicional `
+      + 'que dispara se resuelve enseguida y uno que no dispara tarda toda su vigencia, así '
+      + 'que contarlos antes de tiempo inflaría la tasa de disparo. '
+      + `Aparte: ${sh.truncated} sin cerrar (vigencia > 7d) · ${sh.invalid} no evaluables.`);
+    if (sh.trigger_rate_pct != null) {
+      m('Gatillo se dio', `${sh.trigger_rate_pct}% (${sh.triggered_n}/${sh.conclusive_n})`, '',
+        'De los condicionales con la vigencia ya vencida, cuántos vieron el precio alcanzar '
+        + 'su entrada dentro de ella. Un sistema cuyos gatillos nunca aparecen está '
+        + `describiendo un mercado que no existe. ${sh.fill_rule_note}`);
+    }
+    if (sh.sample_insufficient) {
+      m('Acierto (TP/Stop)', `muestra insuf. (${sh.resolved_n}/${sh.min_directional_sample})`, '',
+        'Solo cuentan los que se resolvieron por TP o por stop; los caducados no son ni win ni loss.');
+    } else {
+      m('Acierto (TP/Stop)', `${sh.win_rate}%`, sh.win_rate >= 50 ? 'win' : 'loss',
+        `IC 95% (Wilson): ${sh.win_rate_ci_low}–${sh.win_rate_ci_high}% sobre ${sh.resolved_n} resueltos.`);
+    }
+    m('TP / Stop / caducados', `${sh.tp1} / ${sh.stop} / ${sh.expired}`, '',
+      `Sin disparar: ${sh.not_triggered}.`);
+    if (sh.by_episode && sh.n && sh.by_episode.n < sh.n) {
+      m('Episodios', `${sh.by_episode.n} de ${sh.n}`, '',
+        'Condicionales de la misma vela del TF primario cuentan como una sola observación.');
     }
     sub.appendChild(g);
     box.appendChild(sub);

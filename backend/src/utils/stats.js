@@ -8,6 +8,10 @@
  */
 
 import { dedupeByEpisode } from './episodes.js';
+import {
+  SHADOW_FILL_RULE, SHADOW_MAX_WINDOW_MS, parseConditionalSetup, geometryDirection,
+} from './shadowTrade.js';
+import { setupExpiryMs } from './outcome.js';
 
 const Z_95 = 1.959963984540054; // z para IC del 95%
 
@@ -328,6 +332,134 @@ export function summarizePathWinRate(rows, opts = {}) {
     ...tally(directional),
     by_episode: tally(dedupeByEpisode(directional)),
     min_directional_sample: minSample,
+  };
+}
+
+/**
+ * SHADOW TRADES — agregación del `conditional_setup` evaluado (ver utils/shadowTrade.js).
+ *
+ * Responde dos preguntas que el win-rate direccional no puede responder mientras el
+ * sistema apenas emita direccionales:
+ *
+ *  1. **¿Las condiciones que el sistema nombra llegan a darse?** (`trigger_rate_pct`).
+ *     Un sistema que se abstiene declarando gatillos que nunca aparecen está describiendo
+ *     un mercado que no existe; uno cuyos gatillos aparecen a menudo está esperando de
+ *     verdad a algo concreto.
+ *  2. **Cuando se dan, ¿el trade declarado funcionaba?** (`win_rate`, tp1 vs stop).
+ *
+ * DENOMINADORES, que es donde se cuelan las cifras favorables:
+ *  - `trigger_rate_pct` cuenta solo lo CONCLUYENTE: `tp1`/`stop`/`expired` (disparó) frente
+ *    a `not_triggered` (no disparó). Quedan fuera `open` (aún vivo), `truncated` (se
+ *    acabaron los datos antes que la vigencia) e `invalid` (geometría inevaluable) — si
+ *    entraran en el denominador, un lote de condicionales mal formados subiría o bajaría la
+ *    tasa sin que el mercado hubiera hecho nada.
+ *  - `win_rate` solo sobre `tp1 + stop`, con el MISMO gate de muestra mínima que el resto
+ *    (`MIN_DIRECTIONAL_SAMPLE`): dos umbrales distintos para la misma pregunta invitan a
+ *    citar el que salga bien.
+ *  - `expired` (llenado pero sin resolver dentro de su vigencia) no es win ni loss.
+ *
+ * `fill_rule` viaja en la respuesta porque la lectura es MÁS PERMISIVA que el gatillo
+ * declarado (toca la entrada intravela vs. el cierre de vela que el texto exige): la cifra
+ * no significa lo mismo sin esa nota. Ver la cabecera de `utils/shadowTrade.js`.
+ *
+ * ⚠️ LO QUE FALTA — `trigger_rate_pct` NO tiene todavía su tasa base, y sin ella es la
+ * misma clase de número suelto que era `offered_pct` antes de `OPPORTUNITY_BASE_RATE`: si
+ * el precio alcanza esa distancia en esa dirección y en esa ventana tan a menudo como por
+ * azar, que el gatillo se dé no dice nada sobre el criterio del sistema. La tasa base
+ * depende de cada geometría (distancia a la entrada / ATR × vigencia), así que se mide por
+ * condicional, no con una constante — medida a mano el 2026-08-01 para 3 gatillos: 49/62/54 %
+ * (34/60/40 % en el cuartil de menor volatilidad). Cablearla exige un script propio; hasta
+ * entonces la cifra se lee como descriptiva, no como evidencia.
+ */
+export function summarizeShadowTrades(rows, opts = {}) {
+  const minSample = opts.minSample ?? MIN_DIRECTIONAL_SAMPLE;
+  const now = opts.now ?? Date.now();
+  const evaluated = (rows ?? []).filter((r) => r?.cond_outcome != null);
+
+  // ⚠️ CENSURA — por qué solo cuentan los condicionales cuya VENTANA YA VENCIÓ.
+  // Un condicional que dispara puede resolverse en la primera hora; uno que no dispara no
+  // es terminal hasta que se agota su vigencia entera. En una muestra en curso, el conjunto
+  // de terminales está por tanto enriquecido con los que dispararon: `trigger_rate` saldría
+  // sesgado AL ALZA sin que el mercado haya hecho nada. Lo mismo, con el signo contrario, en
+  // el win-rate: el stop suele estar más cerca que el TP, así que los `stop` afloran antes.
+  // La regla es una sola y se aplica a todos los denominadores: un shadow trade entra en las
+  // estadísticas cuando su ventana de evaluación ha vencido, no cuando tiene resultado.
+  const settledAt = (r) => {
+    const cs = parseConditionalSetup(r.conditional_setup);
+    const tMs = new Date(r.timestamp).getTime();
+    if (!Number.isFinite(tMs)) return null;
+    // Mismo helper que usa el evaluador (un solo dueño de "cuándo caduca un setup"),
+    // acotado por la ventana de datos igual que allí.
+    const expiry = cs ? setupExpiryMs({
+      tMs,
+      validityCandles: cs.validity_candles,
+      tfExecution:     cs.tf_execution,
+      primaryTf:       r.primary_tf,
+    }) : null;
+    return Math.min(expiry ?? tMs + SHADOW_MAX_WINDOW_MS, tMs + SHADOW_MAX_WINDOW_MS);
+  };
+  // `invalid` es terminal desde el primer ciclo (defecto permanente de geometría): no tiene
+  // ventana que esperar y se cuenta aparte, fuera de todo denominador.
+  const isSettled = (r) => {
+    if (r.cond_outcome === 'invalid') return true;
+    const end = settledAt(r);
+    return end != null && now >= end;
+  };
+  const settled = evaluated.filter(isSettled);
+  const pending = evaluated.length - settled.length;
+
+  const tally = (list) => {
+    const n = (o) => list.filter((r) => r.cond_outcome === o).length;
+    const tp1 = n('tp1');
+    const stop = n('stop');
+    const expired = n('expired');
+    const notTriggered = n('not_triggered');
+    const conclusive = tp1 + stop + expired + notTriggered;
+    const triggered = tp1 + stop + expired;
+    const resolved = tp1 + stop;
+    const ci = wilsonInterval(tp1, resolved);
+    const insufficient = resolved < minSample;
+    return {
+      n: list.length,
+      tp1, stop, expired, not_triggered: notTriggered,
+      open: n('open'),
+      truncated: n('truncated'),
+      invalid: n('invalid'),
+      conclusive_n: conclusive,
+      triggered_n: triggered,
+      trigger_rate_pct: conclusive
+        ? parseFloat(((triggered / conclusive) * 100).toFixed(1)) : null,
+      resolved_n: resolved,
+      sample_insufficient: insufficient,
+      win_rate: insufficient ? null : ci.point,
+      win_rate_ci_low: insufficient ? null : ci.low,
+      win_rate_ci_high: insufficient ? null : ci.high,
+    };
+  };
+
+  // Segmentación por dirección: la geometría corta y la larga no tienen por qué
+  // comportarse igual en un mismo régimen, y mezclarlas esconde el que falla.
+  const dirOf = (r) => geometryDirection(parseConditionalSetup(r.conditional_setup));
+
+  return {
+    ...tally(settled),
+    // Evaluados en total y cuántos siguen con la ventana abierta. Se reportan aparte para
+    // que la diferencia con `n` sea visible y nadie la lea como muestra perdida.
+    evaluated_n: evaluated.length,
+    pending_n: pending,
+    // Análisis de la misma vela del TF primario comparten casi todo el input; contarlos
+    // por separado estrecha el IC por debajo de la incertidumbre real.
+    by_episode: tally(dedupeByEpisode(settled)),
+    by_direction: {
+      long:  tally(settled.filter((r) => dirOf(r) === 'long')),
+      short: tally(settled.filter((r) => dirOf(r) === 'short')),
+    },
+    min_directional_sample: minSample,
+    fill_rule: SHADOW_FILL_RULE,
+    fill_rule_note: 'La entrada se considera llena al TOCARLA intravela; el trigger textual '
+      + 'del análisis (p. ej. "cierre 4h por debajo de X") no se parsea. Lectura más '
+      + 'permisiva: un not_triggered es robusto, un tp1/stop puede no haber cumplido el '
+      + 'gatillo estricto.',
   };
 }
 

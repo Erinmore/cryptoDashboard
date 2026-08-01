@@ -432,6 +432,19 @@ function runMigrations(db) {
   // no duplicando columnas. Los máximos sí necesitan su versión de 24h — un máximo a 7d
   // no acota el de 24h.
   ensureColumn(db, 'analysis_outcome', 'path_first_passage', 'TEXT');
+  // ── Shadow trade · evaluación del `conditional_setup` ───────────────────────
+  // El trade que el análisis declaró que TOMARÍA si apareciera lo que falta se persistía
+  // desde v9_0 y no lo evaluaba nadie, así que la salida dominante del sistema (`Esperar`)
+  // seguía sin producir un resultado. `cond_outcome` usa el MISMO vocabulario que
+  // `setup_outcome` (not_triggered/open/tp1/stop/expired/invalid) más `truncated`, que es
+  // el caso que el setup real no puede tener: una vigencia declarada más larga que los 7d
+  // de klines que pide el job. No se guardan `hit_tp1`/`hit_stop` porque sin TP2 son
+  // idénticos a `cond_outcome` — un dato duplicado es un dato que se desincroniza.
+  // `cond_filled` SÍ añade información: distingue "se llenó y caducó" de "nunca disparó".
+  // Filas viejas → NULL; el job las rellena retroactivamente (ventana de 8 días).
+  ensureColumn(db, 'analysis_outcome', 'cond_outcome', 'TEXT');
+  ensureColumn(db, 'analysis_outcome', 'cond_filled', 'INTEGER');
+  ensureColumn(db, 'analysis_outcome', 'cond_invalid_reason', 'TEXT');
 }
 
 export function closeDb() {

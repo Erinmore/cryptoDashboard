@@ -354,3 +354,121 @@ describe('runOutcomeJob — el barrier respeta setup_validity_candles', () => {
     expect(upsertOutcome.mock.calls[0][0].setup_outcome).toBe('expired');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shadow trade (2026-08-01). La lógica pura se cubre en shadowTrade.test.js; aquí se
+// verifica el CABLEADO: que el job use las MISMAS klines del recorrido (sin pedir más),
+// que preserve ante fallo transitorio y que no re-evalúe lo ya terminal.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('runOutcomeJob — shadow trade (conditional_setup)', () => {
+  const velas = (tMs, pares) => pares.map(([high, low], i) => ({
+    t: tMs + i * HOUR, open: low, close: high, high, low, volume: 1,
+  }));
+
+  const condJson = (over = {}) => JSON.stringify({
+    trigger: 'cierre 4h por encima de 100', direction: 'long',
+    entry_price: 100, stop_price: 95, tp1_price: 110,
+    validity_candles: 6, tf_execution: '4h', ...over,
+  });
+
+  test('un Esperar con condicional obtiene resultado sin pedir klines extra', async () => {
+    const now = Date.now();
+    const tMs = now - 30 * HOUR;                       // vigencia (24h) vencida
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(velas(tMs, [[101, 99], [111, 105]]))
+      .mockResolvedValueOnce([]);                      // ATR
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      conditional_setup: condJson(),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.cond_outcome).toBe('tp1');
+    expect(out.cond_filled).toBe(1);
+    // El recorrido y el shadow trade comparten la MISMA petición de velas 1h.
+    expect(fetchHistoricalKlines).toHaveBeenCalledTimes(2);  // recorrido + ATR, nada más
+  });
+
+  test('el gatillo que nunca se dio queda not_triggered al vencer su vigencia', async () => {
+    const now = Date.now();
+    const tMs = now - 30 * HOUR;
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(velas(tMs, Array(30).fill([98, 96])))
+      .mockResolvedValueOnce([]);
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      conditional_setup: condJson(),
+    })]);
+
+    await runOutcomeJob();
+
+    expect(upsertOutcome.mock.calls[0][0].cond_outcome).toBe('not_triggered');
+  });
+
+  test('fallo de klines: preserva lo anterior en vez de marcar un resultado falso', async () => {
+    const now = Date.now();
+    fetchHistoricalKlines.mockRejectedValue(new Error('binance down'));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(now - 30 * HOUR),
+      conditional_setup: condJson(),
+      cond_outcome: 'open', cond_filled: 0,
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.cond_outcome).toBe('open');   // NO 'invalid': el hueco es de la red
+    expect(out.cond_filled).toBe(0);
+  });
+
+  test('condicional ya terminal → no se re-evalúa (se preserva tal cual)', async () => {
+    const now = Date.now();
+    const tMs = now - 30 * HOUR;
+    // Velas que AHORA darían tp1: si se re-evaluase, el resultado cambiaría.
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(velas(tMs, [[101, 99], [111, 105]]))
+      .mockResolvedValueOnce([]);
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      conditional_setup: condJson(),
+      cond_outcome: 'not_triggered', cond_filled: 0,
+    })]);
+
+    await runOutcomeJob();
+
+    expect(upsertOutcome.mock.calls[0][0].cond_outcome).toBe('not_triggered');
+  });
+
+  test('sin condicional, las columnas quedan a null sin tocar el resto del outcome', async () => {
+    const now = Date.now();
+    fetchHistoricalClose.mockResolvedValue(105);
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(now - 25 * HOUR),
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.cond_outcome).toBeNull();
+    expect(out.pnl_pct_24h).toBe(5);
+  });
+
+  test('geometría contradictoria → invalid inmediato, sin esperar al horizonte', async () => {
+    const now = Date.now();
+    const tMs = now - 2 * HOUR;                       // vigencia SIN vencer
+    fetchHistoricalKlines.mockResolvedValue(velas(tMs, [[101, 99]]));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      atr_pct_at_analysis: 1.5,
+      conditional_setup: condJson({ direction: 'short' }),  // stop 95 < entry 100
+    })]);
+
+    await runOutcomeJob();
+
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.cond_outcome).toBe('invalid');
+    expect(out.cond_invalid_reason).toBe('direction_mismatch');
+  });
+});

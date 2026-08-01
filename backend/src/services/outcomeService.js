@@ -15,6 +15,7 @@ import { getAnalysesNeedingOutcome, upsertOutcome } from './dbService.js';
 import {
   classifyOutcome, evaluateSetupBarrier, setupExpiryMs, candlesWithinValidity,
 } from '../utils/outcome.js';
+import { evaluateShadowTrade, SHADOW_MAX_WINDOW_MS } from '../utils/shadowTrade.js';
 import { computePathMetrics, computeAtrPct } from '../utils/pathMetrics.js';
 import { calculateATR } from '../utils/indicators.js';
 import env from '../config/env.js';
@@ -124,7 +125,10 @@ async function processAnalysis(a, now) {
   // ── Velas del recorrido (compartidas: métricas de path + barrier del setup) ──
   // Antes solo se pedían cuando había setup ejecutable. Ahora se piden SIEMPRE porque el
   // recorrido posterior a un `Esperar` es justo lo que faltaba para poder refutarlo.
-  const toMs = Math.min(now, tMs + 7 * 24 * HOUR_MS);
+  // La ventana la fija `SHADOW_MAX_WINDOW_MS` (7d) y no un 7 suelto aquí: el evaluador del
+  // shadow trade y la agregación de stats deciden "hasta dónde se ha podido mirar" con esa
+  // misma constante, y si el fetch dijera otra cosa marcarían `truncated` donde no toca.
+  const toMs = Math.min(now, tMs + SHADOW_MAX_WINDOW_MS);
   let pathCandles = null;
   try {
     pathCandles = await fetchHistoricalKlines(a.coin, '1h', tMs, toMs, 1000);
@@ -234,6 +238,39 @@ async function processAnalysis(a, now) {
     }
   } else {
     preserveSetup();
+  }
+
+  // ── Shadow trade: el `conditional_setup` evaluado con el MISMO barrier ──────
+  // Es lo que convierte una abstención en un resultado medible sin esperar a que haya
+  // direccionales: el análisis declaró qué trade tomaría y bajo qué condición, así que
+  // se puede comprobar si esa condición llegó a darse y qué habría hecho el trade.
+  // Reutiliza `evaluateSetupBarrier`/`setupExpiryMs` vía utils/shadowTrade.js — misma
+  // definición de "entrada llena" y de "vigencia" que el setup ejecutable, o los dos
+  // números no serían comparables entre sí.
+  const condResolved = a.cond_outcome && a.cond_outcome !== 'open';
+  if (a.conditional_setup && !condResolved) {
+    const shadow = evaluateShadowTrade({
+      conditionalSetup: a.conditional_setup,
+      candles:          pathCandles,
+      tMs,
+      primaryTf:        a.primary_tf,
+      now,
+    });
+    if (shadow && !shadow.preserve) {
+      out.cond_outcome        = shadow.outcome;
+      out.cond_filled         = shadow.filled;
+      out.cond_invalid_reason = shadow.invalid_reason;
+    } else {
+      // preserve = fallo transitorio de klines (las históricas de Binance son permanentes,
+      // así que un hueco es de la red): conservar lo que hubiera y reintentar.
+      out.cond_outcome        = a.cond_outcome ?? null;
+      out.cond_filled         = a.cond_filled ?? null;
+      out.cond_invalid_reason = a.cond_invalid_reason ?? null;
+    }
+  } else {
+    out.cond_outcome        = a.cond_outcome ?? null;
+    out.cond_filled         = a.cond_filled ?? null;
+    out.cond_invalid_reason = a.cond_invalid_reason ?? null;
   }
 
   upsertOutcome(out);

@@ -1151,6 +1151,19 @@ html, body {
   color: var(--text-muted);
   margin-top: var(--sp-xs);
 }
+/* Resultado del shadow trade (evaluación a posteriori del conditional_setup). */
+.hist-conditional-result {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  margin-top: var(--sp-md);
+  padding: var(--sp-xs) var(--sp-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: help;
+}
+.hist-conditional-result.win   { background: var(--bullish-dim); color: var(--bullish); border-color: var(--bullish); }
+.hist-conditional-result.loss  { background: var(--bearish-dim); color: var(--bearish); border-color: var(--bearish); }
+.hist-conditional-result.muted { background: var(--bg-surface);  color: var(--text-secondary); }
 
 .hist-badge {
   font-size: var(--fs-xs);

@@ -2,7 +2,7 @@ import { getDb } from '../config/db.js';
 import { MAX_ANALYSES_STORED } from '../config/constants.js';
 import {
   wilsonInterval, MIN_DIRECTIONAL_SAMPLE,
-  summarizeOpportunity, summarizePathWinRate, summarizeConviction,
+  summarizeOpportunity, summarizePathWinRate, summarizeConviction, summarizeShadowTrades,
 } from '../utils/stats.js';
 import { countEpisodes } from '../utils/episodes.js';
 
@@ -185,7 +185,10 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       -- Resultado a posteriori (analysis_outcome), null si aún no evaluado
       o.outcome_1h, o.outcome_24h, o.outcome_7d,
       o.pnl_pct_24h, o.pnl_signed_pct_24h, o.price_24h_later,
-      o.setup_outcome, o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop
+      o.setup_outcome, o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop,
+      -- Shadow trade: el resultado del conditional_setup. Sin él, el modal pinta el trade
+      -- que se habría tomado y no puede decir si llegó a darse la condición que lo activaba.
+      o.cond_outcome, o.cond_filled, o.cond_invalid_reason
     FROM analyses a
     LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
     WHERE a.coin = ?
@@ -236,16 +239,26 @@ export function getAnalysesNeedingOutcome(olderThanMs, limit = 100) {
            a.has_executable_setup, a.setup_entry_price, a.setup_stop_price,
            a.setup_tp1_price, a.setup_tp2_price,
            a.setup_validity_candles, a.setup_tf_execution,
+           a.conditional_setup,
            o.price_at_analysis,
            o.price_1h_later, o.price_4h_later, o.price_24h_later, o.price_7d_later,
            o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop, o.setup_outcome,
-           o.atr_pct_at_analysis, o.max_up_pct_7d
+           o.atr_pct_at_analysis, o.max_up_pct_7d,
+           o.cond_outcome, o.cond_filled, o.cond_invalid_reason
     FROM analyses a
     LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
     WHERE a.timestamp <= @cutoff
       AND (o.analysis_id IS NULL
            OR o.price_7d_later IS NULL
            OR (a.has_executable_setup = 1 AND (o.setup_outcome IS NULL OR o.setup_outcome = 'open'))
+           -- Shadow trade: un condicional vivo hay que volver a mirarlo aunque el resto de
+           -- la fila esté completa (si no, un Esperar que ya tiene precio a 7d nunca se
+           -- reprocesaría y su condicional se quedaría en 'open' para siempre). Acotado a
+           -- la misma ventana de 8 días que el backfill del recorrido, para no reintentar
+           -- indefinidamente uno que nunca llega a resolverse.
+           OR (a.conditional_setup IS NOT NULL
+               AND (o.cond_outcome IS NULL OR o.cond_outcome = 'open')
+               AND a.timestamp >= @backfillCutoff)
            OR (o.max_up_pct_7d IS NULL AND a.timestamp >= @backfillCutoff))
     ORDER BY a.timestamp ASC
     LIMIT @limit
@@ -263,7 +276,8 @@ export function upsertOutcome(o) {
       setup_hit_tp1, setup_hit_tp2, setup_hit_stop, setup_outcome, pnl_pct_24h,
       pnl_signed_pct_24h,
       atr_pct_at_analysis, max_up_pct_24h, max_down_pct_24h,
-      max_up_pct_7d, max_down_pct_7d, t_max_up_h, t_max_down_h, path_first_passage
+      max_up_pct_7d, max_down_pct_7d, t_max_up_h, t_max_down_h, path_first_passage,
+      cond_outcome, cond_filled, cond_invalid_reason
     ) VALUES (
       @analysis_id, @price_at_analysis,
       @price_1h_later, @price_4h_later, @price_24h_later, @price_7d_later,
@@ -271,7 +285,8 @@ export function upsertOutcome(o) {
       @setup_hit_tp1, @setup_hit_tp2, @setup_hit_stop, @setup_outcome, @pnl_pct_24h,
       @pnl_signed_pct_24h,
       @atr_pct_at_analysis, @max_up_pct_24h, @max_down_pct_24h,
-      @max_up_pct_7d, @max_down_pct_7d, @t_max_up_h, @t_max_down_h, @path_first_passage
+      @max_up_pct_7d, @max_down_pct_7d, @t_max_up_h, @t_max_down_h, @path_first_passage,
+      @cond_outcome, @cond_filled, @cond_invalid_reason
     )
     ON CONFLICT(analysis_id) DO UPDATE SET
       price_at_analysis = excluded.price_at_analysis,
@@ -291,7 +306,12 @@ export function upsertOutcome(o) {
       max_down_pct_7d = COALESCE(excluded.max_down_pct_7d, max_down_pct_7d),
       t_max_up_h      = COALESCE(excluded.t_max_up_h,      t_max_up_h),
       t_max_down_h    = COALESCE(excluded.t_max_down_h,    t_max_down_h),
-      path_first_passage = COALESCE(excluded.path_first_passage, path_first_passage)
+      path_first_passage = COALESCE(excluded.path_first_passage, path_first_passage),
+      -- Sin COALESCE: el shadow trade se preserva explícitamente en el servicio (igual que
+      -- el setup). Un COALESCE aquí impediría corregir un 'open' anterior a 'not_triggered'.
+      cond_outcome = excluded.cond_outcome,
+      cond_filled = excluded.cond_filled,
+      cond_invalid_reason = excluded.cond_invalid_reason
   `).run({
     analysis_id:       o.analysis_id,
     price_at_analysis: o.price_at_analysis ?? null,
@@ -316,6 +336,9 @@ export function upsertOutcome(o) {
     t_max_up_h:         o.t_max_up_h ?? null,
     t_max_down_h:       o.t_max_down_h ?? null,
     path_first_passage: o.path_first_passage != null ? JSON.stringify(o.path_first_passage) : null,
+    cond_outcome:        o.cond_outcome ?? null,
+    cond_filled:         o.cond_filled ?? null,
+    cond_invalid_reason: o.cond_invalid_reason ?? null,
   });
 }
 
@@ -394,9 +417,11 @@ export function getOutcomeStats(coin = null) {
   // MAX_ANALYSES_STORED por moneda, así que cabe en memoria sin problema.
   const rows = db.prepare(`
     SELECT a.id, a.coin, a.timestamp, a.primary_tf, a.action, a.conviction,
+           a.conditional_setup,
            o.atr_pct_at_analysis,
            o.max_up_pct_24h, o.max_down_pct_24h, o.max_up_pct_7d, o.max_down_pct_7d,
-           o.path_first_passage
+           o.path_first_passage,
+           o.cond_outcome, o.cond_filled
     ${OUTCOME_FROM}
     WHERE (@coin IS NULL OR a.coin = @coin)
     ORDER BY a.timestamp ASC
@@ -416,6 +441,10 @@ export function getOutcomeStats(coin = null) {
       '7d': summarizeOpportunity(waits, { horizonH: null }),
     },
     path_win_rate: summarizePathWinRate(rows),
+    // El shadow trade es hoy el único canal que produce evidencia a la escala del
+    // checkpoint: los gatillos condicionales se resuelven mucho más a menudo que las
+    // puertas direccionales (medido el 2026-08-01: 34-74 % frente al 3-4 %).
+    shadow_trades: summarizeShadowTrades(rows),
     conviction_calibration: summarizeConviction(rows),
     // n de análisis vs n de episodios: la diferencia es la autocorrelación de la muestra.
     episodes: { analyses_n: rows.length, episodes_n: countEpisodes(rows) },
