@@ -417,6 +417,9 @@ export function getOutcomeStats(coin = null) {
   // MAX_ANALYSES_STORED por moneda, así que cabe en memoria sin problema.
   const rows = db.prepare(`
     SELECT a.id, a.coin, a.timestamp, a.primary_tf, a.action, a.conviction,
+           -- price_current: origen de la distancia normalizada del gatillo, que es el eje
+           -- de TRIGGER_BASE_RATE. Sin él, trigger_rate_pct vuelve a no tener referencia.
+           a.price_current,
            a.conditional_setup,
            o.atr_pct_at_analysis,
            o.max_up_pct_24h, o.max_down_pct_24h, o.max_up_pct_7d, o.max_down_pct_7d,

@@ -76,6 +76,100 @@ export const OPPORTUNITY_BASE_RATE = {
   source: 'scripts/auditOpportunityThresholds.mjs · 90d · SOL/BTC/ETH · TF 4h',
 };
 
+/**
+ * TASA BASE DEL GATILLO de un shadow trade — la referencia que le faltaba a
+ * `trigger_rate_pct`. Sin ella es un número suelto: si el precio alcanza esa distancia en esa
+ * dirección y en esa ventana tan a menudo como en un instante CUALQUIERA, que el gatillo se
+ * dé no dice nada sobre el criterio del sistema. Lo que refuta o confirma es el LIFT.
+ *
+ * EL EJE ES UNA SOLA VARIABLE, y eso es un hallazgo medido, no una suposición:
+ *
+ *     d = |entry_price − price_current| / (atr_pct × √velas_de_vigencia)
+ *
+ * Se creía que la tasa base había que calcularla "por condicional" porque depende de la
+ * geometría (distancia × vigencia). Medido con `scripts/auditTriggerBaseRate.mjs`: al
+ * normalizar por `ATR%×√n` la tasa COLAPSA — 24h y 48h coinciden dentro de 0,4-6,4 pt y las
+ * TRES monedas dentro de 0,7-3,4 pt. Es propiedad del recorrido cripto normalizado por ATR,
+ * no del activo ni de la ventana: la misma conclusión a la que llegó `OPPORTUNITY_BASE_RATE`.
+ * Por eso cabe en una curva enviada como constante, sin script por análisis.
+ *
+ * ⚠️ `atr_pct` es el de `analysis_outcome.atr_pct_at_analysis` — Wilder(14) sobre 19 velas
+ * cerradas — NO el `derivatives_score_components.atr_pct` de la ruta de decisión (ventana de
+ * 180). Se eligió porque está persistido retroactivamente para TODAS las filas. Para una tasa
+ * base da igual cuál sea mientras tabla y consumidor usen el mismo; mezclarlos sí rompe.
+ *
+ * ⚠️ Mide la GEOMETRÍA ("¿tocó el precio la entrada?"), que es justo lo que cuenta como
+ * disparo el evaluador (`SHADOW_FILL_RULE`), no el gatillo textual del análisis.
+ *
+ * ⚠️ La diferencia long/short es de 0,9-2,3 pt, con signo consistente pero dentro del IC de
+ * cada celda (±2,2 pt). Se conserva porque estaba medida y no cuesta nada; NO debe leerse
+ * como que operar corto sea más fácil.
+ *
+ * Caduca con el régimen, como el resto: `measured_at` viaja en la respuesta.
+ */
+export const TRIGGER_BASE_RATE = {
+  /** d → tasa de disparo en %, por dirección de la geometría. */
+  points: {
+    0.20: { long: 73.7, short: 73.8 },
+    0.30: { long: 61.7, short: 61.7 },
+    0.40: { long: 50.9, short: 51.8 },
+    0.50: { long: 41.6, short: 43.9 },
+    0.60: { long: 34.0, short: 36.2 },
+    0.75: { long: 25.4, short: 26.9 },
+    1.00: { long: 14.9, short: 14.7 },
+    1.25: { long: 8.7, short: 8.4 },
+  },
+  measured_at: '2026-08-01',
+  source: 'scripts/auditTriggerBaseRate.mjs · 90d · SOL/BTC/ETH · TF 4h · n≈1946/celda · fill=touch_entry_intrabar',
+};
+
+/** Duración de una vela por TF, en horas. Para convertir la vigencia al TF del ATR. */
+const TF_HOURS_STATS = { '1h': 1, '4h': 4, '1D': 24, '1W': 168 };
+
+/**
+ * Distancia normalizada del gatillo: cuántas "unidades de recorrido esperado" hay entre el
+ * precio del análisis y la entrada condicional.
+ *
+ * La vigencia se declara en velas de `tf_execution`, que puede no ser el TF primario; el ATR
+ * es del primario. Se convierte por duración para que √n y el ATR hablen del mismo TF — si no,
+ * un condicional ejecutado en 1h con ATR de 4h daría una distancia inflada por 2.
+ *
+ * @returns {number|null} null si falta cualquier pieza (no se inventa).
+ */
+export function normalizedTriggerDistance({ entryPrice, priceAtAnalysis, atrPct, validityCandles, tfExecution, primaryTf }) {
+  if (![entryPrice, priceAtAnalysis, atrPct, validityCandles].every(Number.isFinite)) return null;
+  if (!(priceAtAnalysis > 0) || !(atrPct > 0) || !(validityCandles > 0)) return null;
+  const execH = TF_HOURS_STATS[tfExecution] ?? TF_HOURS_STATS[primaryTf] ?? null;
+  const primH = TF_HOURS_STATS[primaryTf] ?? execH;
+  if (!execH || !primH) return null;
+  const candlesInPrimary = (validityCandles * execH) / primH;
+  if (!(candlesInPrimary > 0)) return null;
+  const distPct = Math.abs(entryPrice - priceAtAnalysis) / priceAtAnalysis * 100;
+  return distPct / (atrPct * Math.sqrt(candlesInPrimary));
+}
+
+/**
+ * Tasa base para una distancia normalizada, interpolando linealmente entre los puntos
+ * medidos. Fuera de rejilla se ancla al extremo: extrapolar una curva medida es inventar.
+ * @returns {number|null} % o null si `d` no es utilizable.
+ */
+export function triggerBaseRateFor(d, direction = 'long') {
+  if (!Number.isFinite(d) || d < 0) return null;
+  const dir = direction === 'short' ? 'short' : 'long';
+  const xs = Object.keys(TRIGGER_BASE_RATE.points).map(Number).sort((a, b) => a - b);
+  const at = (x) => TRIGGER_BASE_RATE.points[x][dir];
+  if (d <= xs[0]) return at(xs[0]);
+  if (d >= xs.at(-1)) return at(xs.at(-1));
+  for (let i = 1; i < xs.length; i++) {
+    if (d <= xs[i]) {
+      const [x0, x1] = [xs[i - 1], xs[i]];
+      const w = (d - x0) / (x1 - x0);
+      return parseFloat((at(x0) + w * (at(x1) - at(x0))).toFixed(1));
+    }
+  }
+  return null;
+}
+
 /** Parsea `path_first_passage` venga como JSON de SQLite o como objeto ya hidratado. */
 export function parseFirstPassage(raw) {
   if (raw == null) return null;
@@ -408,6 +502,34 @@ export function summarizeShadowTrades(rows, opts = {}) {
   const settled = evaluated.filter(isSettled);
   const pending = evaluated.length - settled.length;
 
+  // ── Geometría por fila: distancia normalizada y R:R ───────────────────────
+  const geomOf = (r) => {
+    const cs = parseConditionalSetup(r.conditional_setup);
+    if (!cs) return null;
+    const dir = geometryDirection(cs);
+    const risk = Math.abs(cs.stop_price - cs.entry_price);
+    const reward = Math.abs((cs.tp1_price ?? NaN) - cs.entry_price);
+    return {
+      dir,
+      rr: risk > 0 && Number.isFinite(reward) ? reward / risk : null,
+      d: normalizedTriggerDistance({
+        entryPrice: cs.entry_price,
+        priceAtAnalysis: Number.isFinite(r.price_current) ? r.price_current : r.price_at_analysis,
+        atrPct: r.atr_pct_at_analysis,
+        validityCandles: cs.validity_candles,
+        tfExecution: cs.tf_execution,
+        primaryTf: r.primary_tf,
+      }),
+    };
+  };
+
+  const median = (a) => {
+    if (!a.length) return null;
+    const s = a.slice().sort((x, y) => x - y);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+
   const tally = (list) => {
     const n = (o) => list.filter((r) => r.cond_outcome === o).length;
     const tp1 = n('tp1');
@@ -419,7 +541,48 @@ export function summarizeShadowTrades(rows, opts = {}) {
     const resolved = tp1 + stop;
     const ci = wilsonInterval(tp1, resolved);
     const insufficient = resolved < minSample;
+
+    // ── TASA BASE del gatillo ────────────────────────────────────────────────
+    // Se promedia la tasa esperada de CADA geometría sobre las filas que entran en
+    // `trigger_rate_pct` (las concluyentes), no una constante global: cada condicional pone
+    // su entrada a una distancia distinta y por tanto tiene su propia expectativa. El lift
+    // es lo que dice si el sistema elige momentos mejores que el azar A IGUAL GEOMETRÍA.
+    const conclusiveRows = list.filter((r) => ['tp1', 'stop', 'expired', 'not_triggered'].includes(r.cond_outcome));
+    const baseRates = conclusiveRows
+      .map((r) => { const g = geomOf(r); return g ? triggerBaseRateFor(g.d, g.dir) : null; })
+      .filter(Number.isFinite);
+    const baseRate = baseRates.length ? parseFloat((baseRates.reduce((a, b) => a + b, 0) / baseRates.length).toFixed(1)) : null;
+    const triggerRate = conclusive ? parseFloat(((triggered / conclusive) * 100).toFixed(1)) : null;
+
+    // ── EXPECTATIVA ──────────────────────────────────────────────────────────
+    // El win-rate solo no es interpretable: con R:R 1,77 el equilibrio está en el 36,2 %, así
+    // que un 40 % gana y un 33 % pierde. Y el IC del win-rate ni con n=40 excluye ese punto.
+    // La expectativa en unidades de R sí responde a "¿estas geometrías ganan dinero?".
+    // `rr_median` describe la GEOMETRÍA (disponible sin resultados); `expectancy_r`, el
+    // RESULTADO (necesita muestra, con el mismo gate que el win-rate).
+    const rrAll = list.map((r) => geomOf(r)?.rr).filter(Number.isFinite);
+    const rrMedian = median(rrAll);
+    const resolvedRows = list.filter((r) => r.cond_outcome === 'tp1' || r.cond_outcome === 'stop');
+    const rMultiples = resolvedRows
+      .map((r) => { const g = geomOf(r); return g?.rr == null ? null : (r.cond_outcome === 'tp1' ? g.rr : -1); })
+      .filter(Number.isFinite);
+    const expectancy = rMultiples.length
+      ? parseFloat((rMultiples.reduce((a, b) => a + b, 0) / rMultiples.length).toFixed(3)) : null;
+
     return {
+      trigger_base_rate_pct: baseRate,
+      // lift > 0 ⇒ el sistema nombra gatillos que se dan MÁS que a igual geometría por azar.
+      // El resultado por defecto es lift ≈ 0: demostrar es que salga distinto.
+      trigger_lift_pct: baseRate != null && triggerRate != null
+        ? parseFloat((triggerRate - baseRate).toFixed(1)) : null,
+      rr_median: rrMedian != null ? parseFloat(rrMedian.toFixed(2)) : null,
+      // Win-rate por encima del cual la geometría gana dinero. Es la referencia que hace
+      // legible el win_rate; se calcula de la mediana de R:R, así que es orientativa cuando
+      // los R:R son heterogéneos — `expectancy_r` es la respuesta exacta.
+      breakeven_win_rate_pct: rrMedian != null && rrMedian > 0
+        ? parseFloat((100 / (1 + rrMedian)).toFixed(1)) : null,
+      expectancy_r: insufficient ? null : expectancy,
+      expectancy_r_n: rMultiples.length,
       n: list.length,
       tp1, stop, expired, not_triggered: notTriggered,
       open: n('open'),
@@ -455,6 +618,8 @@ export function summarizeShadowTrades(rows, opts = {}) {
       short: tally(settled.filter((r) => dirOf(r) === 'short')),
     },
     min_directional_sample: minSample,
+    trigger_base_rate_measured_at: TRIGGER_BASE_RATE.measured_at,
+    trigger_base_rate_source: TRIGGER_BASE_RATE.source,
     fill_rule: SHADOW_FILL_RULE,
     fill_rule_note: 'La entrada se considera llena al TOCARLA intravela; el trigger textual '
       + 'del análisis (p. ej. "cierre 4h por debajo de X") no se parsea. Lectura más '

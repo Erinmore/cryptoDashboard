@@ -18,7 +18,9 @@ import {
   parseConditionalSetup, conditionalGeometryProblem, geometryDirection,
   evaluateShadowTrade, SHADOW_MAX_WINDOW_MS,
 } from '../src/utils/shadowTrade.js';
-import { summarizeShadowTrades } from '../src/utils/stats.js';
+import {
+  summarizeShadowTrades, normalizedTriggerDistance, triggerBaseRateFor, TRIGGER_BASE_RATE,
+} from '../src/utils/stats.js';
 
 const HOUR = 3600 * 1000;
 const T0 = Date.parse('2026-07-30T08:05:00.000Z');
@@ -315,5 +317,161 @@ describe('summarizeShadowTrades — denominadores', () => {
     const s = sum([fila('tp1')]);
     expect(s.fill_rule).toBe('touch_entry_intrabar');
     expect(s.fill_rule_note).toMatch(/no se parsea/);
+  });
+});
+
+/**
+ * TASA BASE DEL GATILLO + EXPECTATIVA (2026-08-01).
+ *
+ * `trigger_rate_pct` era un número suelto — la misma clase de cifra que era `offered_pct`
+ * antes de `OPPORTUNITY_BASE_RATE`. Y `win_rate` sin R:R tampoco es interpretable: con R:R
+ * 1,77 el equilibrio está en el 36,2 %, así que un 40 % gana dinero y un 33 % lo pierde.
+ */
+describe('normalizedTriggerDistance — el eje de la tasa base', () => {
+  const base = {
+    entryPrice: 102, priceAtAnalysis: 100, atrPct: 1.0,
+    validityCandles: 4, tfExecution: '4h', primaryTf: '4h',
+  };
+
+  test('d = distancia% / (ATR% × √velas)', () => {
+    // 2 % de distancia, ATR 1 %, 4 velas → 2 / (1 × 2) = 1.0
+    expect(normalizedTriggerDistance(base)).toBeCloseTo(1.0, 10);
+  });
+
+  test('escala con √velas, no linealmente (misma razón que el par de oportunidad)', () => {
+    const d4 = normalizedTriggerDistance(base);
+    const d16 = normalizedTriggerDistance({ ...base, validityCandles: 16 });
+    expect(d16).toBeCloseTo(d4 / 2, 10);   // ×4 velas → ÷2 la distancia normalizada
+  });
+
+  test('es simétrica: da igual que la entrada esté arriba o abajo', () => {
+    expect(normalizedTriggerDistance({ ...base, entryPrice: 98 }))
+      .toBeCloseTo(normalizedTriggerDistance(base), 10);
+  });
+
+  test('convierte la vigencia al TF del ATR cuando tf_execution difiere del primario', () => {
+    // 4 velas de 1h = 1 vela de 4h. Sin la conversión, √4 en vez de √1 → distancia ÷2.
+    const d = normalizedTriggerDistance({ ...base, tfExecution: '1h', validityCandles: 4, primaryTf: '4h' });
+    expect(d).toBeCloseTo(2.0, 10);        // 2 / (1 × √1)
+  });
+
+  test('sin alguna pieza devuelve null, no un número inventado', () => {
+    for (const patch of [{ entryPrice: null }, { atrPct: 0 }, { atrPct: null },
+      { priceAtAnalysis: 0 }, { validityCandles: 0 }, { validityCandles: null },
+      { primaryTf: 'nope', tfExecution: 'nope' }]) {
+      expect(normalizedTriggerDistance({ ...base, ...patch })).toBeNull();
+    }
+  });
+});
+
+describe('triggerBaseRateFor — la curva medida', () => {
+  test('devuelve los puntos medidos exactamente', () => {
+    expect(triggerBaseRateFor(0.40, 'long')).toBe(TRIGGER_BASE_RATE.points[0.40].long);
+    expect(triggerBaseRateFor(0.40, 'short')).toBe(TRIGGER_BASE_RATE.points[0.40].short);
+  });
+
+  test('interpola linealmente entre puntos', () => {
+    const a = TRIGGER_BASE_RATE.points[0.40].long;
+    const b = TRIGGER_BASE_RATE.points[0.50].long;
+    expect(triggerBaseRateFor(0.45, 'long')).toBeCloseTo((a + b) / 2, 1);
+  });
+
+  test('NO extrapola: fuera de rejilla se ancla al extremo medido', () => {
+    expect(triggerBaseRateFor(0.01, 'long')).toBe(TRIGGER_BASE_RATE.points[0.20].long);
+    expect(triggerBaseRateFor(99, 'long')).toBe(TRIGGER_BASE_RATE.points[1.25].long);
+    expect(triggerBaseRateFor(99, 'long')).toBeGreaterThan(0);   // nunca negativa
+  });
+
+  test('es monótona decreciente: más lejos, menos probable', () => {
+    for (const dir of ['long', 'short']) {
+      const xs = Object.keys(TRIGGER_BASE_RATE.points).map(Number).sort((a, b) => a - b);
+      for (let i = 1; i < xs.length; i++) {
+        expect(triggerBaseRateFor(xs[i], dir)).toBeLessThan(triggerBaseRateFor(xs[i - 1], dir));
+      }
+    }
+  });
+
+  test('d inutilizable → null', () => {
+    for (const d of [null, undefined, NaN, -1]) expect(triggerBaseRateFor(d, 'long')).toBeNull();
+  });
+});
+
+describe('summarizeShadowTrades — tasa base del gatillo y expectativa', () => {
+  const AHORA = T0 + 60 * 24 * HOUR;
+  const sum = (filas, o = {}) => summarizeShadowTrades(filas, { now: AHORA, ...o });
+
+  // Fila con la geometría COMPLETA que necesita la distancia normalizada: entrada a 2 %
+  // del precio, ATR 1 %, 4 velas de vigencia → d = 2/(1×2) = 1.0.
+  const filaGeo = (cond_outcome, over = {}) => ({
+    id: Math.random().toString(36).slice(2),
+    coin: 'SOL', primary_tf: '4h',
+    timestamp: new Date(T0 + (over.h ?? 0) * HOUR).toISOString(),
+    price_current: 100,
+    atr_pct_at_analysis: 1.0,
+    conditional_setup: JSON.stringify(cond({
+      entry_price: 102, stop_price: 100.98, tp1_price: 104.04, validity_candles: 4, ...over.cs,
+    })),
+    cond_outcome,
+    cond_filled: ['tp1', 'stop', 'expired'].includes(cond_outcome) ? 1 : 0,
+  });
+
+  test('la tasa base sale de la curva medida, evaluada en la geometría de cada fila', () => {
+    const s = sum([filaGeo('tp1'), filaGeo('stop', { h: 8 }), filaGeo('not_triggered', { h: 16 })]);
+    // d = 1.0 → punto medido de la tabla para long
+    expect(s.trigger_base_rate_pct).toBeCloseTo(TRIGGER_BASE_RATE.points[1.00].long, 1);
+    expect(s.trigger_rate_pct).toBe(66.7);
+    expect(s.trigger_lift_pct).toBeCloseTo(66.7 - TRIGGER_BASE_RATE.points[1.00].long, 1);
+    expect(s.trigger_base_rate_measured_at).toBe(TRIGGER_BASE_RATE.measured_at);
+  });
+
+  test('la tasa base promedia geometrías distintas, no usa una constante global', () => {
+    // Una fila cerca (d≈0.2 → ~74 %) y otra lejos (d=1.0 → ~15 %): la media debe caer entre medias.
+    // Geometría COHERENTE: mover solo la entrada dejaría el stop del lado equivocado y la
+    // fila saldría `direction_mismatch` (que es lo que hace el código, y está bien).
+    const cerca = filaGeo('tp1', { cs: { entry_price: 100.4, stop_price: 99.4, tp1_price: 102.4 } });
+    const lejos = filaGeo('not_triggered', { h: 8 });                  // d = 1.0
+    const s = sum([cerca, lejos]);
+    const esperado = (TRIGGER_BASE_RATE.points[0.20].long + TRIGGER_BASE_RATE.points[1.00].long) / 2;
+    expect(s.trigger_base_rate_pct).toBeCloseTo(esperado, 1);
+  });
+
+  test('sin geometría utilizable la tasa base es null y el lift también (no se inventa)', () => {
+    const sinAtr = { ...filaGeo('tp1'), atr_pct_at_analysis: null };
+    const s = sum([sinAtr]);
+    expect(s.trigger_base_rate_pct).toBeNull();
+    expect(s.trigger_lift_pct).toBeNull();
+    expect(s.trigger_rate_pct).toBe(100);   // la tasa cruda sigue saliendo
+  });
+
+  test('rr_median y breakeven describen la GEOMETRÍA: disponibles sin resultados', () => {
+    // entry 102, stop 100.98 (riesgo 1.02), tp 104.04 (recompensa 2.04) → R:R = 2.0
+    const s = sum([filaGeo('not_triggered'), filaGeo('not_triggered', { h: 8 })]);
+    expect(s.rr_median).toBeCloseTo(2.0, 2);
+    expect(s.breakeven_win_rate_pct).toBeCloseTo(100 / 3, 1);   // 1/(1+2) = 33.3 %
+    expect(s.resolved_n).toBe(0);                                // sin un solo trade resuelto
+  });
+
+  test('expectancy_r = R medio arriesgando 1, y respeta el mismo gate que el win-rate', () => {
+    const filas = [];
+    for (let i = 0; i < 6; i++) filas.push(filaGeo('tp1', { h: i * 8 }));
+    for (let i = 0; i < 4; i++) filas.push(filaGeo('stop', { h: 100 + i * 8 }));
+    // 6 aciertos a +2R y 4 fallos a -1R → (6×2 - 4)/10 = +0.8
+    expect(sum(filas, { minSample: 5 }).expectancy_r).toBeCloseTo(0.8, 3);
+    expect(sum(filas, { minSample: 5 }).expectancy_r_n).toBe(10);
+    // Con el gate por encima de la muestra se silencia, igual que el win-rate
+    expect(sum(filas, { minSample: 20 }).expectancy_r).toBeNull();
+    expect(sum(filas, { minSample: 20 }).win_rate).toBeNull();
+  });
+
+  test('el signo de la expectativa separa geometría rentable de ruinosa', () => {
+    const gana = [], pierde = [];
+    for (let i = 0; i < 4; i++) { gana.push(filaGeo('tp1', { h: i * 8 })); pierde.push(filaGeo('stop', { h: i * 8 })); }
+    for (let i = 0; i < 6; i++) { gana.push(filaGeo('stop', { h: 100 + i * 8 })); pierde.push(filaGeo('stop', { h: 100 + i * 8 })); }
+    // 4 aciertos / 6 fallos con R:R 2 → (8-6)/10 = +0.2 pese a un win-rate del 40 %
+    const g = sum(gana, { minSample: 5 });
+    expect(g.win_rate).toBe(40);
+    expect(g.expectancy_r).toBeGreaterThan(0);          // 40 % > 33,3 % de equilibrio
+    expect(g.win_rate).toBeGreaterThan(g.breakeven_win_rate_pct);
+    expect(sum(pierde, { minSample: 5 }).expectancy_r).toBe(-1);
   });
 });

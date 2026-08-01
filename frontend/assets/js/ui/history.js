@@ -464,12 +464,40 @@ function renderStats(s) {
         + 'su entrada dentro de ella. Un sistema cuyos gatillos nunca aparecen está '
         + `describiendo un mercado que no existe. ${sh.fill_rule_note}`);
     }
+    // El porcentaje anterior, solo, no dice nada: hay que compararlo con lo que habría dado
+    // el azar A IGUAL GEOMETRÍA (misma distancia normalizada y misma vigencia).
+    if (sh.trigger_lift_pct != null) {
+      m('vs. azar (lift)', `${sh.trigger_lift_pct > 0 ? '+' : ''}${sh.trigger_lift_pct} pt`,
+        sh.trigger_lift_pct > 0 ? 'win' : sh.trigger_lift_pct < 0 ? 'loss' : '',
+        `Tasa base para estas geometrías: ${sh.trigger_base_rate_pct}%. El lift es la `
+        + 'diferencia, y es lo único que refuta o confirma: si los gatillos se dan al mismo '
+        + 'ritmo que por azar, nombrarlos no aporta criterio. El resultado por defecto es '
+        + `≈0. Curva medida el ${sh.trigger_base_rate_measured_at} (${sh.trigger_base_rate_source}).`);
+    }
+    // Referencia SIN la que el win-rate no se puede leer: con R:R 2 el equilibrio está en
+    // 33 %, no en 50 %. Pintar contra 50 marcaría como pérdida una geometría rentable.
+    if (sh.breakeven_win_rate_pct != null) {
+      m('Equilibrio (R:R)', `${sh.breakeven_win_rate_pct}%`, '',
+        `R:R mediana de estos condicionales: ${sh.rr_median}. Por encima de este acierto la `
+        + 'geometría gana dinero; por debajo lo pierde. Es la referencia del acierto de al '
+        + 'lado — el 50 % no pinta nada aquí.');
+    }
     if (sh.sample_insufficient) {
       m('Acierto (TP/Stop)', `muestra insuf. (${sh.resolved_n}/${sh.min_directional_sample})`, '',
         'Solo cuentan los que se resolvieron por TP o por stop; los caducados no son ni win ni loss.');
     } else {
-      m('Acierto (TP/Stop)', `${sh.win_rate}%`, sh.win_rate >= 50 ? 'win' : 'loss',
-        `IC 95% (Wilson): ${sh.win_rate_ci_low}–${sh.win_rate_ci_high}% sobre ${sh.resolved_n} resueltos.`);
+      const be = sh.breakeven_win_rate_pct;
+      m('Acierto (TP/Stop)', `${sh.win_rate}%`,
+        be == null ? '' : sh.win_rate >= be ? 'win' : 'loss',
+        `IC 95% (Wilson): ${sh.win_rate_ci_low}–${sh.win_rate_ci_high}% sobre ${sh.resolved_n} resueltos.`
+        + (be == null ? '' : ` Equilibrio en ${be}%.`));
+      if (sh.expectancy_r != null) {
+        m('Expectativa', `${sh.expectancy_r > 0 ? '+' : ''}${sh.expectancy_r} R`,
+          sh.expectancy_r > 0 ? 'win' : 'loss',
+          'Resultado medio por trade arriesgando 1. Es la respuesta exacta a "¿estas '
+          + 'geometrías ganan dinero?": el acierto y el equilibrio son la versión '
+          + 'orientativa cuando los R:R son heterogéneos.');
+      }
     }
     m('TP / Stop / caducados', `${sh.tp1} / ${sh.stop} / ${sh.expired}`, '',
       `Sin disparar: ${sh.not_triggered}.`);
