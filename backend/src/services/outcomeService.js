@@ -260,6 +260,7 @@ async function processAnalysis(a, now) {
       out.cond_outcome        = shadow.outcome;
       out.cond_filled         = shadow.filled;
       out.cond_invalid_reason = shadow.invalid_reason;
+      out.cond_exit_price     = shadow.exit_price;
     } else {
       // preserve = fallo transitorio de klines (las históricas de Binance son permanentes,
       // así que un hueco es de la red): conservar lo que hubiera y reintentar.

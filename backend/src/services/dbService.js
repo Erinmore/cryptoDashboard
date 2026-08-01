@@ -188,7 +188,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       o.setup_outcome, o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop,
       -- Shadow trade: el resultado del conditional_setup. Sin él, el modal pinta el trade
       -- que se habría tomado y no puede decir si llegó a darse la condición que lo activaba.
-      o.cond_outcome, o.cond_filled, o.cond_invalid_reason
+      o.cond_outcome, o.cond_filled, o.cond_invalid_reason, o.cond_exit_price
     FROM analyses a
     LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
     WHERE a.coin = ?
@@ -244,7 +244,7 @@ export function getAnalysesNeedingOutcome(olderThanMs, limit = 100) {
            o.price_1h_later, o.price_4h_later, o.price_24h_later, o.price_7d_later,
            o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop, o.setup_outcome,
            o.atr_pct_at_analysis, o.max_up_pct_7d,
-           o.cond_outcome, o.cond_filled, o.cond_invalid_reason
+           o.cond_outcome, o.cond_filled, o.cond_invalid_reason, o.cond_exit_price
     FROM analyses a
     LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
     WHERE a.timestamp <= @cutoff
@@ -277,7 +277,7 @@ export function upsertOutcome(o) {
       pnl_signed_pct_24h,
       atr_pct_at_analysis, max_up_pct_24h, max_down_pct_24h,
       max_up_pct_7d, max_down_pct_7d, t_max_up_h, t_max_down_h, path_first_passage,
-      cond_outcome, cond_filled, cond_invalid_reason
+      cond_outcome, cond_filled, cond_invalid_reason, cond_exit_price
     ) VALUES (
       @analysis_id, @price_at_analysis,
       @price_1h_later, @price_4h_later, @price_24h_later, @price_7d_later,
@@ -286,7 +286,7 @@ export function upsertOutcome(o) {
       @pnl_signed_pct_24h,
       @atr_pct_at_analysis, @max_up_pct_24h, @max_down_pct_24h,
       @max_up_pct_7d, @max_down_pct_7d, @t_max_up_h, @t_max_down_h, @path_first_passage,
-      @cond_outcome, @cond_filled, @cond_invalid_reason
+      @cond_outcome, @cond_filled, @cond_invalid_reason, @cond_exit_price
     )
     ON CONFLICT(analysis_id) DO UPDATE SET
       price_at_analysis = excluded.price_at_analysis,
@@ -311,7 +311,8 @@ export function upsertOutcome(o) {
       -- el setup). Un COALESCE aquí impediría corregir un 'open' anterior a 'not_triggered'.
       cond_outcome = excluded.cond_outcome,
       cond_filled = excluded.cond_filled,
-      cond_invalid_reason = excluded.cond_invalid_reason
+      cond_invalid_reason = excluded.cond_invalid_reason,
+      cond_exit_price     = COALESCE(excluded.cond_exit_price, analysis_outcome.cond_exit_price)
   `).run({
     analysis_id:       o.analysis_id,
     price_at_analysis: o.price_at_analysis ?? null,
@@ -339,6 +340,7 @@ export function upsertOutcome(o) {
     cond_outcome:        o.cond_outcome ?? null,
     cond_filled:         o.cond_filled ?? null,
     cond_invalid_reason: o.cond_invalid_reason ?? null,
+    cond_exit_price: o.cond_exit_price ?? null,
   });
 }
 
@@ -424,7 +426,7 @@ export function getOutcomeStats(coin = null) {
            o.atr_pct_at_analysis,
            o.max_up_pct_24h, o.max_down_pct_24h, o.max_up_pct_7d, o.max_down_pct_7d,
            o.path_first_passage,
-           o.cond_outcome, o.cond_filled
+           o.cond_outcome, o.cond_filled, o.cond_exit_price
     ${OUTCOME_FROM}
     WHERE (@coin IS NULL OR a.coin = @coin)
     ORDER BY a.timestamp ASC

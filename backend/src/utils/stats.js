@@ -614,10 +614,29 @@ export function summarizeShadowTrades(rows, opts = {}) {
     // RESULTADO (necesita muestra, con el mismo gate que el win-rate).
     const rrAll = list.map((r) => geomOf(r)?.rr).filter(Number.isFinite);
     const rrMedian = median(rrAll);
-    const resolvedRows = list.filter((r) => r.cond_outcome === 'tp1' || r.cond_outcome === 'stop');
-    const rMultiples = resolvedRows
-      .map((r) => { const g = geomOf(r); return g?.rr == null ? null : (r.cond_outcome === 'tp1' ? g.rr : -1); })
-      .filter(Number.isFinite);
+    // ⚠️ DENOMINADOR DE LA EXPECTATIVA — corregido el 2026-08-01 tras un ensayo en seco.
+    // La primera versión contaba solo `tp1`+`stop`, y ese subconjunto está enriquecido en
+    // stops POR LA GEOMETRÍA, no por el mercado: el stop suele estar más cerca que el
+    // objetivo, así que dentro de una vigencia corta lo alcanza mucho más a menudo y lo que
+    // no llega a ninguno CADUCA. Medido con 3.726 réplicas de las 7 geometrías reales: 1.170
+    // caducados frente a 1.064 resueltos → se tiraba el 52 % de los trades disparados,
+    // siempre por el mismo lado, y la expectativa salía sesgada A LA BAJA.
+    // Ahora entra TODO lo que llegó a llenarse: el caducado aporta su R real al precio de
+    // cierre de su vigencia (normalmente pequeño), que es lo que habría pasado de verdad.
+    // El R sale de una sola fórmula, válida para largo y corto:  (salida - entrada) / (entrada - stop)
+    //   largo  → entrada-stop > 0; salida>entrada ⇒ R>0
+    //   corto  → entrada-stop < 0; salida<entrada ⇒ R>0
+    // y reproduce exactamente los casos límite: en `tp1` da +R:R y en `stop` da -1.
+    const filledRows = list.filter((r) => ['tp1', 'stop', 'expired'].includes(r.cond_outcome));
+    const rMultiples = filledRows.map((r) => {
+      const cs = parseConditionalSetup(r.conditional_setup);
+      const exit = r.cond_exit_price;
+      if (!cs || !Number.isFinite(exit)
+        || !Number.isFinite(cs.entry_price) || !Number.isFinite(cs.stop_price)) return null;
+      const risk = cs.entry_price - cs.stop_price;
+      if (risk === 0) return null;
+      return (exit - cs.entry_price) / risk;
+    }).filter(Number.isFinite);
     const expectancy = expectancyR(rMultiples);
 
     return {
@@ -636,6 +655,10 @@ export function summarizeShadowTrades(rows, opts = {}) {
       // —ver `expectancyR`—, porque a n=20 el IC sigue siendo ±0,57R y esconderlo hasta ahí
       // solo cambia el momento en que la cifra empieza a parecer fiable sin serlo.
       expectancy_r: expectancy,
+      // OJO al comparar: `win_rate` va sobre tp1+stop (una proporción) y `expectancy_r`
+      // sobre TODO lo llenado, caducados incluidos. Denominadores distintos a propósito —
+      // son preguntas distintas —, así que `expectancy_r.n` >= `resolved_n`.
+      expectancy_includes_expired: true,
       n: list.length,
       tp1, stop, expired, not_triggered: notTriggered,
       open: n('open'),

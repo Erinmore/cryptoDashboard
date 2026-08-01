@@ -414,6 +414,10 @@ describe('summarizeShadowTrades — tasa base del gatillo y expectativa', () => 
     })),
     cond_outcome,
     cond_filled: ['tp1', 'stop', 'expired'].includes(cond_outcome) ? 1 : 0,
+    // El evaluador persiste el precio de cierre; sin él no hay R y la fila no cuenta.
+    cond_exit_price: cond_outcome === 'tp1' ? (over.cs?.tp1_price ?? 104.04)
+      : cond_outcome === 'stop' ? (over.cs?.stop_price ?? 100.98)
+        : cond_outcome === 'expired' ? (over.exit ?? 102) : null,
   });
 
   test('la tasa base sale de la curva medida, evaluada en la geometría de cada fila', () => {
@@ -535,5 +539,70 @@ describe('expectancyR — la media con su incertidumbre', () => {
 
   test('ignora valores no finitos en vez de propagar NaN', () => {
     expect(expectancyR([2, null, -1, undefined, NaN, 2]).n).toBe(3);
+  });
+});
+
+/**
+ * EL DENOMINADOR DE LA EXPECTATIVA (corregido el 2026-08-01).
+ *
+ * La primera versión contaba solo `tp1`+`stop`. Un ensayo en seco con 3.726 réplicas de las
+ * 7 geometrías reales destapó que ese subconjunto está enriquecido en stops POR LA GEOMETRÍA:
+ * el stop suele estar más cerca que el objetivo, así que dentro de una vigencia corta lo
+ * alcanza mucho más a menudo y lo que no llega a ninguno CADUCA. Eran 1.170 caducados frente
+ * a 1.064 resueltos — el 52 % de los disparados, tirado siempre por el mismo lado.
+ */
+describe('expectativa — los caducados también cuentan, con su R real', () => {
+  const AHORA = T0 + 60 * 24 * HOUR;
+  const sum = (filas) => summarizeShadowTrades(filas, { now: AHORA });
+  // Largo: entrada 100, stop 95, TP 110 → riesgo 5, R:R 2.
+  const fila = (cond_outcome, exit, h = 0) => ({
+    id: Math.random().toString(36).slice(2), coin: 'SOL', primary_tf: '4h',
+    timestamp: new Date(T0 + h * HOUR).toISOString(),
+    price_current: 100, atr_pct_at_analysis: 1.0,
+    conditional_setup: JSON.stringify(cond()),
+    cond_outcome, cond_filled: cond_outcome === 'not_triggered' ? 0 : 1,
+    cond_exit_price: exit,
+  });
+
+  test('un caducado aporta su R real, no se descarta', () => {
+    // Caduca en 101 → (101-100)/(100-95) = +0.2R
+    const s = sum([fila('expired', 101)]);
+    expect(s.expectancy_r.n).toBe(1);
+    expect(s.expectancy_r.point).toBeCloseTo(0.2, 3);
+    expect(s.resolved_n).toBe(0);          // no es win ni loss: el win-rate no lo cuenta
+  });
+
+  test('la fórmula reproduce los casos límite: tp1 → +R:R, stop → -1', () => {
+    expect(sum([fila('tp1', 110)]).expectancy_r.point).toBeCloseTo(2, 3);
+    expect(sum([fila('stop', 95)]).expectancy_r.point).toBeCloseTo(-1, 3);
+  });
+
+  test('la misma fórmula vale para cortos sin ramas separadas', () => {
+    // Corto: entrada 100, stop 105, TP 90 → riesgo 5. Caduca en 98 → +0.4R
+    const corto = { ...fila('expired', 98), conditional_setup: JSON.stringify(
+      cond({ direction: 'short', entry_price: 100, stop_price: 105, tp1_price: 90 })) };
+    expect(sum([corto]).expectancy_r.point).toBeCloseTo(0.4, 3);
+  });
+
+  test('EL SESGO CORREGIDO: excluir caducados empeora la expectativa artificialmente', () => {
+    // 1 stop y 4 caducados casi planos — lo típico con el stop cerca y el TP lejos.
+    const filas = [fila('stop', 95, 0), fila('expired', 100.5, 8), fila('expired', 99.5, 16),
+      fila('expired', 100.2, 24), fila('expired', 100.1, 32)];
+    const s = sum(filas);
+    expect(s.expectancy_r.n).toBe(5);
+    // Con los 5: (-1 + 0.1 - 0.1 + 0.04 + 0.02)/5 = -0.188
+    expect(s.expectancy_r.point).toBeCloseTo(-0.188, 3);
+    // Contando SOLO el resuelto habría salido -1: cinco veces peor por un artefacto.
+    expect(s.expectancy_r.point).toBeGreaterThan(-1);
+    expect(s.expectancy_includes_expired).toBe(true);
+  });
+
+  test('sin precio de cierre la fila NO cuenta: no se inventa un R', () => {
+    expect(sum([fila('expired', null)]).expectancy_r.n).toBe(0);
+    expect(sum([fila('tp1', undefined)]).expectancy_r.n).toBe(0);
+  });
+
+  test('`not_triggered` nunca entra: no llegó a haber trade', () => {
+    expect(sum([fila('not_triggered', null), fila('tp1', 110, 8)]).expectancy_r.n).toBe(1);
   });
 });

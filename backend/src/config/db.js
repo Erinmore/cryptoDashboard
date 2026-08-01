@@ -445,6 +445,12 @@ function runMigrations(db) {
   ensureColumn(db, 'analysis_outcome', 'cond_outcome', 'TEXT');
   ensureColumn(db, 'analysis_outcome', 'cond_filled', 'INTEGER');
   ensureColumn(db, 'analysis_outcome', 'cond_invalid_reason', 'TEXT');
+  // Precio de cierre del shadow trade. Sin él la expectativa solo cuenta los que tocaron TP
+  // o stop, y ese subconjunto está enriquecido en stops POR LA GEOMETRÍA (el stop suele
+  // estar más cerca que el objetivo): se tiraba el ~52 % de los disparados, siempre por el
+  // mismo lado. Se guarda el PRECIO, no el R — el R se deriva de él y de la geometría ya
+  // persistida (hechos, no interpretaciones).
+  ensureColumn(db, 'analysis_outcome', 'cond_exit_price', 'REAL');
 }
 
 export function closeDb() {

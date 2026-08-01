@@ -145,7 +145,7 @@ export function evaluateShadowTrade({
   }
   const base = {
     outcome: 'invalid', filled: 0, invalid_reason: null,
-    terminal: true, preserve: false, expiry_ms: null,
+    terminal: true, preserve: false, expiry_ms: null, exit_price: null,
   };
   if (!Number.isFinite(tMs)) return { ...base, invalid_reason: 'bad_timestamp' };
 
@@ -195,6 +195,16 @@ export function evaluateShadowTrade({
 
   const filled = bar.filled ? 1 : 0;
   let outcome = bar.outcome;
+  // Precio al que se habría CERRADO el shadow trade. Es un HECHO, no una interpretación: el
+  // R se deriva luego de él y de la geometría, que ya está persistida.
+  //
+  // POR QUÉ HACE FALTA. Sin él la expectativa solo puede contar los que tocaron TP o stop, y
+  // ese subconjunto está enriquecido en stops POR LA GEOMETRÍA, no por el mercado: el stop
+  // suele estar más cerca que el objetivo, así que dentro de una vigencia corta lo alcanza
+  // mucho más a menudo, y lo que no llega a ninguno CADUCA. Medido con 3.726 réplicas de las
+  // 7 geometrías reales: 1.170 caducados frente a 1.064 resueltos — se tiraba el 52 % de los
+  // trades disparados, y siempre por el mismo lado.
+  let exitPrice = null;
   if (outcome === 'tp1' || outcome === 'stop') {
     // Resueltos DENTRO de la vigencia: terminales sin importar si el reloj ha vencido.
   } else if (!elapsed) {
@@ -205,8 +215,15 @@ export function evaluateShadowTrade({
     outcome = 'expired';                 // llenado, pero sin tocar TP ni stop en su vigencia
   }                                      // 'not_triggered' vencido → terminal tal cual
 
+  if (outcome === 'tp1') exitPrice = cs.tp1_price;
+  else if (outcome === 'stop') exitPrice = cs.stop_price;
+  // Caducado con la entrada llena: cierra al último cierre DENTRO de la vigencia, que es lo
+  // que haría cualquiera al vencer el plazo que el propio análisis declaró.
+  else if (outcome === 'expired') exitPrice = evalCandles.at(-1)?.close ?? null;
+
   return {
     outcome, filled, invalid_reason: null,
     terminal: outcome !== 'open', preserve: false, expiry_ms: expiryMs,
+    exit_price: Number.isFinite(exitPrice) ? exitPrice : null,
   };
 }
