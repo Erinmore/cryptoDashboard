@@ -49,8 +49,13 @@ describe('classifyOpportunity', () => {
   // empates), no la calibración. Un cambio de múltiplos no debe romperlos.
   const op = (row, extra = {}) => classifyOpportunity(row, { targetK: 2, adverseK: 1, ...extra });
 
-  /** Fila de outcome con la rejilla de primeros cruces ya hidratada. */
+  /**
+   * Fila de outcome con la rejilla de primeros cruces ya hidratada. El `timestamp` es
+   * antiguo a propósito: salvo en los tests de censura, lo que se comprueba aquí es la
+   * lógica del recorrido, y para eso la ventana tiene que estar vencida.
+   */
   const fila = (up, down, atr = 1) => ({
+    timestamp: '2026-01-01T00:00:00.000Z',
     atr_pct_at_analysis: atr,
     path_first_passage: { atr_pct: atr, multiples: [0.5, 1, 1.5, 2, 3, 4], up, down },
   });
@@ -142,7 +147,7 @@ describe('maxExcursionAtr', () => {
 });
 
 describe('classifyPathOutcome', () => {
-  const fila = (up, down) => ({ path_first_passage: { up, down } });
+  const fila = (up, down) => ({ timestamp: '2026-01-01T00:00:00.000Z', path_first_passage: { up, down } });
   // Par explícito por el mismo motivo que arriba: se prueba la lógica, no la calibración.
   const path = (accion, row) => classifyPathOutcome(accion, row, { targetK: 2, adverseK: 1 });
 
@@ -168,6 +173,41 @@ describe('classifyPathOutcome', () => {
     expect(path('Esperar', fila({ 2: 5 }, {}))).toBeNull();
     expect(path('Comprar', { path_first_passage: null })).toBeNull();
   });
+
+  // La censura aquí SESGA EL SIGNO, no solo el tamaño: `flat` está fuera del denominador
+  // y el stop (adverseK) se toca antes que el objetivo (targetK > adverseK), así que sobre
+  // una muestra en curso los `loss` afloran primero y el win-rate sale bajo.
+  describe('censura por horizonte no vencido', () => {
+    const T0 = Date.parse('2026-08-01T00:00:00.000Z');
+    const H = 3600 * 1000;
+    const joven = (up, down) => ({
+      timestamp: '2026-08-01T00:00:00.000Z', path_first_passage: { up, down },
+    });
+    const p = (accion, row, now) => classifyPathOutcome(accion, row, {
+      targetK: 2, adverseK: 1, horizonH: 24, now,
+    });
+
+    test('sin resolver y con la ventana abierta → pending, no flat', () => {
+      expect(p('Comprar', joven({}, {}), T0 + 6 * H)).toBe('pending');
+      expect(p('Comprar', joven({}, {}), T0 + 25 * H)).toBe('flat');
+    });
+
+    test('win y loss son terminales aunque la ventana siga abierta', () => {
+      // El trade se habría cerrado ahí: más mercado no lo reabre.
+      expect(p('Comprar', joven({ 2: 3 }, {}), T0 + 4 * H)).toBe('win');
+      expect(p('Comprar', joven({}, { 1: 2 }), T0 + 4 * H)).toBe('loss');
+    });
+
+    test('`now: null` desactiva la censura (modo scripts de auditoría)', () => {
+      // Los scripts replican historia ya cerrada con filas sin `timestamp` y llevan su
+      // propio gate de cobertura. Sin este modo, todas saldrían `pending` en silencio.
+      const sinFecha = { path_first_passage: { up: {}, down: {} } };
+      expect(classifyPathOutcome('Comprar', sinFecha, { horizonH: 24 })).toBe('pending');
+      expect(classifyPathOutcome('Comprar', sinFecha, { horizonH: 24, now: null })).toBe('flat');
+      expect(classifyOpportunity(sinFecha, { horizonH: 24 }).pending).toBe(true);
+      expect(classifyOpportunity(sinFecha, { horizonH: 24, now: null }).evaluable).toBe(true);
+    });
+  });
 });
 
 describe('convictionBucket', () => {
@@ -185,6 +225,7 @@ describe('convictionBucket', () => {
 
 describe('summarizeOpportunity — comparación contra la tasa base', () => {
   const fila = (up, down) => ({
+    timestamp: '2026-01-01T00:00:00.000Z',   // ventana vencida (ver censura, más abajo)
     atr_pct_at_analysis: 1,
     path_first_passage: { up, down },
   });
@@ -221,5 +262,85 @@ describe('summarizeOpportunity — comparación contra la tasa base', () => {
     const s = summarizeOpportunity([{ path_first_passage: null }], { horizonH: 24 });
     expect(s.offered_pct).toBeNull();
     expect(s.lift_pct).toBeNull();
+  });
+});
+
+// ─── CENSURA: un "no ofreció" no vale hasta que el horizonte vence ────────────
+// Regresión del 2026-08-01: el bloque de 7d publicaba `offered_pct 0,0` y `lift −36`
+// con las 7 filas de la muestra por debajo de 66 h de vida — cero observaciones maduras
+// presentadas como una abstención brillante. Misma censura que ya se corrigió en
+// `trigger_rate_pct`. La asimetría es el punto: un cruce limpio es terminal en cuanto se
+// observa; su ausencia solo significa "todavía no".
+describe('classifyOpportunity — censura por horizonte no vencido', () => {
+  const T0 = Date.parse('2026-08-01T00:00:00.000Z');
+  const H = 3600 * 1000;
+  const fila = (up, down) => ({
+    timestamp: '2026-08-01T00:00:00.000Z',
+    atr_pct_at_analysis: 1,
+    path_first_passage: { up, down },
+  });
+
+  test('sin cruce y con la ventana abierta → pending, FUERA del denominador', () => {
+    const r = classifyOpportunity(fila({}, {}), { horizonH: 24, now: T0 + 12 * H });
+    expect(r.pending).toBe(true);
+    expect(r.evaluable).toBe(false);
+    expect(r.offered).toBe(false);
+  });
+
+  test('la MISMA fila cuenta como negativo en cuanto la ventana vence', () => {
+    const r = classifyOpportunity(fila({}, {}), { horizonH: 24, now: T0 + 25 * H });
+    expect(r.pending).toBe(false);
+    expect(r.evaluable).toBe(true);
+    expect(r.offered).toBe(false);
+  });
+
+  test('un cruce limpio es TERMINAL aunque la ventana siga abierta', () => {
+    // Asimetría deliberada: más mercado no deshace un recorrido ya ofrecido.
+    const r = classifyOpportunity(fila({ 2: 6 }, {}), { horizonH: 24, now: T0 + 8 * H });
+    expect(r.offered).toBe(true);
+    expect(r.pending).toBe(false);
+    expect(r.evaluable).toBe(true);
+  });
+
+  test('blocked_by_adverse también es terminal (el paso por targetK ya cruzó adverseK)', () => {
+    const r = classifyOpportunity(fila({ 2: 10 }, { 1: 3 }), { horizonH: 24, now: T0 + 11 * H });
+    expect(r.blocked_by_adverse).toBe(true);
+    expect(r.pending).toBe(false);
+    expect(r.evaluable).toBe(true);
+  });
+
+  test('el bloque de 7d vence a 7 días, no cuando hay klines', () => {
+    const seisDias = classifyOpportunity(fila({}, {}), { horizonH: null, now: T0 + 6 * 24 * H });
+    expect(seisDias.pending).toBe(true);
+    const ochoDias = classifyOpportunity(fila({}, {}), { horizonH: null, now: T0 + 8 * 24 * H });
+    expect(ochoDias.evaluable).toBe(true);
+  });
+
+  test('sin timestamp utilizable no se certifica un negativo', () => {
+    const sinFecha = { atr_pct_at_analysis: 1, path_first_passage: { up: {}, down: {} } };
+    expect(classifyOpportunity(sinFecha, { horizonH: 24 }).pending).toBe(true);
+  });
+
+  test('summarizeOpportunity saca las pendientes del denominador y las reporta', () => {
+    const rows = [
+      fila({ 2: 5 }, {}),   // ofreció (terminal aunque sea joven)
+      fila({}, {}),         // ventana abierta → pending
+      fila({}, {}),         // ventana abierta → pending
+      { timestamp: '2026-01-01T00:00:00.000Z', path_first_passage: { up: {}, down: {} } },
+    ];
+    const s = summarizeOpportunity(rows, { horizonH: 24, now: T0 + 6 * H });
+    expect(s.n).toBe(4);
+    expect(s.pending_n).toBe(2);
+    expect(s.evaluable_n).toBe(2);        // la que ofreció + la madura de enero
+    expect(s.offered_pct).toBe(50);       // 1 de 2, no 1 de 4
+  });
+
+  test('con TODA la muestra joven no se publica un lift (el caso que lo destapó)', () => {
+    const rows = [fila({}, {}), fila({}, {}), fila({}, {})];
+    const s = summarizeOpportunity(rows, { horizonH: null, now: T0 + 66 * H });
+    expect(s.pending_n).toBe(3);
+    expect(s.evaluable_n).toBe(0);
+    expect(s.offered_pct).toBeNull();
+    expect(s.lift_pct).toBeNull();        // antes: 0,0 % con lift −36
   });
 });

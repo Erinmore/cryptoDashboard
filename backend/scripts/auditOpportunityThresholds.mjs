@@ -119,13 +119,13 @@ function measure(anchors, hourly, tfMs) {
       r.n++;
       for (const tk of TARGETS) {
         for (const ak of ADVERSES) {
-          const op = classifyOpportunity(row, { horizonH: hH, targetK: tk, adverseK: ak });
+          const op = classifyOpportunity(row, { horizonH: hH, targetK: tk, adverseK: ak, now: null });
           if (op.offered) r.grid[`${tk}|${ak}`]++;
         }
       }
       const cal = opportunityParamsFor(hH);
       const def = classifyOpportunity(row, {
-        horizonH: hH, targetK: cal.targetK, adverseK: cal.adverseK,
+        horizonH: hH, targetK: cal.targetK, adverseK: cal.adverseK, now: null,
       });
       if (def.offered) r.hoursTo.push(def.hours_to);
       const win = path.filter((c) => c.t <= tMs + hH * HOUR_MS);

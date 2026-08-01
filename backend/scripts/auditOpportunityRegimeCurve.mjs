@@ -112,7 +112,10 @@ for (const coin of COINS) {
     const rec = { coin, atrPct: a, pctile };
     for (const [label, hH] of HORIZONS) {
       if (last < tMs + hH * HOUR_MS) { rec[label] = null; continue; }
-      const op = classifyOpportunity({ path_first_passage: fp }, { horizonH: hH });
+      // `now: null` = sin censura por horizonte: la cobertura ya la garantiza el `continue`
+      // de arriba, y estas filas sintéticas no llevan `timestamp`. Sin él, el gate de
+      // producción las dejaría `pending` y aquí se filtra por `evaluable` → todo `offered`.
+      const op = classifyOpportunity({ path_first_passage: fp }, { horizonH: hH, now: null });
       rec[label] = op.evaluable ? op.offered : null;
     }
     rows.push(rec);

@@ -232,6 +232,22 @@ export function parseFirstPassage(raw) {
   } catch { return null; }
 }
 
+/**
+ * ¿Ha vencido ya el horizonte de esta fila? Un solo dueño para la censura, porque la
+ * comparten `classifyOpportunity` y `classifyPathOutcome`: si divergieran, el coste de
+ * oportunidad y el win-rate estarían midiendo sobre muestras distintas sin decirlo.
+ *
+ * `now === null` = historia cerrada (scripts de auditoría, que llevan su propio gate de
+ * cobertura sobre las klines) → sin censura. `now` numérico y fila sin fecha utilizable →
+ * NO madura: un dato ausente no certifica un negativo.
+ */
+function horizonMatured(row, horizonH, now) {
+  if (now == null) return true;
+  const horizonMs = horizonH != null ? horizonH * 3600 * 1000 : SHADOW_MAX_WINDOW_MS;
+  const tMs = Date.parse(row?.timestamp ?? '');
+  return Number.isFinite(tMs) && now >= tMs + horizonMs;
+}
+
 /** Hora del primer cruce de `k` en un sentido, o null si nunca (o fuera del horizonte). */
 function crossedAt(side, k, horizonH) {
   const h = side?.[String(k)];
@@ -254,20 +270,54 @@ function crossedAt(side, k, horizonH) {
  * Deliberadamente SIN dirección propia: no se inventa la tesis que el análisis nunca
  * formuló. Responde "¿había algo que operar?", no "¿en qué lado?".
  *
+ * ⚠️ CENSURA — un "no ofreció" no vale hasta que el horizonte VENCE. La asimetría es lo
+ * que hace falta ver: un `offered` es TERMINAL en cuanto se observa el cruce limpio (más
+ * mercado no lo deshace), pero un `offered:false` solo significa "todavía no", y contarlo
+ * como negativo definitivo mete en el denominador filas que aún no han tenido tiempo de
+ * moverse. Medido el 2026-08-01 sobre la muestra en curso: el bloque de 7d reportaba
+ * `offered_pct 0,0` y `lift −36` con las 7 filas por debajo de 66 h de vida — o sea CERO
+ * observaciones maduras presentadas como una abstención brillante. Es la misma censura que
+ * ya se corrigió en `trigger_rate_pct` (`summarizeShadowTrades`), y la regla es la misma
+ * para todos los denominadores: se entra en la estadística cuando la ventana ha vencido,
+ * no cuando hay un resultado que enseñar.
+ *
+ * `blocked_by_adverse` SÍ es terminal aunque la ventana siga abierta: cruzar `targetK` en
+ * un sentido implica haber cruzado antes `adverseK` en ese mismo sentido (paso monótono,
+ * y targetK > adverseK), así que a partir de ahí cualquier objetivo futuro —en cualquiera
+ * de los dos sentidos— llega con su adverso ya cruzado por delante. No hay recorrido que
+ * pueda rescatarlo.
+ *
+ * `opts.now = null` DESACTIVA la censura: es el modo de los scripts de auditoría, que
+ * reproducen historia ya cerrada y llevan su propio gate de cobertura sobre las klines
+ * (`if (lastHourly < tMs + hH*HOUR_MS) continue`). Ahí una fila sin `timestamp` no es un
+ * dato ausente, es que la fecha no aplica. Tiene que decirse EXPLÍCITAMENTE: con el
+ * default (`Date.now()`) una fila sin fecha se queda `pending`, que es lo correcto para
+ * producción y sería una corrupción silenciosa en un backtest.
+ *
  * @param {object} row - fila de outcome (acepta `path_first_passage` crudo o parseado).
- * @param {{horizonH?:number, targetK?:number, adverseK?:number}} [opts]
+ *   `timestamp` es necesario para fechar el vencimiento del horizonte.
+ * @param {{horizonH?:number, targetK?:number, adverseK?:number, now?:number|null}} [opts]
  * @returns {{offered:boolean, direction:'up'|'down'|null, hours_to:number|null,
- *            blocked_by_adverse:boolean, evaluable:boolean}}
+ *            blocked_by_adverse:boolean, evaluable:boolean, pending:boolean}}
  */
 export function classifyOpportunity(row, opts = {}) {
   const horizonH = opts.horizonH ?? null;
   const cal = opportunityParamsFor(horizonH);
   const { targetK = cal.targetK, adverseK = cal.adverseK } = opts;
+  // `now: null` explícito = historia cerrada, sin censura que aplicar (ver cabecera).
+  const now = 'now' in opts ? opts.now : Date.now();
   const fp = parseFirstPassage(row?.path_first_passage);
-  const none = { offered: false, direction: null, hours_to: null, blocked_by_adverse: false };
+  const none = {
+    offered: false, direction: null, hours_to: null, blocked_by_adverse: false, pending: false,
+  };
   // Sin rejilla no hay ATR con el que normalizar → no evaluable. Distinto de "no ofreció":
   // confundirlos contaría como acierto de abstención lo que en realidad es un dato ausente.
   if (!fp?.up || !fp?.down) return { ...none, evaluable: false };
+
+  // Vencimiento del horizonte. El bloque de 7d se pide con `horizonH = null` (sin tope en
+  // `crossedAt`), y su ventana real es la de datos del job de outcome — mismo dueño que
+  // usa el evaluador de shadow trades, para no escribir un segundo "7 días" aquí.
+  const matured = horizonMatured(row, horizonH, now);
 
   const cand = [];
   for (const [dir, opp] of [['up', 'down'], ['down', 'up']]) {
@@ -280,13 +330,16 @@ export function classifyOpportunity(row, opts = {}) {
     const blocked = tAdverse != null && tAdverse <= tTarget;
     cand.push({ dir, tTarget, blocked });
   }
-  if (!cand.length) return { ...none, evaluable: true };
+  // Ningún objetivo alcanzado: es el ÚNICO desenlace que el tiempo puede cambiar.
+  if (!cand.length) {
+    return matured ? { ...none, evaluable: true } : { ...none, evaluable: false, pending: true };
+  }
 
   const clean = cand.filter((c) => !c.blocked).sort((a, b) => a.tTarget - b.tTarget);
   if (clean.length) {
     return {
       offered: true, direction: clean[0].dir, hours_to: clean[0].tTarget,
-      blocked_by_adverse: false, evaluable: true,
+      blocked_by_adverse: false, evaluable: true, pending: false,
     };
   }
   // Se alcanzó el objetivo pero siempre con el adverso por delante: no era operable.
@@ -316,7 +369,16 @@ export function maxExcursionAtr(row, horizon = '24h') {
  * stop y luego recuperó cuenta como win — cuando en la práctica se habría cerrado en
  * pérdida. Esto mira el camino, no el destino.
  *
- * @returns {'win'|'loss'|'flat'|null} null si no es direccional o no hay rejilla.
+ * ⚠️ CENSURA — misma asimetría que en `classifyOpportunity`, y aquí SESGA EL SIGNO. `win`
+ * y `loss` son terminales en cuanto se tocan (el trade se habría cerrado ahí), pero `flat`
+ * solo significa "aún no", y `flat` está FUERA del denominador (`directional_n = win +
+ * loss`). Como el stop está a `adverseK` y el objetivo a `targetK` con `targetK > adverseK`,
+ * **la pérdida aflora antes que la ganancia**: sobre una muestra en curso las que ya han
+ * entrado al denominador están enriquecidas en `loss` y el win-rate sale sesgado A LA BAJA.
+ * Es el mismo mecanismo que obligó a corregir `trigger_rate_pct` y el coste de oportunidad.
+ * Por eso un `flat` con la ventana abierta devuelve `'pending'` y no entra en nada.
+ *
+ * @returns {'win'|'loss'|'flat'|'pending'|null} null si no es direccional o no hay rejilla.
  */
 export function classifyPathOutcome(action, row, opts = {}) {
   const dir = action === 'Comprar' ? 'up' : action === 'Vender' ? 'down' : null;
@@ -324,13 +386,17 @@ export function classifyPathOutcome(action, row, opts = {}) {
   const horizonH = opts.horizonH ?? null;
   const cal = opportunityParamsFor(horizonH);
   const { targetK = cal.targetK, adverseK = cal.adverseK } = opts;
+  const now = 'now' in opts ? opts.now : Date.now();
   const fp = parseFirstPassage(row?.path_first_passage);
   if (!fp?.up || !fp?.down) return null;
 
   const opp = dir === 'up' ? 'down' : 'up';
   const tTarget = crossedAt(fp[dir], targetK, horizonH);
   const tStop = crossedAt(fp[opp], adverseK, horizonH);
-  if (tTarget == null && tStop == null) return 'flat';   // no se resolvió por ningún lado
+  // El único desenlace que el tiempo aún puede cambiar. Los otros tres ya cerraron.
+  if (tTarget == null && tStop == null) {
+    return horizonMatured(row, horizonH, now) ? 'flat' : 'pending';
+  }
   if (tTarget == null) return 'loss';
   if (tStop == null) return 'win';
   return tStop <= tTarget ? 'loss' : 'win';              // empate → stop primero
@@ -405,12 +471,18 @@ export function summarizeOpportunity(rows, opts = {}) {
   const targetK = opts.targetK ?? cal.targetK;
   const adverseK = opts.adverseK ?? cal.adverseK;
 
+  const now = opts.now ?? Date.now();
+
   const evals = (rows ?? []).map((r) => ({
     row: r,
-    op: classifyOpportunity(r, { horizonH, targetK, adverseK }),
+    op: classifyOpportunity(r, { horizonH, targetK, adverseK, now }),
   }));
   const evaluable = evals.filter((e) => e.op.evaluable);
   const offered = evaluable.filter((e) => e.op.offered);
+  // Ventana aún abierta y sin cruce observado: fuera del denominador hasta que venza (ver
+  // la nota de CENSURA en `classifyOpportunity`). Se reporta para que la diferencia con `n`
+  // sea visible y nadie lea un `offered_pct` bajo donde solo hay muestra joven.
+  const pending = evals.filter((e) => e.op.pending).length;
 
   const offeredPct = evaluable.length
     ? parseFloat(((offered.length / evaluable.length) * 100).toFixed(1)) : null;
@@ -424,6 +496,9 @@ export function summarizeOpportunity(rows, opts = {}) {
     n: evals.length,
     // Sin ATR no hay escala de volatilidad: esas filas no cuentan ni a favor ni en contra.
     evaluable_n: evaluable.length,
+    // Filas cuyo horizonte todavía no ha vencido (y que aún no han cruzado): no son un
+    // "no ofreció", son un "todavía no". `n - evaluable_n - pending_n` = sin rejilla.
+    pending_n: pending,
     offered_n: offered.length,
     offered_pct: offeredPct,
     // lift < 0 → el sistema esperó en momentos que ofrecían MENOS que el azar (criterio).
@@ -461,10 +536,13 @@ export function summarizePathWinRate(rows, opts = {}) {
     const ci = wilsonInterval(wins, wins + losses);
     const insufficient = wins + losses < minSample;
     return {
-      n: res.length,
+      // `n` cuenta lo ya cerrado; las de ventana abierta van aparte para que la resta sea
+      // visible y no parezca muestra perdida (mismo trato que en el coste de oportunidad).
+      n: res.filter((x) => x !== 'pending').length,
       win: wins,
       loss: losses,
       flat: res.filter((x) => x === 'flat').length,
+      pending_n: res.filter((x) => x === 'pending').length,
       directional_n: wins + losses,
       sample_insufficient: insufficient,
       win_rate: insufficient ? null : ci.point,

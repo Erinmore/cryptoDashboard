@@ -44,12 +44,20 @@ describe('métricas de recorrido — persistencia y agregación contra BD real',
     expect(file).not.toMatch(/data[/\\]cryptex\.db$/);
   });
 
+  /**
+   * Fecha por defecto de los análisis del test: pasada y con la ventana de 7d VENCIDA.
+   * No es un detalle cosmético — desde el 2026-08-01 el coste de oportunidad solo cuenta
+   * como "no ofreció" lo que ya tuvo tiempo de moverse, así que una fila recién creada
+   * queda `pending` y fuera del denominador (ver el último test de este fichero).
+   */
+  const FECHA_MADURA = '2026-07-01T09:00:00.000Z';   // dentro de la vela 4h de 08:00 UTC
+
   /** Header mínimo derivado del esquema (evita listar ~70 columnas a mano). */
   const header = (id, over = {}) => {
     const cols = dbmod.getDb().prepare('PRAGMA table_info(analyses)').all().map((c) => c.name);
     return {
       ...Object.fromEntries(cols.map((c) => [c, null])),
-      id, coin: 'SOL', primary_tf: '4h', timestamp: new Date().toISOString(),
+      id, coin: 'SOL', primary_tf: '4h', timestamp: FECHA_MADURA,
       prompt_version: 'test', action: 'Esperar', conviction: 0.35,
       has_executable_setup: 0, gating_active: 0, contradictions_found: 0,
       ...over,
@@ -110,6 +118,7 @@ describe('métricas de recorrido — persistencia y agregación contra BD real',
     expect(opp.evaluable_n).toBe(3);
     expect(opp.offered_n).toBe(2);    // opp-1 y opp-2
     expect(opp.offered_pct).toBeCloseTo(66.7, 1);
+    expect(opp.pending_n).toBe(0);    // las 3 tienen la ventana vencida
     expect(opp.thresholds.target_k_atr).toBe(2);
   });
 
@@ -136,5 +145,26 @@ describe('métricas de recorrido — persistencia y agregación contra BD real',
     expect(cal[0].bucket).toBe('baja');
     expect(cal[0].n).toBe(3);
     expect(cal[0].waits_offered_pct).toBeCloseTo(66.7, 1);
+  });
+
+  test('un análisis recién hecho queda pending y NO baja el offered_pct', () => {
+    // La regresión del 2026-08-01: el bloque de 7d publicaba `offered_pct 0,0` (lift −36)
+    // con la muestra entera por debajo de 66 h de vida. Aquí, extremo a extremo: la fila
+    // joven se cuenta en `pending_n`, no como una abstención acertada.
+    dbService.saveAnalysis({
+      header: header('opp-4', { timestamp: new Date().toISOString() }),
+      tfSnapshots: [], clusters: [], fvgs: [],
+    });
+    dbService.upsertOutcome({
+      analysis_id: 'opp-4', atr_pct_at_analysis: 2,
+      max_up_pct_24h: 0.4, max_down_pct_24h: -0.3,
+      path_first_passage: passage({}, {}),
+    });
+
+    const opp = dbService.getOutcomeStats('SOL').opportunity_cost['24h'];
+    expect(opp.n).toBe(4);
+    expect(opp.pending_n).toBe(1);
+    expect(opp.evaluable_n).toBe(3);
+    expect(opp.offered_pct).toBeCloseTo(66.7, 1);   // sin el gate habría caído a 50,0
   });
 });

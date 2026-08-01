@@ -132,12 +132,12 @@ function measure(anchors, hourly, tfMs) {
       const r = res[hLabel];
       r.n++;
 
-      const cUp = classifyPathOutcome('Comprar', row, { horizonH: hH });
-      const cDn = classifyPathOutcome('Vender', row, { horizonH: hH });
+      const cUp = classifyPathOutcome('Comprar', row, { horizonH: hH, now: null });
+      const cDn = classifyPathOutcome('Vender', row, { horizonH: hH, now: null });
       if (cUp) r.up[cUp]++;
       if (cDn) r.down[cDn]++;
 
-      const op = classifyOpportunity(row, { horizonH: hH });
+      const op = classifyOpportunity(row, { horizonH: hH, now: null });
       if (op.offered) r.offered++;
 
       // Empate: ambas barreras cruzadas en la misma hora reportada. Se mira en las dos

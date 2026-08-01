@@ -425,6 +425,13 @@ function renderStats(s) {
       m('Latigazos', String(opp.blocked_by_adverse_n), '',
         'Llegó al objetivo, pero después de irse en contra: no era operable.');
     }
+    // Sin esto, un denominador recortado por muestra joven parecería muestra perdida.
+    if (opp.pending_n) {
+      m('Ventana abierta', String(opp.pending_n), 'muted',
+        'Análisis a los que aún no les ha vencido el horizonte y que todavía no han '
+        + 'cruzado: no cuentan como "no ofreció" hasta que pase el tiempo. Un cruce '
+        + 'limpio sí cuenta desde que ocurre — más mercado no lo deshace.');
+    }
     if (opp.avg_max_excursion_atr != null) {
       m('Excursión media', `${opp.avg_max_excursion_atr}×ATR`, '',
         'Magnitud cruda del recorrido, sin exigir que fuera limpio.');

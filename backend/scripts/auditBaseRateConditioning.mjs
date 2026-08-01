@@ -196,7 +196,8 @@ for (const coin of COINS) {
     const path = k1.slice(from, from + 7 * 24 + 2);
     const fp = computeFirstPassage(path, c.close, atrPct, tMs, 7 * 24 * HOUR_MS);
     if (!fp) continue;
-    const op = classifyOpportunity({ path_first_passage: fp }, { horizonH: 24 });
+    // `now: null` = historia cerrada (ver la nota equivalente en auditOpportunityRegimeCurve).
+    const op = classifyOpportunity({ path_first_passage: fp }, { horizonH: 24, now: null });
     if (!op.evaluable) continue;
     oppRows.push({ coin, offered: op.offered, atrPct, prod: isProdHour(tMs) });
   }
