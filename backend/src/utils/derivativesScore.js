@@ -137,6 +137,23 @@ export function priceChange24hFromCandles(candles, primaryTf) {
 }
 
 /**
+ * Banda muerta del precio, en %. ÚNICO dueño de la fórmula: la consumen `oiPriceCell` (para
+ * DECIDIR) y `computeDerivativesScore` (para EXPONERLA como telemetría). Se extrajo aquí en
+ * vez de recalcularla en el segundo sitio porque dos copias del mismo umbral es exactamente
+ * como se desincronizan las reglas.
+ *
+ * @param {number|null} atrPct - ATR% del TF primario. ⚠️ El de la ventana de 180 velas que
+ *   calcula `indicatorService`, NO el de 19 que reconstruye el outcome job en
+ *   `atr_pct_at_analysis`: el ATR de Wilder es recursivo y los dos números difieren.
+ * @param {string} primaryTf
+ * @returns {number|null} banda en %, o null si no hay ATR utilizable.
+ */
+export function priceBandPct(atrPct, primaryTf) {
+  if (!Number.isFinite(atrPct) || atrPct <= 0) return null;
+  return DERIVATIVES_RUBRIC.price_band_atr_mult * atrPct * windowScale(primaryTf);
+}
+
+/**
  * Celda del cuadro OI × precio. Solo puntúan las dos que sobreviven al control de momentum.
  *
  * @returns {{score:number, cell:string}} `cell` es la etiqueta para telemetría, siempre
@@ -148,7 +165,7 @@ export function oiPriceCell({ oiChange24hPct, priceChange24hPct, atrPct, primary
       || !Number.isFinite(atrPct) || atrPct <= 0) {
     return { score: 0, cell: 'data_missing' };
   }
-  const band = DERIVATIVES_RUBRIC.price_band_atr_mult * atrPct * windowScale(primaryTf);
+  const band = priceBandPct(atrPct, primaryTf);
   const o = oiChange24hPct > DERIVATIVES_RUBRIC.oi_dead_band_pct ? 1
     : oiChange24hPct < -DERIVATIVES_RUBRIC.oi_dead_band_pct ? -1 : 0;
   const p = priceChange24hPct > band ? 1 : priceChange24hPct < -band ? -1 : 0;
@@ -226,6 +243,8 @@ export function computeDerivativesScore({
 } = {}) {
   const basis = [];
   const cell = oiPriceCell({ oiChange24hPct, priceChange24hPct, atrPct, primaryTf });
+  // Misma función que usa la celda para decidir — aquí solo se lee para telemetría.
+  const band = priceBandPct(atrPct, primaryTf);
   const dataInsufficient = cell.cell === 'data_missing';
 
   // FAIL-CLOSED (patrón H2 · `gating.data_insufficient`): sin el eje principal no se puede
@@ -264,6 +283,34 @@ export function computeDerivativesScore({
     components: {
       oi_price_cell: cell.cell,
       oi_price_score: cell.score,
+      /**
+       * TELEMETRÍA DE CALIBRACIÓN (2026-08-01) — categoría A: no toca la decisión, solo la
+       * hace auditable. NO viaja al LLM (se poda en `buildPrompt`, misma regla que
+       * `cvd_strength_cuts` y `width_cuts`: el modelo lee la ETIQUETA, no el corte).
+       *
+       * POR QUÉ. La banda es la MITAD de la comparación que decide la celda, y hasta ahora
+       * solo se guardaba la otra (`price_change_24h_pct_candles`). Sin ella:
+       *  · No se puede saber a qué distancia del corte quedó cada `no_signal`, que es
+       *    justamente lo que decide el debate 0,50× vs 0,35× del checkpoint.
+       *  · Reconstruirla a posteriori desde klines NO es exacto: la última vela sigue
+       *    formándose entre el análisis y la auditoría (medido: −1,986 % reconstruido frente
+       *    a −1,852 % persistido), un error del orden del propio margen que se quiere medir.
+       *  · `atr_pct_at_analysis` (tabla `analysis_outcome`) no sirve de sustituto — es un ATR
+       *    de 19 velas, no el de 180 que entra aquí.
+       *
+       * QUÉ HABILITA. Falsar la hipótesis del **ATR retrasado**: `no_signal` sale al 70,3 %
+       * sobre 90 días y al 79,7 % sobre los últimos 58 con la misma metodología, y siendo la
+       * banda ATR-normalizada no debería depender del régimen. Si el ATR de Wilder va por
+       * detrás en un mercado que comprime, la banda queda demasiado ancha y silencia celdas
+       * con señal — y entonces el arreglo no es mover la banda, es cambiar el normalizador.
+       * Con estos dos campos la hipótesis se contrasta correlacionando el margen contra la
+       * pendiente del ATR; sin ellos, no.
+       *
+       * El MARGEN no se persiste: es `|price_change_24h_pct_candles| - band_pct`, derivable
+       * de lo que ya hay. Se guardan hechos, no interpretaciones (lección de la Fase 5).
+       */
+      atr_pct: Number.isFinite(atrPct) ? atrPct : null,
+      band_pct: band != null ? parseFloat(band.toFixed(3)) : null,
       // Las DOS entradas del eje, persistidas: el payload expone además un
       // `price_change_24h_pct` de CoinGecko (rolling, otra fuente) que NO es el que se usa
       // aquí. Sin esto, esa discrepancia sería invisible al auditar a posteriori.

@@ -8,7 +8,7 @@
 
 import { describe, test, expect } from '@jest/globals';
 import {
-  computeDerivativesScore, oiPriceCell, liquidationCascade, fundingTerm, windowScale,
+  computeDerivativesScore, oiPriceCell, liquidationCascade, fundingTerm, windowScale, priceBandPct,
   priceChange24hFromCandles, DERIVATIVES_RUBRIC,
 } from '../src/utils/derivativesScore.js';
 
@@ -279,5 +279,76 @@ describe('computeDerivativesScore — composición', () => {
     // Comprar exige >= +1 y Vender <= -1: ambos alcanzables (antes: 0,0 % del tiempo).
     expect(computeDerivativesScore(alcista).score).toBeGreaterThanOrEqual(1);
     expect(computeDerivativesScore(rallyFallido).score).toBeLessThanOrEqual(-1);
+  });
+});
+
+/**
+ * TELEMETRÍA DE CALIBRACIÓN (2026-08-01). Categoría A: no toca la decisión.
+ *
+ * Sin `band_pct` no se puede saber a qué distancia del corte quedó cada `no_signal`, que es
+ * la magnitud con la que el checkpoint decide 0,50× vs 0,35× y la única forma de falsar la
+ * hipótesis del ATR retrasado. Reconstruirla a posteriori no es exacto (la última vela sigue
+ * formándose entre el análisis y la auditoría).
+ */
+describe('components.atr_pct / band_pct — telemetría de la banda', () => {
+  const alcista = { oiChange24hPct: 3, priceChange24hPct: BAND + 1, atrPct: ATR, primaryTf: '4h' };
+
+  test('expone el ATR% recibido y la banda derivada de él', () => {
+    const r = computeDerivativesScore({ ...alcista });
+    expect(r.components.atr_pct).toBe(ATR);
+    expect(r.components.band_pct).toBeCloseTo(BAND, 3);
+  });
+
+  test('UN SOLO DUEÑO: la banda expuesta es la que usó la celda para decidir', () => {
+    // Un movimiento justo por DEBAJO de la banda expuesta no debe puntuar, y justo por
+    // encima sí. Si `band_pct` fuese una copia desincronizada, uno de los dos fallaría.
+    const base = { oiChange24hPct: 3, atrPct: ATR, primaryTf: '4h' };
+    const dentro = computeDerivativesScore({ ...base, priceChange24hPct: BAND - 0.01 });
+    const fuera  = computeDerivativesScore({ ...base, priceChange24hPct: BAND + 0.01 });
+    expect(dentro.components.oi_price_cell).toBe('no_signal');
+    expect(fuera.components.oi_price_cell).toBe('new_money_long');
+    expect(dentro.components.band_pct).toBe(fuera.components.band_pct);
+    expect(Math.abs(dentro.components.price_change_24h_pct_candles))
+      .toBeLessThan(dentro.components.band_pct);
+    expect(Math.abs(fuera.components.price_change_24h_pct_candles))
+      .toBeGreaterThan(fuera.components.band_pct);
+  });
+
+  test('la banda escala con el TF primario (√n), no es una constante', () => {
+    const a = computeDerivativesScore({ ...alcista, primaryTf: '4h' });
+    const b = computeDerivativesScore({ ...alcista, primaryTf: '1D' });
+    expect(a.components.band_pct).toBeCloseTo(0.5 * ATR * Math.sqrt(6), 3);
+    expect(b.components.band_pct).toBeCloseTo(0.5 * ATR, 3);   // 24h no llega a una vela → ×1
+  });
+
+  test('sin ATR utilizable la banda es null (nunca NaN ni 0) y el fail-closed aguanta', () => {
+    for (const atrPct of [null, 0, -1, NaN, undefined]) {
+      const r = computeDerivativesScore({ ...alcista, atrPct });
+      expect(r.components.band_pct).toBeNull();
+      expect(r.data_insufficient).toBe(true);   // el fail-closed sigue intacto
+    }
+  });
+
+  /**
+   * `atr_pct` registra lo que LLEGÓ, no lo que era utilizable — a propósito. Un 0 o un
+   * negativo no sirven para calcular la banda (por eso `band_pct` sí es null), pero
+   * distinguirlos de "no llegó nada" es justo lo que hace útil una telemetría de diagnóstico:
+   * si algún día `technical[tf].atr.pct` empezara a emitir 0 por un bug aguas arriba, un
+   * `null` lo confundiría con un dato ausente y el fallo pasaría desapercibido.
+   */
+  test('atr_pct es un registro FIEL del input: distingue "llegó 0" de "no llegó nada"', () => {
+    expect(computeDerivativesScore({ ...alcista, atrPct: 0 }).components.atr_pct).toBe(0);
+    expect(computeDerivativesScore({ ...alcista, atrPct: -1 }).components.atr_pct).toBe(-1);
+    for (const ausente of [null, undefined, NaN]) {
+      expect(computeDerivativesScore({ ...alcista, atrPct: ausente }).components.atr_pct).toBeNull();
+    }
+  });
+
+  test('priceBandPct es una función pura y coincide con lo expuesto', () => {
+    expect(priceBandPct(ATR, '4h')).toBeCloseTo(BAND, 10);
+    expect(priceBandPct(null, '4h')).toBeNull();
+    expect(priceBandPct(0, '4h')).toBeNull();
+    expect(computeDerivativesScore({ ...alcista }).components.band_pct)
+      .toBeCloseTo(priceBandPct(ATR, '4h'), 3);
   });
 });

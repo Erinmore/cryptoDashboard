@@ -404,3 +404,59 @@ describe('buildPrompt — sin datos huérfanos de bloques excluidos (v9_0)', () 
     expect(c.sentiment.fear_greed.trend_1d).toBe('stable');
   });
 });
+
+/**
+ * `derivatives_score.components` SÍ viaja al modelo (el prompt lo documenta como desglose de
+ * la celda), pero `atr_pct`/`band_pct` son el UMBRAL con el que se generó esa celda. Misma
+ * regla que retiró `cvd_strength_cuts` y `width_cuts` en v8_1: el modelo lee la etiqueta, no
+ * el corte — si ve la banda puede re-derivarla y discutir un umbral que el backend ya fijó.
+ */
+describe('poda de la telemetría de calibración del Derivatives Score', () => {
+  const ctx = () => ({
+    coin: 'SOL',
+    derivatives_score: {
+      score: 0,
+      basis: ['sin señal de derivados'],
+      data_insufficient: false,
+      components: {
+        oi_price_cell: 'no_signal', oi_price_score: 0,
+        oi_change_24h_pct: 3.51, price_change_24h_pct_candles: -0.788,
+        cascade_score: 0, cascade_reason: 'sin cascada', funding_score: 0,
+        atr_pct: 1.18, band_pct: 1.445,
+      },
+      rubric: { measured_at: '2026-07-29', measured_scope: '90d' },
+    },
+  });
+
+  test('atr_pct y band_pct no llegan al modelo', () => {
+    const out = buildPrompt(ctx());
+    expect(out).not.toContain('band_pct');
+    expect(out).not.toContain('atr_pct');
+    expect(out).not.toContain('1.445');
+  });
+
+  test('el resto del desglose SÍ se conserva (el modelo lo necesita para la sección A)', () => {
+    const out = buildPrompt(ctx());
+    expect(out).toContain('oi_price_cell');
+    expect(out).toContain('no_signal');
+    expect(out).toContain('price_change_24h_pct_candles');
+    expect(out).toContain('cascade_reason');
+  });
+
+  test('rubric sigue podado (procedencia de la calibración, no decisión)', () => {
+    expect(buildPrompt(ctx())).not.toContain('measured_scope');
+  });
+
+  test('NO muta el contexto: payload y BBDD siguen viendo la telemetría', () => {
+    const c = ctx();
+    buildPrompt(c);
+    expect(c.derivatives_score.components.band_pct).toBe(1.445);
+    expect(c.derivatives_score.components.atr_pct).toBe(1.18);
+    expect(c.derivatives_score.rubric.measured_at).toBe('2026-07-29');
+  });
+
+  test('un derivatives_score sin components no rompe la poda', () => {
+    expect(() => buildPrompt({ coin: 'SOL', derivatives_score: { score: 0 } })).not.toThrow();
+    expect(() => buildPrompt({ coin: 'SOL', derivatives_score: null })).not.toThrow();
+  });
+});

@@ -1032,6 +1032,10 @@ function buildPrompt(ctx) {
   //                            (posición de ciclo simétrica) y se conserva.
   //  · `derivatives_score.rubric` → procedencia de la calibración (measured_at/scope). Sirve
   //                            para auditar, no para decidir.
+  //  · `derivatives_score.components.atr_pct` / `.band_pct` → el UMBRAL con el que se generó
+  //                            la celda (2026-08-01). El modelo debe leer `oi_price_cell`, no
+  //                            el corte: si ve la banda puede re-derivarla y discutirla. Se
+  //                            persisten para poder falsar la hipótesis del ATR retrasado.
   //
   // Todos siguen en /api/analyze/payload y en la BBDD.
   if (llmCtx.derivatives) {
@@ -1048,6 +1052,14 @@ function buildPrompt(ctx) {
   }
   if (llmCtx.derivatives_score) {
     const { rubric, ...ds } = llmCtx.derivatives_score;
+    // `components.atr_pct` / `components.band_pct` son el UMBRAL con el que se generó la
+    // celda, no la celda. Enseñárselos al modelo le invita a re-derivar un corte que el
+    // backend ya fijó — exactamente lo que v8_1 retiró para `cvd_strength_cuts` y
+    // `width_cuts`. Siguen en /api/analyze/payload y en la BBDD (telemetría de calibración).
+    if (ds.components) {
+      const { atr_pct, band_pct, ...components } = ds.components;
+      ds.components = components;
+    }
     llmCtx.derivatives_score = ds;
   }
 
