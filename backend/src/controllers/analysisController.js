@@ -9,6 +9,8 @@ import { fetchMacroData } from '../services/macroService.js';
 import { fetchVolatilityData } from '../services/deribitService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
+import { describeConditionalPlan } from '../utils/conditionalPlan.js';
+import { normalizeSampleReason } from '../utils/sampleReason.js';
 import { getHistories } from '../services/historyService.js';
 import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js';
 import { applyDecisionGates } from '../services/decisionGates.js';
@@ -21,7 +23,9 @@ import { computeExpectedScores, backendScoreTotal } from '../utils/expectedScore
 import {
   normalizedTargetDistance, targetReachabilityFor, TARGET_UNREACHABLE_PCT,
 } from '../utils/stats.js';
-import { COINS, TIMEFRAMES } from '../config/constants.js';
+import {
+  COINS, TIMEFRAMES, GATE_VERSION, RUBRIC_VERSION, FEATURE_VERSION,
+} from '../config/constants.js';
 
 // CVD/VWAP se persisten y pueden tener huecos tras un apagado prolongado; un salto mayor
 // que esto entre snapshots diarios invalida las tendencias de 30d (mejor null que engañar).
@@ -875,7 +879,7 @@ async function buildAnalyzeContext(coin, primaryTf) {
 /**
  * Builds the header object for the `analyses` table from context + LLM output.
  */
-export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs) {
+export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs, sampleReason = 'unknown') {
   const fg    = context.sentiment?.fear_greed ?? null;
   const fgH   = context.sentiment?.fear_greed_history ?? null;
   const macro = context.macro ?? null;
@@ -895,6 +899,13 @@ export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai
     primary_tf: primaryTf,
     timestamp: new Date().toISOString(),
     prompt_version: ai_metadata.prompt_version,
+    // Versionado por fila (A3): el prompt es sólo UNO de los componentes que deciden la
+    // salida. Sin estos tres, comparar dos periodos es arqueología de commits.
+    // De dónde vino esta observación: cron fijo, disparo por evento, o el botón del panel.
+    sample_reason:   sampleReason ?? 'unknown',
+    gate_version:    GATE_VERSION,
+    rubric_version:  RUBRIC_VERSION,
+    feature_version: FEATURE_VERSION,
 
     price_current:            context.price_current ?? null,
     price_change_24h_pct:     context.price_change_24h_pct ?? null,
@@ -1212,7 +1223,11 @@ export async function analyze(req, res, next) {
   const start = Date.now();
 
   try {
-    const { coin: rawCoin = 'BTC', primary_tf: primaryTf = '4h', model } = req.body ?? {};
+    const {
+      coin: rawCoin = 'BTC', primary_tf: primaryTf = '4h', model, sample_reason: rawReason,
+    } = req.body ?? {};
+    // Validado, no confiado: acaba en BBDD y viene de fuera. Ausente ⇒ 'unknown'.
+    const sampleReason = normalizeSampleReason(rawReason);
     const coin = String(rawCoin).toUpperCase();
 
     if (!COINS.includes(coin)) {
@@ -1260,7 +1275,7 @@ export async function analyze(req, res, next) {
     const processingMs = Date.now() - start;
     const id = uuidv4();
 
-    const header = buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs);
+    const header = buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs, sampleReason);
     // Guardamos el structured final (ya con fail-safe si aplicó) junto al narrative.
     header.ai_response_full = JSON.stringify({ structured, narrative });
     header.validation_warnings = validation.warnings.length > 0 ? JSON.stringify(validation.warnings) : null;
@@ -1287,6 +1302,18 @@ export async function analyze(req, res, next) {
       structured,
       narrative,
       ai_metadata,
+      // Mismo dueño que en /api/data: el panel debe poder pintar el plan NADA MÁS lanzar el
+      // análisis, sin esperar al siguiente poll. ⚠️ Aquí NO existe todavía
+      // `atr_pct_at_analysis` (lo rellena el job de outcome minutos después), así que las dos
+      // curvas saldrán null en este primer render y aparecerán solas al refrescar. Estimarlas
+      // con el ATR de 180 sería mezclar ejes — la lección B1, que ya mordió tres veces.
+      conditional_plan: describeConditionalPlan({
+        conditionalSetup: structured?.conditional_setup ?? null,
+        atrPct__outcome_19: null,
+        priceAtAnalysis: context.price_current,
+        primaryTf,
+        timestamp: new Date().toISOString(),
+      }),
     });
 
   } catch (err) {

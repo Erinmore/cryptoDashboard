@@ -98,7 +98,7 @@ function restoreRecommendationPanel(localRec, { serverAnswered = false } = {}) {
   const serverLast = getState().lastAnalysis;
 
   if (serverLast?.full?.structured) {
-    updateRecommendation(serverLast.full, serverLast.timestamp);
+    updateRecommendation(serverLast.full, serverLast.timestamp, serverLast.conditional_plan ?? null, getState().shadowRecord ?? null);
     return;
   }
 
@@ -153,6 +153,7 @@ async function loadData() {
       global_market:  data.global_market   ?? null,
       coin_market_data: data.coin_market_data ?? null,
       lastAnalysis:   data.last_analysis   ?? null,
+      shadowRecord:   data.shadow_record   ?? null,
       binanceWalls:   data.binance_walls   ?? null,
       binanceTicker:  data.binance_ticker  ?? null,
       history:        data.history         ?? null,
@@ -276,7 +277,7 @@ async function runAnalysis() {
     setState({ recommendation: rec });
 
     if (rec) {
-      updateRecommendation(rec);              // el dato también queda en la barra lateral
+      updateRecommendation(rec, null, rec?.conditional_plan ?? null);  // el dato también queda en la barra lateral
       saveCoinState(coin, { recommendation: rec });
       // Resultado a la vista en un modal cerrable: reutiliza el Historial, que
       // muestra este análisis (recién guardado) arriba + los previos debajo.

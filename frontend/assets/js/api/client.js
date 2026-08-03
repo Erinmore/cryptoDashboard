@@ -29,11 +29,17 @@ export async function fetchData(coin, tf) {
  * @returns {Promise<object>}  { recommendation, ai_metadata, ... }
  * @throws si Anthropic no está configurado (503) o no implementado (501)
  */
-export async function postAnalyze(coin, tf, model) {
+/**
+ * @param {string} [sampleReason='ui'] - de dónde salió la petición. El default es `ui` porque
+ *   este cliente ES el panel; el cron manda el suyo (`fixed` / `opportunistic:<condiciones>`).
+ *   Sin esto, los análisis lanzados a mano se mezclaban con la muestra planificada y no había
+ *   forma de separarlos salvo por la hora.
+ */
+export async function postAnalyze(coin, tf, model, sampleReason = 'ui') {
   const res = await fetch('/api/analyze', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ coin, primary_tf: tf, model }),
+    body:    JSON.stringify({ coin, primary_tf: tf, model, sample_reason: sampleReason }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {

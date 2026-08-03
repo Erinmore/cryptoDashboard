@@ -20,7 +20,12 @@
  *   - 'minor': incoherencia de rango/coherencia sin invertir la decisión.
  */
 
-const ACTIONS = ['Comprar', 'Vender', 'Preparar', 'Esperar'];
+// `Preparar` RETIRADO el 2026-08-03 (P5). Sale del enum a propósito: si el modelo lo emitiera
+// pese al prompt, `action_enum` lo marca como salida inválida en vez de dejarlo pasar.
+// ⚠️ Los LECTORES (utils/stats.js, dbService) siguen tratándolo como abstención: las filas
+// históricas con ese valor deben seguir siendo interpretables. Escritores dejan de producirlo,
+// lectores siguen entendiéndolo — que es para lo que sirve el versionado por fila (L2/A3).
+const ACTIONS = ['Comprar', 'Vender', 'Esperar'];
 const CONFIDENCES = ['Alta', 'Media', 'Baja'];
 const DRIVERS = ['derivatives', 'structure', 'macro', 'volume', 'onchain'];
 const SCORE_KEYS = ['derivatives', 'structure', 'volume', 'onchain'];
@@ -127,15 +132,7 @@ export function validateAnalysis(structured, opts = {}) {
     warn('sell_gate', 'severe',
       `Vender exige derivatives<=-1 y volume<=-1 (derivatives=${s.derivatives}, volume=${s.volume})`);
   }
-  // Puerta de PREPARAR (auditoría #2, hallazgo 5): el prompt la define (Derivatives>=+1,
-  // Structure>=0) pero nadie la validaba — era la vía de escape del gating: mismos niveles
-  // ejecutables en pantalla sin pasar ninguna puerta de score. Solo aplica al Preparar
-  // ACCIONABLE (con setup ejecutable); un Preparar contemplativo sin setup no bloquea.
-  if (action === 'Preparar' && has_executable_setup === true
-      && !(isInt(s.derivatives) && s.derivatives >= 1 && isInt(s.structure) && s.structure >= 0)) {
-    warn('prepare_gate', 'severe',
-      `Preparar con setup ejecutable exige derivatives>=+1 y structure>=0 (derivatives=${s.derivatives}, structure=${s.structure})`);
-  }
+  // (La puerta de PREPARAR se retiró con la propia acción — P5, 2026-08-03.)
 
   // ── Guardia de divergencia de scores (C2) ─────────────────────────────────
   // La puerta de arriba compara el score del LLM contra sí misma (circular). Aquí lo

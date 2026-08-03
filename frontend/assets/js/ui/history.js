@@ -61,6 +61,9 @@ function actionClass(action) {
   switch (action) {
     case 'Comprar':  return 'buy';
     case 'Vender':   return 'sell';
+    // `Preparar` se RETIRÓ como salida el 2026-08-03 (P5), pero este case SE QUEDA: el
+    // historial puede contener filas anteriores con ese valor y deben seguir pintándose.
+    // Escritores dejan de producirlo, lectores siguen entendiéndolo.
     case 'Preparar': return 'prep';
     default:         return 'wait';
   }

@@ -611,6 +611,8 @@ html, body {
 .rec-action.Comprar  { color: var(--bullish); }
 .rec-action.Vender   { color: var(--bearish); }
 .rec-action.Esperar  { color: var(--neutral); }
+/* `Preparar` retirado como salida el 2026-08-03 (P5). La regla SE QUEDA: las filas
+   históricas con ese valor tienen que seguir renderizándose con su color. */
 .rec-action.Preparar { color: var(--accent); }
 
 .rec-confidence {
@@ -1263,3 +1265,107 @@ html, body {
 .hist-outcome-badge.win   { background: var(--bullish-dim); color: var(--bullish); border-color: var(--bullish); }
 .hist-outcome-badge.loss  { background: var(--bearish-dim); color: var(--bearish); border-color: var(--bearish); }
 .hist-outcome-badge.muted { background: var(--bg-hover);   color: var(--text-secondary); }
+
+/* ── Panel de IA: qué falta para operar + plan condicional (2026-08-03) ──────────
+   El `conditional_setup` es la salida DOMINANTE del sistema (todo `Esperar` emite uno) y
+   hasta ahora sólo se veía en el modal de historial. Estos bloques lo suben al panel
+   principal junto a las tres cifras medidas que dicen si el plan es realista. */
+
+.rec-block-title {
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: var(--sp-md);
+}
+
+.rec-missing {
+  margin-top: var(--sp-xl);
+  padding: var(--sp-lg);
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+}
+.rec-missing ul { margin: 0; padding-left: var(--sp-2xl); }
+.rec-missing li {
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+  margin-bottom: var(--sp-xs);
+  line-height: 1.45;
+}
+
+/* Borde punteado: distingue el plan HIPOTÉTICO de un setup ejecutable real, que va con
+   borde sólido. Misma convención que ya usa el modal de historial. */
+.rec-plan {
+  margin-top: var(--sp-xl);
+  padding: var(--sp-lg);
+  border: 1px dashed var(--neutral);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.rec-plan-dir {
+  font-size: var(--fs-sm);
+  padding: 0 var(--sp-md);
+  border-radius: var(--radius-sm);
+}
+.rec-plan-dir.bullish { color: var(--bullish); background: var(--bullish-dim); }
+.rec-plan-dir.bearish { color: var(--bearish); background: var(--bearish-dim); }
+
+.rec-plan-trigger {
+  font-size: var(--fs-md);
+  color: var(--text-primary);
+  line-height: 1.45;
+  margin: 0 0 var(--sp-lg);
+}
+.rec-plan-levels { margin-bottom: var(--sp-lg); }
+.rec-expired { color: var(--bearish); }
+
+/* Las cifras medidas. Van PEGADAS al plan a propósito: una tesis bien escrita se lee como
+   evidencia, y lo único que lo contrarresta es el dato medido al lado, no en otra pestaña. */
+.rec-plan-stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+  padding-top: var(--sp-lg);
+  border-top: 1px solid var(--bg-hover);
+}
+.rec-plan-stat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-md);
+  font-size: var(--fs-base);
+  color: var(--text-secondary);
+}
+.rec-plan-stat-v {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 3.5em;
+}
+.rec-plan-stat.warn .rec-plan-stat-v { color: var(--alert-warning-text); }
+.rec-plan-stat.warn { color: var(--alert-warning-text); }
+
+.rec-plan-caveat {
+  margin: var(--sp-lg) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.rec-record {
+  margin-top: var(--sp-xl);
+  padding: var(--sp-lg);
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+}
+.rec-record-line {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-primary);
+  line-height: 1.45;
+}
+.rec-record-trigger {
+  margin: var(--sp-md) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}

@@ -582,7 +582,7 @@ function fmtSigned(v) {
  * @param {string} [timestamp] — ISO del análisis; si falta se usa la hora actual
  *   (compat: al lanzar un análisis nuevo desde este navegador es "ahora").
  */
-export function updateRecommendation(rec, timestamp = null) {
+export function updateRecommendation(rec, timestamp = null, conditionalPlan = null, shadowRecord = null) {
   hideEl('recommendation-loading');
   hideEl('recommendation-empty');
 
@@ -606,6 +606,27 @@ export function updateRecommendation(rec, timestamp = null) {
 
   // Racional: resumen ejecutivo (fallback al detalle de la narrativa)
   setText('rec-rationale', s.executive_summary ?? n?.recommendation_detail ?? '—');
+
+  // ── QUÉ FALTA PARA OPERAR ────────────────────────────────────────────────
+  // Lo emite el LLM y hasta el 2026-08-03 no lo pintaba nadie: es el bloque que explica
+  // por qué NO hay operación, o sea la salida dominante del sistema.
+  const missing = Array.isArray(s.missing_confirmations) ? s.missing_confirmations : [];
+  const missEl = $('rec-missing'), missList = $('rec-missing-list');
+  if (missEl) missEl.style.display = missing.length ? '' : 'none';
+  if (missList) {
+    missList.innerHTML = '';
+    for (const m of missing) {
+      const li = document.createElement('li');
+      li.textContent = m;
+      missList.appendChild(li);
+    }
+  }
+
+  // ── PLAN CONDICIONAL ─────────────────────────────────────────────────────
+  // La GEOMETRÍA la elige el LLM; las tres cifras de al lado las MIDE el backend
+  // (`describeConditionalPlan` → curvas TRIGGER_BASE_RATE y TARGET_REACHABILITY).
+  renderConditionalPlan(conditionalPlan ?? rec?.conditional_plan ?? null);
+  renderShadowRecord(shadowRecord);
 
   // Niveles del setup táctico (solo si hay setup ejecutable)
   const setup = s.setup ?? null;
@@ -642,8 +663,16 @@ export function updateRecommendation(rec, timestamp = null) {
 
     const bits = [];
     if (s.primary_driver != null) bits.push(`driver: ${s.primary_driver}`);
-    if (s.risk_score != null)     bits.push(`riesgo ${s.risk_score}/10`);
-    if (s.conviction != null)     bits.push(`convicción ${Math.round(s.conviction * 100)}%`);
+    // `risk_score` RETIRADO del panel (P1, 2026-08-03): su única regla en todo el sistema
+    // era "entero entre 1 y 10" — sin rúbrica, sin medición, y con un 7 en los 4 últimos
+    // análisis. Un número decorativo en el titular de un producto es peor que ninguno. Lo
+    // que sí tiene respaldo (equilibrio del R:R) viaja en el plan condicional.
+    if (s.conviction != null) {
+      // Auto-declarada por el modelo y SIN CALIBRAR: nadie ha comprobado todavía si un 0,3
+      // se comporta distinto de un 0,7 (pregunta D1, abierta). Se etiqueta en vez de
+      // pintarse como si fuera una probabilidad medida.
+      bits.push(`convicción ${Math.round(s.conviction * 100)}% (auto-declarada, sin calibrar)`);
+    }
     if (bits.length) addAlert('info', bits.join(' · '));
   }
 
@@ -652,6 +681,149 @@ export function updateRecommendation(rec, timestamp = null) {
   if (tsEl) {
     const when = timestamp ? new Date(timestamp) : new Date();
     tsEl.textContent = `Análisis a las ${when.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+}
+
+/**
+ * Plan condicional — "no hay operación ahora, pero si pasa X, esto haría".
+ *
+ * REPARTO DE AUTORÍA, y es deliberado que se note: la LECTURA y la GEOMETRÍA las escribe el
+ * LLM (es su aportación, y está SIN MEDIR — la fase 0 y M9 midieron el bias del backend y
+ * siete features de klines, no el juicio del modelo, que no es medible offline porque el
+ * payload no se puede reconstruir punto-en-el-tiempo). Las cifras de al lado las MIDE el
+ * backend sobre miles de anclas.
+ *
+ * Las tres cifras van PEGADAS al plan y no en otra pestaña: una tesis bien escrita se lee
+ * como evidencia, y lo único que lo contrarresta es tener el dato medido al lado.
+ *
+ * NO se pinta `expectancy_r` (su línea base es una curva sin medir, M10) ni ninguna
+ * probabilidad de acierto direccional (fase 0 y M9: NO-GO). El backend ya se niega a
+ * enviarlos; aquí no se reconstruyen.
+ */
+function renderConditionalPlan(plan) {
+  const el = $('rec-plan');
+  if (!el) return;
+  if (!plan) { el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  const dirEl = $('rec-plan-dir');
+  if (dirEl) {
+    const long = plan.direction === 'long';
+    dirEl.textContent = plan.direction ? (long ? 'largo' : 'corto') : '';
+    dirEl.className = `rec-plan-dir ${long ? 'bullish' : 'bearish'}`;
+  }
+  setText('rec-plan-trigger', plan.trigger ?? '—');
+  setText('rec-plan-entry', fmtPrice(plan.entry_price));
+  setText('rec-plan-stop',  fmtPrice(plan.stop_price));
+  setText('rec-plan-tp1',   fmtPrice(plan.tp1_price));
+
+  // La vigencia como INSTANTE, no como "12 velas": es una promesa que el usuario lee.
+  const expEl = $('rec-plan-expiry');
+  if (expEl) {
+    if (plan.expires_at) {
+      const d = new Date(plan.expires_at);
+      const vencido = d.getTime() < Date.now();
+      expEl.textContent = d.toLocaleString('es-ES', {
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+      }) + (vencido ? ' · CADUCADO' : '');
+      expEl.className = `rec-level-value${vencido ? ' rec-expired' : ''}`;
+    } else {
+      expEl.textContent = '—';
+    }
+  }
+
+  // Las cifras MEDIDAS. Cada una con lo que responde, no como un número suelto.
+  const stats = $('rec-plan-stats');
+  if (stats) {
+    stats.innerHTML = '';
+    const add = (label, value, hint, warn = false) => {
+      if (value == null) return;
+      const row = document.createElement('div');
+      row.className = `rec-plan-stat${warn ? ' warn' : ''}`;
+      row.innerHTML = '<span class="rec-plan-stat-v"></span><span class="rec-plan-stat-l"></span>';
+      row.querySelector('.rec-plan-stat-v').textContent = value;
+      row.querySelector('.rec-plan-stat-l').textContent = label;
+      row.title = hint;
+      stats.appendChild(row);
+    };
+    if (plan.rr != null) {
+      add(`R:R ${plan.rr} → acertar >${plan.breakeven_win_rate_pct}% para empatar`,
+        `${plan.breakeven_win_rate_pct}%`,
+        'Aritmética del R:R, no un pronóstico: por debajo de ese acierto el plan pierde dinero.');
+    }
+    add('de las veces se cumple el disparo a esta distancia',
+      `${plan.trigger_prob_pct}%`,
+      'TRIGGER_BASE_RATE, medida sobre ~3.000 anclas por celda.');
+    // La cifra incómoda, y por eso se marca: si el objetivo casi no se alcanza dentro de la
+    // vigencia, el resultado lo decide la CADUCIDAD y no el objetivo.
+    add('de las veces el objetivo se alcanza dentro de la vigencia',
+      `${plan.target_reachability_pct}%`,
+      'TARGET_REACHABILITY. Por debajo del ~10 % lo normal es que el plan caduque abierto.',
+      plan.target_reachability_pct != null && plan.target_reachability_pct < 15);
+  }
+
+  // La regla de llenado viaja con las cifras, no en una nota al pie: el registro del shadow
+  // trade llena al TOCAR la entrada intravela, mientras el disparo declarado suele exigir un
+  // CIERRE de vela. Callarlo sería enseñar un resultado que no es el del usuario.
+  const cav = $('rec-plan-caveat');
+  if (cav) {
+    // Cifras de M7 (2026-08-03, 23.787 réplicas × 3 monedas). ⚠️ Lo que está inflado es la
+    // ACTIVIDAD, no el R:R: bajo la regla que el setup describe de verdad —confirmar el cierre
+    // y ENTONCES entrar con límite en el nivel declarado— la entrada se llena el 30,6 % de las
+    // veces frente al 56,9 % que cuenta el seguimiento. El R:R declarado SÍ es el realizable
+    // en esa regla (2,00 en las dos), así que el equilibrio de arriba no engaña.
+    cav.textContent = plan.fill_rule === 'touch_entry_intrabar'
+      ? 'El seguimiento cuenta como entrada el simple toque del precio, sin exigir antes el cierre '
+        + 'de vela que pide el disparo. Medido: eso cuenta casi el doble de operaciones de las que '
+        + 'saldrían siguiendo el disparo al pie de la letra (57 % frente a 31 %). El R:R y el '
+        + 'equilibrio de arriba sí son los que obtendrías; lo que está inflado es la frecuencia.'
+      : '';
+  }
+}
+
+/**
+ * Registro crudo de los planes anteriores. CUENTAS, no estimaciones: cuántos dispararon,
+ * cuántos llegaron al objetivo, cuántos caducaron. No necesita respaldo estadístico porque
+ * no afirma nada — describe lo que pasó.
+ *
+ * La ÚNICA cifra derivada que se enseña es la tasa de disparo contra su tasa base, porque esa
+ * base está MEDIDA (`TRIGGER_BASE_RATE`, ~3.000 anclas/celda). `expectancy_r` NO sale: su
+ * línea base es una curva sin medir (M10) y un número sin referencia aquí engaña.
+ */
+function renderShadowRecord(rec) {
+  const el = $('rec-record');
+  if (!el) return;
+  if (!rec || !rec.n) { el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  // ⚠️ LA PALABRA IMPORTA. La primera versión decía "N dispararon", y eso afirma que se
+  // cumplió el GATILLO declarado — que es texto libre ("cierre 4h < 72.09 con OI expandiendo
+  // y CVD vendedor") y que el evaluador NO PARSEA. Lo único que comprueba es la geometría:
+  // si el precio TOCÓ el nivel de entrada intravela. El gatillo real pide tres condiciones a
+  // la vez; esto comprueba una sola y más laxa, así que la cifra es un TECHO.
+  const partes = [];
+  const tocados = (rec.tp1 ?? 0) + (rec.stop ?? 0) + (rec.expired ?? 0);
+  partes.push(`en ${tocados} de ${rec.n} el precio llegó a la entrada`);
+  if (rec.tp1)  partes.push(`${rec.tp1} llegó al objetivo`);
+  if (rec.stop) partes.push(`${rec.stop} tocó el stop`);
+  if (rec.expired) partes.push(`${rec.expired} caducó abierto`);
+  if (rec.pending_n) partes.push(`${rec.pending_n} aún en vigencia`);
+  setText('rec-record-line', partes.join(' · '));
+
+  // La tasa de disparo sólo significa algo con su tasa base al lado — sin ella es el mismo
+  // número suelto que era `offered_pct` antes de tener OPPORTUNITY_BASE_RATE.
+  const t = $('rec-record-trigger');
+  if (t) {
+    if (rec.trigger_rate_pct == null) { t.textContent = ''; return; }
+    // Ambas cifras miden LO MISMO (tocar un nivel a esa distancia normalizada), así que la
+    // comparación es coherente. Lo que NO dice es si el modelo acierta nombrando condiciones:
+    // eso exigiría parsear el gatillo, y hoy no se parsea.
+    t.textContent = rec.trigger_base_rate_pct != null
+      ? `El precio alcanza los niveles de entrada que elige el modelo el ${rec.trigger_rate_pct}% `
+        + `de las veces, frente al ${rec.trigger_base_rate_pct}% de un nivel puesto a la misma `
+        + `distancia por azar (${rec.trigger_lift_pct > 0 ? '+' : ''}${rec.trigger_lift_pct} pt).`
+      : `El precio alcanza la entrada el ${rec.trigger_rate_pct}% de las veces. Sin tasa base `
+        + 'todavía: la cifra sola no se puede juzgar.';
   }
 }
 

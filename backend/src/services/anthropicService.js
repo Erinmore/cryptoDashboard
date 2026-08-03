@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v9_0_deterministic_derivatives';
+export const PROMPT_VERSION = 'v9_2_trigger_price';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -271,7 +271,7 @@ volatility.{btc_dvol,eth_dvol} — volatilidad IMPLÍCITA (solo BTC/ETH; en SOL 
 
 Reglas:
 
-volatility_state="squeeze" en el TF primario: energía acumulada, ruptura probable, PERO SIN DIRECCIÓN IMPLÍCITA. Un squeeze NO es señal alcista ni bajista. Favorece PREPARAR con dos escenarios (ruptura arriba / abajo) antes que COMPRAR o VENDER en el momento. Si además regime="ranging", la ruptura tiende a venir del rango: los niveles del rango son la referencia de trigger.
+volatility_state="squeeze" en el TF primario: energía acumulada, ruptura probable, PERO SIN DIRECCIÓN IMPLÍCITA. Un squeeze NO es señal alcista ni bajista. Favorece ESPERAR declarando los dos escenarios en el conditional_setup (ruptura arriba / abajo) antes que COMPRAR o VENDER en el momento. Si además regime="ranging", la ruptura tiende a venir del rango: los niveles del rango son la referencia de trigger.
 volatility_state="expansion" en el TF primario: el movimiento YA está en curso. Las entradas a mercado llegan tarde y los stops necesarios son caros. Reduce la convicción de una entrada nueva en la dirección del movimiento y súbelo al Risk Score. NO lo uses como argumento de reversión: expansión no es agotamiento.
 position >= 0.95 o <= 0.05 en el TF primario: precio pegado a una banda. En regime="ranging" es contexto de reversión hacia la media; en regime="trending" es continuación, NO reversión. El régimen decide el signo, la posición sola no.
 Squeeze en 1D o 1W: el escenario de ruptura domina sobre cualquier lectura táctica de 1h. Dilo explícitamente en la tesis.
@@ -481,7 +481,7 @@ gating.veto_short=true: prohibido recomendar VENDER. El output es ESPERAR.
 
 Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish divergence con fuerza no marginal (cvd_strength moderate/strong) + OI sin expandir + resistencia fuerte (3+ toques) dentro del umbral de cercanía; VETO SHORT = el espejo exacto (CVD 1D bullish divergence con fuerza no marginal + OI sin expandir + soporte fuerte dentro del umbral). El umbral de cercanía está NORMALIZADO POR VOLATILIDAD (~1.5 × ATR% del TF primario, con suelo de 0.5% y techo POR TF: 2% en 1h, 4% en 4h, 10% en 1D, 25% en 1W) — el campo gating.near_level_pct_used indica el valor efectivo usado; gating.borderline[] lista condiciones que quedaron pegadas al umbral (decisiones de borde, tenlo en cuenta en el Risk Score). Una divergencia con cvd_strength="marginal" NO arma el veto (es ruido de fondo). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
 
-FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Puedes usar ESPERAR, o un PREPARAR SIN setup ejecutable (has_executable_setup=false), señalando qué dato falta — un Preparar con niveles ejecutables también queda bloqueado con datos críticos ausentes.
+FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Usa ESPERAR con has_executable_setup=false, señalando qué dato falta en missing_confirmations.
 
 Cuando un veto esté activo o data_insufficient: pon gating_active=true y refleja el motivo en gating_reason del output, y explica en el análisis qué tendría que cambiar para levantarlo.
 
@@ -507,7 +507,7 @@ COMPRAR y VENDER exigen SIEMPRE has_executable_setup=true y un objeto setup comp
 (entry_price, stop_price, tp1_price, validity_candles, tf_execution). Sin stop y sin objetivo
 la recomendación no es un trade: es una opinión, y una opinión no se puede evaluar ni
 gestionar. Si no eres capaz de definir una geometría defendible, la acción correcta NO es
-COMPRAR o VENDER sin ella — es PREPARAR sin setup ejecutable, o ESPERAR.
+COMPRAR o VENDER sin ella — es ESPERAR sin setup ejecutable.
 
 COMPRAR
 
@@ -529,23 +529,11 @@ estructura confirma debilidad
 ningún veto de gating activo
 setup ejecutable completo (regla transversal de arriba)
 
-PREPARAR
-
-Usar cuando el setup está cargado pero falta el trigger:
-
-Derivatives Score >= +1 Y condición de squeeze identificada (funding negativo extremo o OI expandiendo)
-Structure Score >= 0 (estructura no es adversa)
-No hay trigger de entrada confirmado
-El setup puede activarse en la ventana de validez definida
-
-La puerta de PREPARAR con setup ejecutable SE VALIDA en el backend igual que las de Comprar/Vender: un Preparar con has_executable_setup=true que no cumpla Derivatives >= +1 y Structure >= 0 será degradado a Esperar. Si el setup no cumple la puerta, emite Preparar SIN setup (has_executable_setup=false) describiendo qué falta, o directamente Esperar.
-
-Output de PREPARAR incluye:
-- Condición exacta de activación (precio de ruptura, cierre de vela, volumen mínimo)
-- Tamaño de posición reducido (50% del tamaño nominal hasta confirmación)
-- Precio de activación condicional (limit order o stop-limit, no market order)
-- Ventana de validez del setup (validity_candles, en velas del TF de EJECUCIÓN)
-- Condición de cancelación: nivel de precio o evento que invalida el setup antes de que se active
+(La acción PREPARAR se retiró el 2026-08-03.) Era redundante: desde v9_0 TODO ESPERAR emite un
+conditional_setup, que es literalmente "el trade que tomaría si apareciera lo que falta" — o sea
+exactamente lo que PREPARAR decía, pero de forma obligatoria, con geometría completa y evaluable
+a posteriori. Mantener las dos era pedir al modelo que eligiera entre dos etiquetas para el mismo
+estado, y en 11 análisis de producción eligió ESPERAR las 11 veces.
 
 ESPERAR
 
@@ -609,9 +597,9 @@ Añade UNA contradicción más al conteo SOLO si aplica según tus scores intern
 
 Si el total (gating.contradiction_count + la sexta si aplica) es 3 o más, la convicción cae a nivel donde no se permite trade y el output es ESPERAR.
 
-SETUP CONDICIONAL — OBLIGATORIO EN ESPERAR Y PREPARAR
+SETUP CONDICIONAL — OBLIGATORIO EN ESPERAR
 
-Cuando la acción sea ESPERAR o PREPARAR, además de decir QUÉ falta debes decir QUÉ HARÍAS si
+Cuando la acción sea ESPERAR, además de decir QUÉ falta debes decir QUÉ HARÍAS si
 apareciera: rellena conditional_setup con el trade que tomarías, con su geometría completa.
 
 Por qué: un ESPERAR sin geometría es incontestable por construcción — nunca se puede saber si
@@ -793,13 +781,13 @@ OUTPUT FORMAT
 
 IMPORTANTE: Tu respuesta debe ser EXCLUSIVAMENTE un objeto JSON válido. Sin texto antes ni después. Sin markdown. Sin bloques de código. Solo el JSON.
 
-IDIOMA: todo el contenido de texto (executive_summary, gating_reason, missing_confirmations y los seis campos de narrative) va en ESPAÑOL. Las CLAVES del JSON y los valores de enumeración internos (primary_driver: derivatives/structure/macro/volume/onchain, tf_execution) se mantienen tal cual, en inglés. Los campos action y confidence usan sus valores en español (Comprar/Vender/Preparar/Esperar · Alta/Media/Baja). El texto se muestra directamente al usuario final, que lee en español.
+IDIOMA: todo el contenido de texto (executive_summary, gating_reason, missing_confirmations y los seis campos de narrative) va en ESPAÑOL. Las CLAVES del JSON y los valores de enumeración internos (primary_driver: derivatives/structure/macro/volume/onchain, tf_execution) se mantienen tal cual, en inglés. Los campos action y confidence usan sus valores en español (Comprar/Vender/Esperar · Alta/Media/Baja). El texto se muestra directamente al usuario final, que lee en español.
 
 El JSON debe tener exactamente esta estructura:
 
 {
   "structured": {
-    "action": "<Comprar|Vender|Preparar|Esperar>",
+    "action": "<Comprar|Vender|Esperar>",
     "confidence": "<Alta|Media|Baja>",
     "risk_score": <1-10>,
     "conviction": <0.0-1.0>,
@@ -826,6 +814,7 @@ El JSON debe tener exactamente esta estructura:
     }>,
     "conditional_setup": <null o {
       "trigger": "<condición exacta que lo activaría>",
+      "trigger_price": <número: el NIVEL de precio que confirma el gatillo>,
       "direction": "<long|short>",
       "entry_price": <número>,
       "stop_price": <número>,
@@ -846,7 +835,7 @@ El JSON debe tener exactamente esta estructura:
 }
 
 Reglas de validación del JSON:
-- action debe ser exactamente uno de: Comprar, Vender, Preparar, Esperar
+- action debe ser exactamente uno de: Comprar, Vender, Esperar
 - confidence debe ser exactamente uno de: Alta, Media, Baja
 - confidence y conviction NO son dos juicios independientes: confidence es la DISCRETIZACIÓN de conviction y debe derivarse de ella con estos cortes exactos:
     conviction < 0.4        → confidence = "Baja"
@@ -858,7 +847,8 @@ Reglas de validación del JSON:
 - Todos los campos de scores deben ser enteros entre -2 y +2
 - setup es null si no hay setup ejecutable (has_executable_setup=false)
 - action Comprar o Vender EXIGE has_executable_setup=true y setup no nulo
-- conditional_setup es obligatorio (no nulo) en Esperar y Preparar salvo que no exista
+- trigger_price es el NIVEL NUMÉRICO que confirma el gatillo, extraído de tu propio texto de trigger. Si escribes "cierre 4h por debajo de 72.09", trigger_price = 72.09. Es obligatorio siempre que el trigger nombre un nivel de precio, y debe estar EN LA MISMA DIRECCIÓN que el trade respecto al precio actual. NO es lo mismo que entry_price: el trigger_price CONFIRMA (el precio ha roto), la entry_price es DÓNDE ENTRAS después (normalmente un retroceso algo mejor). Medido el 2026-08-03: sin este campo el evaluador no puede comprobar la confirmación y da por buena cualquier entrada tocada, contando casi el DOBLE de operaciones de las que la regla declarada produciría (56,9 % frente a 30,6 %).
+- conditional_setup es obligatorio (no nulo) en Esperar salvo que no exista
   ninguna geometría defendible; en Comprar y Vender va a null (el trade real es setup)
 - missing_confirmations es un array de strings (vacío si el setup es plenamente ejecutable)
 - executive_summary máximo 2 frases, sin saltos de línea

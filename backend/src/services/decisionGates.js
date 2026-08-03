@@ -62,7 +62,9 @@ export function applyDecisionGates(rawStructured, gating, failsafeEnabled, failC
   // contemplativo (sin setup) y Esperar no se bloquean.
   const action = rawStructured?.action;
   const directional = action === 'Comprar' || action === 'Vender';
-  const preparesSetup = action === 'Preparar' && rawStructured?.has_executable_setup === true;
+  // `Preparar` retirado (P5, 2026-08-03): ya no hay una tercera acción accionable que
+  // proteger. Un `Esperar` no puede llevar setup ejecutable por construcción.
+  const preparesSetup = false;
   const dataInsufficientGate =
     !!failClosedOnMissing && !!gating?.data_insufficient && (directional || preparesSetup);
 

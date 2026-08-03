@@ -177,11 +177,14 @@ describe('applyDecisionGates — fail-closed cubre Preparar accionable (auditor�
     data_insufficient: true, missing_inputs: ['cvd_1d'], contradiction_count: 0,
   };
 
-  test('data_insufficient + Preparar CON setup ejecutable → degradado a Esperar', () => {
+  // `Preparar` se retiró (P5, 2026-08-03) y con él su rama accionable. Lo que NO puede
+  // perderse es la protección de verdad: un DIRECCIONAL con datos críticos ausentes sigue
+  // degradándose. Retirar una acción no debe aflojar el fail-closed de las que quedan.
+  test('data_insufficient + Comprar → sigue degradando a Esperar', () => {
     const raw = {
-      action: 'Preparar', confidence: 'Media', risk_score: 5, conviction: 0.5,
+      action: 'Comprar', confidence: 'Media', risk_score: 5, conviction: 0.5,
       has_executable_setup: true, gating_active: false,
-      scores: { derivatives: 1, structure: 0, volume: 0, onchain: 0, total: 0.5 },
+      scores: { derivatives: 1, structure: 0, volume: 1, onchain: 0, total: 0.5 },
       setup: { entry_price: 105, stop_price: 100, tp1_price: 115 },
     };
     const r = applyDecisionGates(raw, gatingInsufficient, false, true);

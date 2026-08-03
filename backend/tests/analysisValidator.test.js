@@ -403,58 +403,34 @@ describe('applyFailSafe — Fase 2 (degradar a Esperar ante violación severa)',
   });
 });
 
-describe('validateAnalysis — puerta de PREPARAR (auditoría #2, hallazgo 5)', () => {
-  // El prompt define la puerta (Derivatives >= +1, Structure >= 0) pero nadie la
-  // validaba: Preparar con setup ejecutable era la vía de escape del gating.
+describe('`Preparar` RETIRADO (P5, 2026-08-03)', () => {
+  // La puerta `prepare_gate` murió con la acción. Lo que la sustituye NO es "nada": la acción
+  // sale del enum, así que si el modelo la emitiera pese al prompt queda marcada como salida
+  // inválida en vez de colarse. Sin este test, retirar la puerta habría dejado un agujero
+  // silencioso — que es precisamente lo que la puerta existía para tapar.
   const prepSetup = { entry_price: 105, stop_price: 100, tp1_price: 115, tp2_price: 125, validity_candles: 8, tf_execution: '4h' };
 
-  test('Preparar accionable sin cumplir la puerta → severe prepare_gate', () => {
-    const bad = base({
-      action: 'Preparar', has_executable_setup: true, setup: prepSetup,
-      scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
-    });
-    const v = validateAnalysis(bad);
-    expect(v.warnings.find(w => w.rule === 'prepare_gate')?.severity).toBe('severe');
+  test('`Preparar` ya no es una acción válida', () => {
+    const v = validateAnalysis(base({ action: 'Preparar' }));
+    expect(v.warnings.find((w) => w.rule === 'action_enum')).toBeTruthy();
   });
 
-  test('Preparar accionable con derivatives>=+1 y structure>=0 → sin prepare_gate', () => {
-    const ok = base({
-      action: 'Preparar', has_executable_setup: true, setup: prepSetup,
-      scores: { derivatives: 1, structure: 0, volume: 0, onchain: 0, total: 0.5 },
-    });
-    expect(rules(ok)).not.toContain('prepare_gate');
-  });
-
-  test('Preparar contemplativo (sin setup ejecutable) no exige la puerta', () => {
-    const ok = base({
-      action: 'Preparar', has_executable_setup: false, setup: null,
-      scores: { derivatives: 0, structure: -1, volume: 0, onchain: 0, total: -0.3 },
-    });
-    expect(rules(ok)).not.toContain('prepare_gate');
-  });
-
-  // La guardia sigue cubriendo `Preparar` accionable (la dirección sale de la geometría del
-  // setup), pero desde el 2026-07-29 solo por el bloque VOLUME: el término `derivatives` se
-  // retiró al pasar ese score a determinista. Ver utils/expectedScores.js.
-  test('guardia de divergencia cubre Preparar accionable (dirección por geometría)', () => {
-    const bad = base({
-      action: 'Preparar', has_executable_setup: true, setup: prepSetup, // long (stop<entry)
-      scores: { derivatives: 1, structure: 0, volume: 1, onchain: 0, total: 0.7 },
-    });
-    const v = validateAnalysis(bad, {
-      expectedScores: { volume: { score: -1, basis: ['CVD bajista alineado'] } },
-    });
-    expect(v.warnings.find(w => w.rule === 'score_divergence_volume')?.severity).toBe('severe');
-  });
-
-  test('un expected de DERIVATIVES ya no genera aviso (lo calcula el backend)', () => {
+  test('la puerta `prepare_gate` ya no existe', () => {
     const v = validateAnalysis(base({
       action: 'Preparar', has_executable_setup: true, setup: prepSetup,
-      scores: { derivatives: 1, structure: 0, volume: 1, onchain: 0, total: 0.7 },
-    }), { expectedScores: { derivatives: { score: -1, basis: ['obsoleto'] } } });
-    expect(v.warnings.some(w => w.rule === 'score_divergence_derivatives')).toBe(false);
+      scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
+    }));
+    expect(v.warnings.find((w) => w.rule === 'prepare_gate')).toBeUndefined();
+  });
+
+  test('las tres acciones vivas siguen siendo válidas', () => {
+    for (const action of ['Comprar', 'Vender', 'Esperar']) {
+      const v = validateAnalysis(base({ action }));
+      expect(v.warnings.find((w) => w.rule === 'action_enum')).toBeUndefined();
+    }
   });
 });
+
 
 describe('coherencia confidence ↔ conviction (v8_2)', () => {
   const base = (over = {}) => ({

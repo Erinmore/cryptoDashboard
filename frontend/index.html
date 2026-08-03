@@ -99,6 +99,40 @@
               <div class="rec-level-row"><span class="rec-level-label">TP1</span><span id="rec-tp1" class="rec-level-value rec-tp">—</span></div>
               <div class="rec-level-row"><span class="rec-level-label">TP2</span><span id="rec-tp2" class="rec-level-value rec-tp">—</span></div>
             </div>
+            <!-- Qué falta para operar: lo emite el LLM (`missing_confirmations`) y hasta
+                 el 2026-08-03 no lo pintaba nadie. Es el bloque que explica POR QUÉ no hay
+                 operación, que es la salida dominante del sistema. -->
+            <div id="rec-missing" class="rec-missing" style="display:none">
+              <div class="rec-block-title">Qué falta para operar</div>
+              <ul id="rec-missing-list"></ul>
+            </div>
+
+            <!-- Plan condicional: el trade que se tomaría si aparece lo que falta. La
+                 geometría la elige el LLM; las tres cifras de al lado las mide el backend
+                 (curvas de `TRIGGER_BASE_RATE` y `TARGET_REACHABILITY`). -->
+            <div id="rec-plan" class="rec-plan" style="display:none">
+              <div class="rec-block-title">Si pasa esto, esto haría <span id="rec-plan-dir" class="rec-plan-dir"></span></div>
+              <p id="rec-plan-trigger" class="rec-plan-trigger"></p>
+              <div class="rec-plan-levels">
+                <div class="rec-level-row"><span class="rec-level-label">Entrada</span><span id="rec-plan-entry" class="rec-level-value">—</span></div>
+                <div class="rec-level-row"><span class="rec-level-label">Invalida en</span><span id="rec-plan-stop" class="rec-level-value rec-sl">—</span></div>
+                <div class="rec-level-row"><span class="rec-level-label">Objetivo</span><span id="rec-plan-tp1" class="rec-level-value rec-tp">—</span></div>
+                <div class="rec-level-row"><span class="rec-level-label">Caduca</span><span id="rec-plan-expiry" class="rec-level-value">—</span></div>
+              </div>
+              <div id="rec-plan-stats" class="rec-plan-stats"></div>
+              <p id="rec-plan-caveat" class="rec-plan-caveat"></p>
+            </div>
+
+            <!-- Registro de lo que pasó con los planes anteriores. Va AQUÍ, en la misma
+                 pantalla que la recomendación, y no en un panel de auditoría aparte: un
+                 sistema que se usa a diario genera presión para creérselo, y la única
+                 defensa es que el historial esté donde no se pueda no ver. -->
+            <div id="rec-record" class="rec-record" style="display:none">
+              <div class="rec-block-title">Qué pasó con los planes anteriores</div>
+              <p id="rec-record-line" class="rec-record-line"></p>
+              <p id="rec-record-trigger" class="rec-record-trigger"></p>
+            </div>
+
             <div id="rec-alerts"></div>
             <p id="rec-timestamp" class="rec-timestamp"></p>
           </div>
