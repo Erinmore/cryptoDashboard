@@ -99,13 +99,13 @@ estaba contestada— y M9 salió **NO-GO**, cerrando lo direccional por segunda 
 ## 3. CUBO 1 — LIBRES · se hacen ya, no gastan punto cero
 
 Aditivos, telemetría o fuera de la ruta de decisión. No invalidan nada.
-**Estado al 2026-08-03: L1 y L2 hechos. Quedan L3 (1 min), L4 y L5.**
+**Estado al 2026-08-03: L1, L2 y L3 hechos. Quedan L4 (disponible, ver §7-bis) y L5 (tras el checkpoint).**
 
 | # | Ítem | Coste | Nota |
 |---|---|---|---|
 | ~~**L1**~~ ✅ | **Renombrar `liquidations` → `liquidations_1d`** (+ `addLiquidationsDailyEntry`, clave de `LIMITS`, comentario de `db.js`) con **migración de datos idempotente** inline en `db.js` | 30 min | **Riesgo nulo verificado**: nadie lee esa métrica de vuelta (`loadSeries` sólo se invoca para CVD/VWAP) → es archivo write-only. Se hace porque `liquidations` junto a `liquidations_1h` es la trampa de nombres que ya mordió 4 veces (`top_long_clusters`, `longs_usd` en monedas, dos `atr_pct`, dos `regime`) |
 | ~~**L2**~~ ✅ | **A3 · Versionado por fila** (`gate_version`, `rubric_version`, `feature_version`) | bajo | **Prerrequisito del propio rediseño**: sin esto, comparar el antes y el después es arqueología de commits. Y es lo que permite retirar `Preparar` sin romper las filas viejas |
-| **L3** ⏳ | **A9 · Verificar clusters en vivo** (`reconstructed = 0` en el próximo análisis) | 1 min | Las 100 filas actuales son reconstruidas; el camino en vivo no se ha ejercitado |
+| ~~**L3**~~ ✅ | **A9 · Verificar clusters en vivo** | — | ✅ **CERRADO el 2026-08-03**: **60 filas con `reconstructed = 0` en 6 análisis**. El camino en vivo está ejercitado y funciona (las 100 reconstruidas siguen distinguibles) |
 | **L4** ⏳ | **Lecciones aprendidas** — extraer de CLAUDE.md/SESSION_STATE las **constantes medidas con su alcance y fecha**, y las **retractadas** | medio | Ver §7. Lo reutilizable son los números y su scope, no la narrativa |
 | **L5** ⏸️ | **A4 · Observatorio** (consolidar `/api/outcome/stats` + modal + `auditStats`) | medio | Valor real cuando haya dos periodos que comparar → **después** |
 
@@ -632,8 +632,17 @@ AHORA — la v1 está entregada. Lo único vivo es ACUMULAR MUESTRA.
    · El cron llena trigger_price y el registro del shadow trade solo.
    · Con muestra: cerrar P3 (evaluador exige confirmación) y leer el registro.
 
-DESPUÉS — congelado en §7-bis, y no se abre "porque se ve mal"
-   └─ B1 (M4) · F1 (M1+M5) · B5 refactor · B2 · B4 · cubo 0 · M2 · M10 · M11
+SE PUEDE ADELANTAR YA — solo lectura o preserva comportamiento (§7-bis)
+   ├─ M10  línea base de expectativa como curva   → desbloquea enseñar expectancy_r
+   ├─ B5   refactor de buildAnalyzeContext        → desbloquea la réplica histórica del LLM
+   │        ⚠️ exige diff del payload, no sólo tests verdes
+   ├─ M1+M5 · M4  mediciones previas              → el punto cero llega preparado
+   └─ L4   lecciones aprendidas (constantes medidas y RETRACTADAS)
+
+CONGELADO — y por tres motivos DISTINTOS, no uno (§7-bis)
+   ├─ exige punto cero:  B1 · B2 · B4 · F1 · F2 · cubo 0
+   ├─ no decide nada:    U1 · U3 · U4 · U5 · M2
+   └─ falta muestra:     M11 · D1
         └─ PUNTO CERO 6 · mucho más pequeño de lo previsto, y aún sin fecha
 ```
 
@@ -687,8 +696,41 @@ enseñan las tres cifras que ya tienen su curva medida y no necesitan línea bas
 últimos 20 planes: 7 dispararon, 2 llegaron al objetivo, 11 caducaron"), que es un hecho y no
 necesita respaldo estadístico. M10 deja de bloquear y pasa a ser el requisito de la v2.
 
-**CONGELADO — la v1 ya está entregada, así que esto es el «después»** (correctitud real, ninguno
-bloquea): B1, B2, B4, B5, F1, todo el cubo 0, **los 5 umbrales de indicador de §4 ▶ Umbrales** (U1-U5), M2, M10, M11. **No se abren "porque se ven mal".** De las mediciones de estos dos días, dos dijeron *no cambies nada*, una corrigió el
+**QUÉ ESTÁ CONGELADO Y POR QUÉ — hay CUATRO motivos distintos y meterlos en una lista plana
+fue un error** (detectado el 2026-08-03 al recomendar de palabra cosas que esta sección
+congelaba). La lista anterior contradecía al §1 del propio documento: **punto cero y regla de
+calibración son permisos distintos**, y decir *"la defensa no es medir menos"* para acto seguido
+congelar mediciones es incoherente.
+
+| Motivo | Ítems | ¿Se puede adelantar? |
+|---|---|---|
+| **Exige PUNTO CERO** — cambia la ruta de decisión | B1 · B2 · B4 · F1 · **F2** · todo el cubo 0 | ❌ No. Su MEDICIÓN sí (columna de abajo) |
+| **No decide nada hoy** — medirlo no tendría consecuencia | U1 · U3 · U4 · U5 · **M2** | ❌ No, y el motivo no es orden: Execution no entra en ninguna puerta |
+| **Falta MUESTRA** — no hay atajo | M11 · D1 (calibración de convicción) | ❌ No. Sólo el tiempo lo resuelve |
+| **DISPONIBLE** — solo lectura, o preserva comportamiento | **M10** · **M1** · **M5** · **M4** · **B5** · **L4** | ✅ **Sí.** Ver abajo |
+
+**Lo DISPONIBLE, y qué desbloquea cada uno:**
+
+- **M10** — la única que desbloquea una función del producto: hoy el panel **no puede enseñar
+  `expectancy_r`** porque su referencia es una curva sin medir. Reutiliza el arnés de M8.
+- **M1 + M5 · M4** — no desbloquean nada hoy, pero hacen que el punto cero llegue **con sus
+  mediciones hechas** en vez de convertirse en "cinco líneas más una medición" justo al empezar.
+  M1 sólo es posible desde el 2026-08-03, gracias a `liquidations_1h`.
+- **B5** — ⚠️ **NO exige punto cero: es un refactor que preserva comportamiento.** Se agrupó con
+  el punto cero cuando su única justificación era *"si el lote va a ser largo de todas formas"*;
+  ahora tiene una propia y mejor: `buildAnalyzeContext` mezcla **pedir** datos con
+  **ensamblarlos**, y separarlo es lo que permitiría montar un payload desde datos guardados en
+  vez de APIs vivas — hoy **el blocker para medir si el juicio del LLM aporta algo**.
+  **Requisito para que cuente como preservador de comportamiento:** no basta con que pasen los
+  tests (mockean el LLM y no cubren la forma completa del payload). Hace falta **diff del
+  payload real antes y después** sobre las 3 monedas. Sin ese diff, es un cambio de ruta de
+  decisión disfrazado de refactor.
+- **L4** — lecciones aprendidas: las constantes medidas con su alcance y, sobre todo, **las
+  retractadas**. Es lo que evita que dentro de tres meses alguien reproponga el 45,6 %, la banda
+  al 0,75× o el DVOL.
+
+**Lo que esta sección SÍ prohíbe, y sigue en pie:** abrir un ítem del primer bloque *"porque se
+ve mal"*. De las mediciones de estos dos días, dos dijeron *no cambies nada*, una corrigió el
 signo de una celda que se iba a escribir al revés, una tumbó el cambio que venía a justificar
 y una resolvió una contradicción que parecía un bug y no lo era.
 
