@@ -51,6 +51,10 @@ const COINS = (process.env.COINS ?? 'SOL,BTC,ETH').split(',').map((s) => s.trim(
 const DAYS = 90;
 const LOOKBACK_4H = 6;          // 24h = 6 velas de 4h
 const SQRT_WINDOW = Math.sqrt(LOOKBACK_4H);
+// Horizonte de la ventana FUTURA que se mide (24h). Un solo dueño: lo usan el cálculo de
+// `fwdAtr` y el criterio de disjunción de `disjointChain` — si divergieran, el submuestreo
+// diría "independientes" sobre ventanas que en realidad se solapan.
+const FWD_HORIZON_SEC = LOOKBACK_4H * 4 * 3600;
 const OI_DEAD_BAND = 1.0;       // ±1 %, ya medido y en producción (gating.js)
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -179,7 +183,7 @@ async function auditCoin(coin) {
     if (process.env.WARM_ONLY === '1' && !liq.warm) continue;
     // Movimiento FUTURO de 24h, misma normalización. Sin lookahead: la celda se define con
     // las 24h pasadas (OI y precio) y esto mide las 24h siguientes.
-    const fwdT = t + LOOKBACK_4H * 4 * 3600;
+    const fwdT = t + FWD_HORIZON_SEC;
     const pxFwd = closeByT.get(fwdT);
     const fwdAtr = Number.isFinite(pxFwd)
       ? ((pxFwd - pxNow) / pxNow) * 100 / (atrPct * SQRT_WINDOW) : null;
@@ -317,9 +321,125 @@ async function auditCoin(coin) {
   // continuación más que las débiles, contra la tasa base del propio activo.
   //
   // ⚠️ Ventanas solapadas: anclajes cada 4h con ventana futura de 24h comparten 5/6 del
-  // futuro. El % es insesgado pero el IC saldría demasiado estrecho, así que el Wilson se
-  // calcula sobre anclajes NO solapados (uno de cada 6) y se reporta ese n aparte.
+  // futuro, así que NO son independientes y un IC calculado sobre los n crudos sale ~√6
+  // veces demasiado estrecho (el mismo fallo de denominador que infló el "24-42 %" de
+  // `volatility_state` y el 0,225R de la expectativa).
+  //
+  // ⚠️⚠️ ESTE COMENTARIO MINTIÓ HASTA EL 2026-08-02. Decía que "el Wilson se calcula sobre
+  // anclajes NO solapados (uno de cada 6) y se reporta ese n aparte", y era FALSO:
+  // `wilsonInterval` estaba IMPORTADO Y NUNCA LLAMADO en todo el fichero. O sea que las
+  // cifras de §4/§5 se venían leyendo como porcentajes pelados, sin ningún intervalo, con
+  // un comentario al lado asegurando lo contrario — que es peor que no tener nada, porque
+  // invita a confiar. Corregido implementando `disjointRate()` de verdad (abajo), que es lo
+  // que el comentario prometía. El IC llegó a §4 y §4b el 2026-08-03 (§4c y §4d).
   const FWD_BAND = 0.5;
+  // Nº de chains alternativas que se recorren para comprobar que el resultado no depende de
+  // por dónde se empiece a submuestrear. 6 = anclajes por horizonte (24h / 4h), o sea las
+  // fases distintas que existen cuando los anclajes son consecutivos.
+  const STRIDE = LOOKBACK_4H;
+
+  /**
+   * Cadena de anclajes con ventanas futuras DISJUNTAS, elegida por TIEMPO.
+   *
+   * ⚠️ CORREGIDO EL 2026-08-03 (A8). La versión anterior submuestreaba "1 de cada 6" por
+   * POSICIÓN DENTRO DEL SUBCONJUNTO ya filtrado (`i % STRIDE === off`). Sobre una población
+   * densa eso coincide con separar 24h — pero sobre un subconjunto DISPERSO (una celda del
+   * cuadro OI×precio, una cascada) sus elementos ya distan mucho más de 24h entre sí, así
+   * que tirar 5 de cada 6 no compraba independencia: la regalaba. Medido: la regla de §5ter
+   * pasaba de n=42 a **n_ef=7**, con un IC [8,2-64,1] que no puede refutar ni sostener nada.
+   * Ahora se acepta un ancla si su ventana futura no toca la de la última aceptada, que es
+   * la condición que de verdad hace falta. Sobre poblaciones densas reproduce la conducta
+   * anterior (anclas consecutivas → 1 de cada 6); sobre dispersas conserva casi todo.
+   *
+   * No es una corrección anticonservadora: la condición `>= FWD_HORIZON_SEC` es exactamente
+   * la que garantiza que dos ventanas de 24h no comparten ningún tramo de futuro.
+   */
+  const disjointChain = (sorted, startIdx) => {
+    const out = [];
+    let lastT = -Infinity;
+    for (let i = startIdx; i < sorted.length; i++) {
+      if (sorted[i].t - lastT >= FWD_HORIZON_SEC) { out.push(sorted[i]); lastT = sorted[i].t; }
+    }
+    // Guarda: si esto se rompiera, TODOS los IC del fichero seguirían imprimiéndose con
+    // buen aspecto y serían demasiado estrechos, sin ninguna señal externa. Coste ~0.
+    for (let i = 1; i < out.length; i++) {
+      if (out[i].t - out[i - 1].t < FWD_HORIZON_SEC) {
+        console.log('   ⚠️ BUG: la cadena "disjunta" contiene ventanas solapadas — IC no válidos.');
+        break;
+      }
+    }
+    return out;
+  };
+
+  /**
+   * Tasa de continuación (bajista por defecto) con IC de Wilson sobre anclajes INDEPENDIENTES.
+   * Como el punto de partida de la cadena es arbitrario y cambia el resultado, se recorren
+   * `STRIDE` arranques y se reporta el rango — si el intervalo y el rango de arranques no
+   * coinciden, el número no es estable y hay que decirlo.
+   */
+  const disjointRate = (sel, dir = -1) => {
+    const hit = (r) => (dir < 0 ? r.fwdAtr < -FWD_BAND : r.fwdAtr > FWD_BAND);
+    const sorted = [...sel].sort((a, b) => a.t - b.t);
+    const rates = [];
+    let bestW = null;
+    for (let off = 0; off < STRIDE; off++) {
+      const sub = disjointChain(sorted, off);
+      if (sub.length < 2) continue;
+      // `wilsonInterval` ya devuelve PORCENTAJES (0-100), no proporciones.
+      const w = wilsonInterval(sub.filter(hit).length, sub.length);
+      rates.push(w.point);
+      if (!bestW || sub.length > bestW.n) bestW = { ...w, n: sub.length };
+    }
+    if (!bestW) return null;
+    return {
+      n_eff: bestW.n,
+      point: bestW.point,
+      low: bestW.low,
+      high: bestW.high,
+      spread: rates.length ? [Math.min(...rates), Math.max(...rates)] : null,
+    };
+  };
+  const fmtCI = (d) => d
+    ? `${d.point.toFixed(1).padStart(5)} % [${d.low.toFixed(1)}-${d.high.toFixed(1)}] n_ef=${String(d.n_eff).padStart(3)}`
+      + (d.spread ? ` · arranques ${d.spread[0].toFixed(0)}-${d.spread[1].toFixed(0)}` : '')
+    : 'n insuficiente';
+  /** IC compacto, sin el rango de arranques (para las tablas de dos columnas de §4c/§4d). */
+  const fmtCIshort = (d) => (d
+    ? `${d.point.toFixed(1).padStart(5)} [${d.low.toFixed(1)}-${d.high.toFixed(1)}] n=${String(d.n_eff).padStart(3)}`
+    : 'n insuficiente').padEnd(24);
+
+  /**
+   * Veredicto de una comparación subconjunto ↔ SU COMPLEMENTO.
+   *
+   * Por qué el complemento y no la base: la base CONTIENE al subconjunto, así que sus dos
+   * intervalos no son comparables por solape (comparten observaciones). El complemento es
+   * una muestra disjunta y la comparación sí se sostiene.
+   *
+   * Dos conservadurismos declarados, ambos en la dirección segura:
+   *   · el no-solape de dos IC es un criterio MÁS ESTRICTO que un contraste de diferencia de
+   *     proporciones, así que "solapa" NO significa "no hay efecto", significa NO DEMOSTRADO;
+   *   · cada población se adelgaza por separado, luego un ancla del subconjunto y otra del
+   *     complemento pueden distar 4h y compartir futuro. Esa correlación es POSITIVA, o sea
+   *     que Var(p̂₁−p̂₂) real < la que implica tratarlas como independientes → el criterio
+   *     peca de exigente, nunca de laxo.
+   *
+   * No hay umbral de n: un n_ef bajo ensancha el Wilson hasta solapar por sí solo, así que
+   * el propio intervalo hace de guarda y no hace falta inventar una constante.
+   */
+  const verdictCI = (a, b) => {
+    if (!a || !b) return 'n insuf.';
+    return (a.high < b.low || b.high < a.low) ? 'SEPARADO' : 'solapa  ';
+  };
+  /**
+   * Diferencia de los estimadores PUNTUALES, al lado del veredicto.
+   *
+   * Sin ella, un "0 de 8 separan" se lee como "aquí no pasa nada", y no es lo mismo un solape
+   * con Δ=+0,2 pt que uno con Δ=+28 pt: el segundo es un efecto grande que esta muestra no
+   * puede resolver. No introduce ningún umbral — son los dos puntos que ya se imprimen.
+   */
+  const fmtDelta = (a, b) => (a && b
+    ? `Δ=${(a.point - b.point >= 0 ? '+' : '') + (a.point - b.point).toFixed(1).padStart(5)} pt`
+    : '');
   const withFwd = rows.filter((r) => Number.isFinite(r.fwdAtr));
   const baseUp = withFwd.filter((r) => r.fwdAtr > FWD_BAND).length;
   const baseDn = withFwd.filter((r) => r.fwdAtr < -FWD_BAND).length;
@@ -342,6 +462,10 @@ async function auditCoin(coin) {
   // nuevo no continúa al alza, la pregunta siguiente es si continúa a la BAJA — o sea, si
   // "alcista débil" es en realidad bajista. Mirar solo la dirección esperada lo ocultaría.
   console.log('   celda                       n    sube↑   (lift)    baja↓   (lift)   lectura');
+  // Se guarda la selección de cada celda para que §4c mida EXACTAMENTE las mismas filas.
+  // Recalcularla allí crearía un segundo dueño de la definición de celda — el patrón que
+  // ya produjo el bug de `analysis_liquidation_snapshot`.
+  const cellSelections = [];
   for (const [label, o, p] of cellDefs) {
     const sel = withFwd.filter((r) => {
       const oo = r.oiChange > OI_DEAD_BAND ? 1 : r.oiChange < -OI_DEAD_BAND ? -1 : 0;
@@ -349,6 +473,7 @@ async function auditCoin(coin) {
       return oo === o && pp === p;
     });
     if (!sel.length) continue;
+    cellSelections.push({ label, sel });
     const up = sel.filter((r) => r.fwdAtr > FWD_BAND).length;
     const dn = sel.filter((r) => r.fwdAtr < -FWD_BAND).length;
     const lUp = (up / sel.length - baseUp / withFwd.length) * 100;
@@ -365,6 +490,8 @@ async function auditCoin(coin) {
   // Se fija el signo del precio pasado y se compara SOLO por estado del OI. Si las dos filas
   // de cada bloque salen iguales, el OI no informa y el cuadro 2×2 es momentum disfrazado.
   console.log(`\n4b · EFECTO DEL OI AISLADO  (dentro de cada dirección de precio pasada)\n`);
+  // Mismo motivo que en §4: se guardan las selecciones para que §4d mida las mismas filas.
+  const oiSelections = [];
   for (const [grpLabel, pSign] of [['precio pasado ↑', 1], ['precio pasado ↓', -1]]) {
     const grp = withFwd.filter((r) => (pSign > 0 ? r.pxAtr > PX_BAND : r.pxAtr < -PX_BAND));
     if (!grp.length) continue;
@@ -377,6 +504,7 @@ async function auditCoin(coin) {
         return o === oSign;
       });
       if (!sub.length) continue;
+      oiSelections.push({ grpLabel, oLabel, grp, sub });
       const u = sub.filter((r) => r.fwdAtr > FWD_BAND).length;
       const d = sub.filter((r) => r.fwdAtr < -FWD_BAND).length;
       const dU = (u / sub.length - gUp / grp.length) * 100;
@@ -386,6 +514,64 @@ async function auditCoin(coin) {
         + `  baja ${pct(d, sub.length)} (${sig(dD)})   ← vs base DEL GRUPO`);
     }
   }
+
+  // ── 4c · §4 CON INTERVALO (A8, 2026-08-03) ────────────────────────────────
+  // Los porcentajes de §4 y §4b son insesgados como PUNTO pero se leían sin ninguna medida
+  // de incertidumbre, y sobre ellos descansa el argumento entero de por qué la rúbrica
+  // puntúa dos celdas y enmudece las otras dos (composiciones F-I de §3, y con ellas el
+  // `cellMeasured` que acabó en producción). Aquí van con IC sobre anclajes de ventana
+  // futura DISJUNTA, contrastados contra su COMPLEMENTO (ver `verdictCI`).
+  //
+  // ⚠️ Leer con la expectativa puesta: cuando se encendió el IC en §5ter, el hallazgo que
+  // sostenía ("el skew aporta sobre la magnitud") dejó de estar demostrado. Es perfectamente
+  // posible que aquí pase lo mismo — saberlo antes del checkpoint es el objetivo, no un
+  // efecto colateral.
+  const complementOf = (universe, sel) => {
+    // Por REFERENCIA, no por `t`: `sel` siempre sale de filtrar `universe`, así que los
+    // objetos son los mismos y la resta es exacta sin suponer que `t` es único.
+    const s = new Set(sel);
+    return universe.filter((r) => !s.has(r));
+  };
+  console.log(`\n4c · §4 CON ANCLAJES INDEPENDIENTES  (ventanas futuras disjuntas, >=24 h)\n`);
+  console.log('   Cada celda contra SU COMPLEMENTO (el resto de anclajes), no contra la base:');
+  console.log('   la base la contiene, así que comparar sus intervalos no significaría nada.\n');
+  console.log('   celda                     dir     celda                     resto                     veredicto  Δ puntual');
+  let sepCells = 0, totCells = 0;
+  for (const { label, sel } of cellSelections) {
+    const rest = complementOf(withFwd, sel);
+    for (const [dirLabel, dir] of [['sube↑', 1], ['baja↓', -1]]) {
+      const a = disjointRate(sel, dir);
+      const b = disjointRate(rest, dir);
+      const v = verdictCI(a, b);
+      totCells++; if (v === 'SEPARADO') sepCells++;
+      console.log(`   ${label} ${dirLabel}  ${fmtCIshort(a)}  ${fmtCIshort(b)}  ${v}  ${fmtDelta(a, b)}`);
+    }
+  }
+  console.log(`\n   → ${sepCells} de ${totCells} filas separan. Recordatorio de lo que NO dice un solape:`);
+  console.log('     no dice "no hay efecto", dice que ESTOS datos no lo demuestran. Y no recoge la');
+  console.log('     réplica ENTRE MONEDAS, que es la otra mitad del argumento original — pero esa');
+  console.log('     réplica tampoco se puede juntar en un IC: las 3 comparten el factor mercado.');
+
+  // ── 4d · §4b CON INTERVALO ────────────────────────────────────────────────
+  // Aquí el complemento es DENTRO DEL GRUPO (los otros estados del OI con la misma dirección
+  // de precio pasada), que es justo lo que aísla el OI del momentum. Es la comparación que
+  // en §4b se hacía contra la base del grupo — y la base del grupo también contiene al
+  // subconjunto, así que el complemento es además la versión comparable.
+  console.log(`\n4d · §4b CON ANCLAJES INDEPENDIENTES  (OI contra el resto de SU grupo)\n`);
+  console.log('   grupo · estado OI                    dir     subconjunto               resto del grupo           veredicto  Δ puntual');
+  let sepOi = 0, totOi = 0;
+  for (const { grpLabel, oLabel, grp, sub } of oiSelections) {
+    const rest = complementOf(grp, sub);
+    if (!rest.length) continue;
+    for (const [dirLabel, dir] of [['sube↑', 1], ['baja↓', -1]]) {
+      const a = disjointRate(sub, dir);
+      const b = disjointRate(rest, dir);
+      const v = verdictCI(a, b);
+      totOi++; if (v === 'SEPARADO') sepOi++;
+      console.log(`   ${grpLabel} ${oLabel.trim().padEnd(20)} ${dirLabel}  ${fmtCIshort(a)}  ${fmtCIshort(b)}  ${v}  ${fmtDelta(a, b)}`);
+    }
+  }
+  console.log(`\n   → ${sepOi} de ${totOi} filas separan.`);
 
   // ── 5 · ¿Predice la cascada de liquidaciones? ──────────────────────────────
   // Mismo criterio que las celdas: frecuencia ya medida (auditLiquidations), aquí el lift.
@@ -427,6 +613,131 @@ async function auditCoin(coin) {
     console.log(`   ${grpLabel} (n=${String(grp.length).padStart(3)})  con cascada n=${String(con.length).padStart(3)} baja ${dn(con).toFixed(1)}%`
       + `  ·  sin cascada n=${String(sin.length).padStart(3)} baja ${dn(sin).toFixed(1)}%`
       + `   →  ${(diff >= 0 ? '+' : '') + diff.toFixed(1)} pts`);
+  }
+
+  // ── 5bis · ¿APORTA EL `skew`, o manda sólo la MAGNITUD? ────────────────────
+  // Pregunta abierta el 2026-08-02 al reconstruir las 10 mediciones del periodo: el `skew`
+  // pasaba 6 de 10 y la magnitud 1 de 10, y el ancla con el skew MÁS extremo de la serie
+  // (−0,995) no disparó porque su magnitud se quedó en 1,8×. Si históricamente el `skew`
+  // pasa casi siempre que la magnitud pasa, el corte de −0,50 es DECORATIVO: la regla sería
+  // de una sola variable con una segunda condición que no separa nada. Es el patrón T1
+  // (rama muerta), pero por el lado contrario — no una condición que nunca se cumple, sino
+  // una que se cumple siempre que importa.
+  //
+  // ⚠️ Lo que YA estaba medido y no contesta esto: `auditLiquidations` reporta la frecuencia
+  // MARGINAL de cada condición, y §5/§5b de aquí miden el lift de la CONJUNCIÓN. Ninguna de
+  // las dos compara la conjunción contra "magnitud sola", que es la única comparación que
+  // dice si el `skew` aporta.
+  console.log(`\n5bis · ¿APORTA EL skew SOBRE LA MAGNITUD?  (¿o es un corte decorativo?)\n`);
+  const evalRows = withFwd.filter((r) => Number.isFinite(r.skew) && Number.isFinite(r.vsMedian));
+  const MAG = 2, SKEW = -0.5;
+  if (evalRows.length < 30) {
+    console.log('   muestra insuficiente');
+  } else {
+    // (a) REDUNDANCIA: ¿cuánto se solapan? Si P(skew|mag) ≈ 100 %, el corte no filtra nada.
+    const mag = evalRows.filter((r) => r.vsMedian >= MAG);
+    const skw = evalRows.filter((r) => r.skew <= SKEW);
+    const bothC = evalRows.filter((r) => r.vsMedian >= MAG && r.skew <= SKEW);
+    console.log(`   magnitud >= ${MAG}×          ${pct(mag.length, evalRows.length)}  (n=${mag.length})`);
+    console.log(`   skew <= ${SKEW}             ${pct(skw.length, evalRows.length)}  (n=${skw.length})`);
+    console.log(`   ambas (la regla)          ${pct(bothC.length, evalRows.length)}  (n=${bothC.length})`);
+    console.log(`   → de las que pasan MAGNITUD, ¿cuántas pasan también skew?  ${pct(bothC.length, mag.length)}`);
+    console.log(`   → de las que pasan SKEW,     ¿cuántas pasan también magnitud? ${pct(bothC.length, skw.length)}`);
+    console.log('   (si la primera está cerca del 100 %, el skew no filtra: es decorativo)\n');
+
+    // (b) CONTRIBUCIÓN MARGINAL: 2×2 con el lift bajista. La fila que decide es la segunda —
+    // magnitud SIN skew. Si baja igual que la regla completa, el skew no aporta.
+    const dnRate = (a) => (a.filter((r) => r.fwdAtr < -FWD_BAND).length / a.length) * 100;
+    const base = (baseDn / withFwd.length) * 100;
+    console.log(`   TASA BASE bajista del activo: ${base.toFixed(1)} %\n`);
+    console.log('   celda                                 n    baja↓    lift');
+    for (const [label, test] of [
+      [`mag>=${MAG}× Y skew<=${SKEW}   (regla actual)`, (r) => r.vsMedian >= MAG && r.skew <= SKEW],
+      [`mag>=${MAG}× y skew> ${SKEW}   (solo magnitud)`, (r) => r.vsMedian >= MAG && r.skew > SKEW],
+      [`mag< ${MAG}× Y skew<=${SKEW}   (solo skew)    `, (r) => r.vsMedian < MAG && r.skew <= SKEW],
+      [`mag< ${MAG}× y skew> ${SKEW}   (ninguna)      `, (r) => r.vsMedian < MAG && r.skew > SKEW],
+    ]) {
+      const sel = evalRows.filter(test);
+      if (sel.length < 5) { console.log(`   ${label} ${String(sel.length).padStart(4)}   n<5, no se lee`); continue; }
+      const d = dnRate(sel);
+      const sig = (x) => (x >= 0 ? '+' : '') + x.toFixed(1).padStart(5);
+      console.log(`   ${label} ${String(sel.length).padStart(4)}   ${d.toFixed(1).padStart(5)} %  ${sig(d - base)}`);
+    }
+
+    // (c) BARRIDO del corte de skew DENTRO de magnitud>=2. Si el lift no se mueve al
+    // endurecerlo, el corte concreto da igual y sobra. Mismo método que el barrido de
+    // `auditConditionalRR`: un umbral que no cambia nada al moverse no está midiendo.
+    console.log(`\n   Barrido del corte de skew, sólo dentro de magnitud >= ${MAG}×:`);
+    console.log('     corte      n    baja↓    lift');
+    for (const c of [0, -0.3, -0.5, -0.7, -0.9]) {
+      const sel = evalRows.filter((r) => r.vsMedian >= MAG && r.skew <= c);
+      if (sel.length < 5) { console.log(`     ${c.toFixed(1).padStart(5)}  ${String(sel.length).padStart(4)}   n<5`); continue; }
+      const d = dnRate(sel);
+      const sig = (x) => (x >= 0 ? '+' : '') + x.toFixed(1).padStart(5);
+      console.log(`     ${c.toFixed(1).padStart(5)}  ${String(sel.length).padStart(4)}   ${d.toFixed(1).padStart(5)} %  ${sig(d - base)}`);
+    }
+
+    // (d) CONTROL DE MOMENTUM. Una cascada de longs ocurre CUANDO el precio cae, así que el
+    // lift bajista contra la base global puede ser el movimiento pasado (mismo confundido
+    // que tumbó `OI↑px↓` en §4b). Se repite dentro de "precio pasado ↓".
+    const dnGrp = evalRows.filter((r) => r.pxAtr < -PX_BAND);
+    if (dnGrp.length >= 20) {
+      const gBase = dnRate(dnGrp);
+      console.log(`\n   Controlado por momentum — sólo precio pasado ↓ (n=${dnGrp.length}, base ${gBase.toFixed(1)} %):`);
+      for (const [label, test] of [
+        ['     con skew<=-0.5 y mag>=2×', (r) => r.vsMedian >= MAG && r.skew <= SKEW],
+        ['     mag>=2× sin exigir skew  ', (r) => r.vsMedian >= MAG],
+      ]) {
+        const sel = dnGrp.filter(test);
+        if (sel.length < 5) { console.log(`${label} n=${sel.length} (n<5)`); continue; }
+        const d = dnRate(sel);
+        const sig = (x) => (x >= 0 ? '+' : '') + x.toFixed(1).padStart(5);
+        console.log(`${label} n=${String(sel.length).padStart(3)}  baja ${d.toFixed(1).padStart(5)} %  ${sig(d - gBase)} vs base del grupo`);
+      }
+    }
+  }
+
+  // ── 5ter · LA POBLACIÓN QUE IMPORTA: sólo donde la celda OI×precio CALLA ───
+  // La cascada sólo puntúa si el eje OI×precio no dijo nada (anti-doble-conteo B1), así que
+  // su valor real no se mide sobre todos los anclajes sino sobre ésos. Es una condición
+  // distinta de "el precio cayó" (el control de momentum de arriba) y es la que reproduce
+  // lo que hace producción.
+  {
+    const cellScore = (r) => {
+      const o = r.oiChange > OI_DEAD_BAND ? 1 : r.oiChange < -OI_DEAD_BAND ? -1 : 0;
+      const p = r.pxAtr > PX_BAND ? 1 : r.pxAtr < -PX_BAND ? -1 : 0;
+      return (o === 1 && p === 1) ? 1 : (o === -1 && p === 1) ? -1 : 0;
+    };
+    const mute = withFwd.filter((r) => Number.isFinite(r.skew) && Number.isFinite(r.vsMedian)
+      && cellScore(r) === 0);
+    console.log(`\n5ter · SÓLO DONDE LA CELDA CALLA  (es cuando la cascada puntúa)\n`);
+    if (mute.length < 30) { console.log('   muestra insuficiente'); }
+    else {
+      const dnRate = (a) => (a.filter((r) => r.fwdAtr < -FWD_BAND).length / a.length) * 100;
+      const mBase = dnRate(mute);
+      console.log(`   n=${mute.length} · base bajista de esta población: ${mBase.toFixed(1)} %`);
+      console.log('   celda                                 n    baja↓    lift');
+      for (const [label, test] of [
+        ['   mag>=2× Y skew<=-0.5 (regla)     ', (r) => r.vsMedian >= 2 && r.skew <= -0.5],
+        ['   mag>=2× sin exigir skew          ', (r) => r.vsMedian >= 2],
+        ['   skew<=-0.5 sin exigir magnitud   ', (r) => r.skew <= -0.5],
+      ]) {
+        const sel = mute.filter(test);
+        if (sel.length < 5) { console.log(`${label} ${String(sel.length).padStart(4)}   n<5`); continue; }
+        const d = dnRate(sel);
+        const sig = (x) => (x >= 0 ? '+' : '') + x.toFixed(1).padStart(5);
+        console.log(`${label} ${String(sel.length).padStart(4)}   ${d.toFixed(1).padStart(5)} %  ${sig(d - mBase)}`);
+      }
+      // Lo anterior son porcentajes sobre anclajes SOLAPADOS: insesgados como punto, pero sin
+      // ninguna medida de incertidumbre. Aquí va lo que el comentario de §4 prometía y no
+      // hacía — el mismo cálculo sobre ventanas futuras DISJUNTAS, que es el n que de verdad
+      // hay. Si los intervalos de las dos primeras filas se solapan, "el skew aporta" NO está
+      // demostrado por muchos puntos de lift que separe el estimador puntual.
+      console.log('\n   Con anclajes INDEPENDIENTES (ventanas futuras disjuntas, >=24 h):');
+      console.log(`     base de la población      ${fmtCI(disjointRate(mute))}`);
+      console.log(`     regla (mag>=2 Y skew)     ${fmtCI(disjointRate(mute.filter((r) => r.vsMedian >= 2 && r.skew <= -0.5)))}`);
+      console.log(`     mag>=2 sin exigir skew    ${fmtCI(disjointRate(mute.filter((r) => r.vsMedian >= 2)))}`);
+    }
   }
 
   // ── 5c · ¿7d y 30d detectan LO MISMO, o solo con la misma frecuencia? ──────
@@ -472,7 +783,7 @@ async function auditCoin(coin) {
   console.log(`   la celda no dice nada (score 0)           ${pct(cellZero, withLiq.length)}  ← aporta señal nueva`);
   console.log(`   la celda dice lo contrario                ${pct(withLiq.length - sameSign - cellZero, withLiq.length)}`);
 
-  return { coin, n, ...out };
+  return { coin, n, sepCells, totCells, sepOi, totOi, ...out };
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -498,4 +809,14 @@ for (const r of results) {
     + `${(r['C · B + funding (sin cambio)'] ?? 0).toFixed(1).padStart(9)}%`);
 }
 console.log('\n  Recordatorio: hoy esa columna vale 0,0 % — no existe rúbrica. Lo que se busca');
-console.log('  es un reparto que discrimine y que coincida en las tres monedas, no el máximo.\n');
+console.log('  es un reparto que discrimine y que coincida en las tres monedas, no el máximo.');
+
+console.log(`\n${'═'.repeat(78)}\nA8 — ¿SOBREVIVEN §4 y §4b AL IC DE ANCLAJES DISJUNTOS?\n${'═'.repeat(78)}`);
+console.log('  moneda   §4c celdas separan   §4b/§4d OI aislado separa');
+for (const r of results) {
+  console.log(`  ${r.coin.padEnd(7)} ${String(r.sepCells ?? 0).padStart(6)} / ${String(r.totCells ?? 0).padEnd(12)}`
+    + `${String(r.sepOi ?? 0).padStart(6)} / ${r.totOi ?? 0}`);
+}
+console.log('\n  Si estas columnas salen a cero, los lifts de §4/§4b siguen siendo el mejor');
+console.log('  estimador puntual que hay, pero NO están demostrados sobre anclajes');
+console.log('  independientes: se leen como material de trabajo, no como evidencia cerrada.\n');
