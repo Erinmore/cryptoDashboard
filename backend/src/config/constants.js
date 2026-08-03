@@ -1,3 +1,25 @@
+// ─── PODA DE CONSTANTES HUÉRFANAS (2026-08-03) ────────────────────────────────
+//
+// Se retiraron 13 constantes que NO importaba nadie y que además CONTRADECÍAN las reglas
+// vivas. No eran sólo código muerto: eran una trampa. Todas pertenecían a la familia de
+// números redondos escritos a ojo que la auditoría de umbrales (T1-T6) sustituyó por
+// terciles y percentiles de la propia serie — quien abriera este fichero leería que el ADX
+// fuerte está en 40 o que el F&G codicioso empieza en 74, cortes retirados precisamente por
+// estar mal calibrados. Mismo defecto que `liquidations` junto a `liquidations_1h`.
+//
+// Retiradas: RSI_OVERBOUGHT_BULL · RSI_OVERSOLD_BULL · STOCH_RSI_OVERBOUGHT ·
+// STOCH_RSI_OVERSOLD · ADX_STRONG_TREND · VOLUME_DELTA_LOOKBACK ·
+// REGIME_BB_WIDTH_PERCENTILE_HIGH/LOW · FEAR_GREED_EXTREME_FEAR/FEAR/GREED ·
+// FUNDING_RATE_HIGH/LOW.
+//
+// Verificado con control positivo antes de borrar (constantes vivas del mismo fichero
+// devolviendo usos > 0), porque la primera pasada del chequeo buscaba en rutas inexistentes
+// y daba "0 usos" para TODO — incluidas las vivas. Un escaneo de código muerto sin control
+// positivo no distingue "no se usa" de "no he mirado".
+//
+// La severidad de F&G y del funding NO desaparece del sistema: vive donde se calcula
+// (`fearGreedService`, `coinalyzeService.severity/severity_negative`), con un solo dueño.
+
 export const COINS = ['BTC', 'ETH', 'SOL'];
 export const TIMEFRAMES = ['1h', '4h', '1D', '1W'];
 
@@ -10,6 +32,26 @@ export const TIMEFRAME_MINUTES = {
   '1D': 1440,
   '1W': 10080,
 };
+
+// ─── DUEÑO ÚNICO de "cuánto dura una vela" (B3, 2026-08-03) ────────────────────
+//
+// Había SEIS copias de esta tabla repartidas por el código: `TIMEFRAME_MINUTES` aquí,
+// `TF_DURATION_MS` en utils/outcome.js, `TF_MS` en utils/episodes.js, `TF_HOURS` en
+// utils/derivativesScore.js, `TF_HOURS_STATS` en utils/stats.js y otra `TF_MS` en
+// utils/conditionalPlan.js. Medidas el 2026-08-03: las seis coincidían, o sea que NO había
+// bug — había superficie de bug. Seis sitios donde escribir 1W y equivocarse.
+//
+// Síntoma revelador: `TF_DURATION_MS` estaba EXPORTADA y no la importaba nadie. Alguien la
+// hizo pública para que fuera el dueño y los demás siguieron escribiendo la suya.
+//
+// Se DERIVAN de `TIMEFRAME_MINUTES` en vez de escribirse aparte: un solo juego de números,
+// así que no pueden discrepar ni aunque alguien edite solo una.
+export const TF_DURATION_MS = Object.fromEntries(
+  Object.entries(TIMEFRAME_MINUTES).map(([tf, min]) => [tf, min * 60_000]),
+);
+export const TF_DURATION_HOURS = Object.fromEntries(
+  Object.entries(TIMEFRAME_MINUTES).map(([tf, min]) => [tf, min / 60]),
+);
 
 export const COINGECKO_IDS = {
   BTC: 'bitcoin',
@@ -28,17 +70,15 @@ export const COINALYZE_SYMBOLS = {
 export const RSI_PERIOD = 14;
 export const RSI_OVERBOUGHT = 70;
 export const RSI_OVERSOLD = 30;
-// Ajuste en bull market confirmado
-export const RSI_OVERBOUGHT_BULL = 80;
-export const RSI_OVERSOLD_BULL = 40;
 
 // ─── Stochastic RSI ───────────────────────────────────────────
 export const STOCH_RSI_RSI_PERIOD = 14;
 export const STOCH_RSI_STOCH_PERIOD = 14;
 export const STOCH_RSI_SMOOTH_K = 3;
 export const STOCH_RSI_SMOOTH_D = 3;
-export const STOCH_RSI_OVERBOUGHT = 80;
-export const STOCH_RSI_OVERSOLD = 20;
+// ⚠️ Los cortes 80/20 del `signal` de StochRSI viven HARDCODEADOS en `calculateStochRSI`
+// (indicators.js). Aquí existían como constantes que nadie importaba: dos dueños, uno muerto.
+// Se retiró el muerto; mover el vivo a este fichero es ruta de decisión y va con su medición.
 
 // ─── MACD ─────────────────────────────────────────────────────
 export const MACD_FAST = 12;
@@ -54,7 +94,6 @@ export const WT_OVERSOLD = -60;
 // ─── ADX + DMI ────────────────────────────────────────────────
 export const ADX_PERIOD = 14;
 export const ADX_TRENDING_THRESHOLD = 25;
-export const ADX_STRONG_TREND = 40;
 export const ADX_RANGING_THRESHOLD = 20;
 
 // ─── Bollinger Bands ──────────────────────────────────────────
@@ -65,9 +104,6 @@ export const BB_STD_DEV = 2;
 export const SUPERTREND_ATR_PERIOD = 14;
 export const SUPERTREND_MULTIPLIER = 3.0;
 export const SUPERTREND_ADAPTIVE_EMA = 50; // EMA del ATR para multiplicador adaptativo
-
-// ─── Volume Delta / CVD / OBV ─────────────────────────────────
-export const VOLUME_DELTA_LOOKBACK = 20; // velas para calcular presión agregada
 
 // ─── Support/Resistance ───────────────────────────────────────
 // Ventana de S/R. Subida de 50 a 100 en la auditoría de umbrales (T4): al pasar el generador
@@ -101,19 +137,11 @@ export const VOLUME_PROFILE_VALID_THRESHOLD_PCT = {
 };
 
 // ─── Market Regime ────────────────────────────────────────────
-export const REGIME_BB_WIDTH_PERCENTILE_HIGH = 70;
-export const REGIME_BB_WIDTH_PERCENTILE_LOW = 30;
-export const REGIME_ATR_MULTIPLIER = 2; // ATR > 2x SMA(ATR) = HIGH_VOLATILITY
-
-// ─── Fear & Greed ─────────────────────────────────────────────
-export const FEAR_GREED_EXTREME_FEAR = 24;
-export const FEAR_GREED_FEAR = 49;
-export const FEAR_GREED_GREED = 74;
-// > 74 = Extreme Greed
-
-// ─── Funding Rate ─────────────────────────────────────────────
-export const FUNDING_RATE_HIGH = 0.001;   // 0.1% — sobrecargado de longs
-export const FUNDING_RATE_LOW = -0.0005;  // -0.05% — sobrecargado de shorts
+// REGIME_ATR_MULTIPLIER (=2) retirado el 2026-08-03: era la 14ª huérfana y se coló en la
+// primera poda porque el escaneo contaba menciones en COMENTARIOS como usos. T1 lo sustituyó
+// por el percentil del ATR% (`high_volatility` salía al 0,0 % en las 12 combinaciones: el ATR
+// de Wilder está autocorrelacionado con su propia SMA y el cociente no despega de 1). El
+// comentario que lo explica sigue en `detectMarketRegime` — es lo que impide reintroducirlo.
 
 // ─── History ──────────────────────────────────────────────────
 export const MAX_ANALYSES_STORED = 1000;
@@ -130,3 +158,40 @@ export const ANALYSIS_MODELS = [
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', cost: '~$0.04', disableThinking: false },
 ];
 export const DEFAULT_ANALYSIS_MODEL = 'claude-opus-4-8';
+
+// ─── Motivo de la muestra (2026-08-03) ─────────────────────────────────────────
+//
+// POR QUÉ. Con tres monedas conviven dos regímenes de muestreo: el FIJO (cron, 2/día por
+// moneda, homogéneo) y el OPORTUNISTA (dirigido por evento, sesgado hacia el estado que lo
+// dispara). Mezclarlos en un mismo denominador infla la distribución hacia justo el caso que
+// el disparador selecciona. Hasta hoy el motivo iba al LOG y no a la fila, así que no se podían
+// separar a posteriori — se dependía de una convención horaria, que funciona pero se rompe con
+// un lanzamiento manual a deshora.
+//
+// El valor puede llevar detalle tras dos puntos (`opportunistic:veto_long+oi_expandiendo`); lo
+// que se valida es el PREFIJO. Ausente ⇒ `unknown`, nunca un valor por defecto inventado: un
+// dato que no llegó no es un dato que se supone.
+// `adhoc` es para lo INFERIDO a posteriori: "fuera de la ventana planificada, origen exacto no
+// registrado". La heurística horaria no puede separar un oportunista de un lanzamiento manual,
+// y etiquetarlo `opportunistic` afirmaría más de lo que se sabe.
+export const SAMPLE_REASONS = ['fixed', 'opportunistic', 'ui', 'manual', 'adhoc', 'unknown'];
+
+// ─── Versionado por fila (A3, 2026-08-03) ──────────────────────────────────────
+//
+// POR QUÉ. `prompt_version` ya se persistía, pero el prompt es sólo UNA de las cosas que
+// deciden la salida: las puertas, la rúbrica de derivados y las features (ventanas, cortes,
+// normalizadores) cambian por separado y hasta hoy sólo dejaban rastro en el historial de
+// git. Comparar dos periodos exigía arqueología de commits — con esto es una consulta SQL.
+//
+// LO QUE HABILITA, y por eso va ANTES del rediseño y no después:
+//   · Atribuir un cambio de comportamiento al componente que lo causó, en vez de al lote.
+//   · Retirar valores de enum (`Preparar`) sin romper las filas viejas: se versiona, no se
+//     borra. Una fila declara con qué reglas se produjo, así que sigue siendo interpretable.
+//   · Separar, en el mismo punto cero, los cambios de OUTPUT de los cambios de UMBRAL —
+//     que es la disciplina sin la cual el periodo siguiente no puede atribuir nada.
+//
+// REGLA DE MANTENIMIENTO: se sube la versión del componente que cambia, no todas a la vez.
+// Un lote que toque los tres sube los tres; uno que sólo mueva un corte sube `FEATURE`.
+export const GATE_VERSION    = 'g2_no_prepare_gate';   // puertas direccionales + fail-safe
+export const RUBRIC_VERSION  = 'r1_oi_price_2026_07_29'; // rúbrica de derivados (measured_at)
+export const FEATURE_VERSION = 'f1_atr180_band050';    // ventanas/cortes/normalizadores

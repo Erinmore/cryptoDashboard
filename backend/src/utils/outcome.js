@@ -1,3 +1,4 @@
+import { TF_DURATION_MS } from '../config/constants.js';
 /**
  * outcome.js — Funciones puras para evaluar el resultado a posteriori de un análisis
  * (job `analysis_outcome`, backtesting). Sin I/O ni dependencias.
@@ -74,12 +75,6 @@ export function classifyOutcome(action, priceAtAnalysis, priceLater, thresholdPc
  * haría que tocar uno moviese el otro sin querer.
  */
 const HOUR_MS = 3600 * 1000;
-export const TF_DURATION_MS = {
-  '1h': HOUR_MS,
-  '4h': 4 * HOUR_MS,
-  '1D': 24 * HOUR_MS,
-  '1W': 7 * 24 * HOUR_MS,
-};
 
 /**
  * Instante (ms) en que CADUCA un setup, según la vigencia que el propio análisis declaró.

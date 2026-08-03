@@ -24,6 +24,7 @@ export function saveAnalysis(data) {
   const insertHeader = db.prepare(`
     INSERT INTO analyses (
       id, coin, primary_tf, timestamp, prompt_version,
+      gate_version, rubric_version, feature_version, sample_reason,
       price_current, price_change_24h_pct, btc_dominance_pct, market_cap_change_24h_pct,
       fear_greed_value, fear_greed_class, fear_greed_trend_30d, fear_greed_30d_avg,
       macro_regime, dxy_value, dxy_trend_5d, spx_trend_5d, gold_trend_5d,
@@ -48,6 +49,7 @@ export function saveAnalysis(data) {
       processing_time_ms, input_tokens, output_tokens, model_used
     ) VALUES (
       @id, @coin, @primary_tf, @timestamp, @prompt_version,
+      @gate_version, @rubric_version, @feature_version, @sample_reason,
       @price_current, @price_change_24h_pct, @btc_dominance_pct, @market_cap_change_24h_pct,
       @fear_greed_value, @fear_greed_class, @fear_greed_trend_30d, @fear_greed_30d_avg,
       @macro_regime, @dxy_value, @dxy_trend_5d, @spx_trend_5d, @gold_trend_5d,
@@ -168,6 +170,7 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
 
       a.mvrv_signal,
 
+      a.gate_version, a.rubric_version, a.feature_version, a.sample_reason,
       a.action, a.confidence, a.risk_score, a.conviction,
       a.score_derivatives, a.score_structure, a.score_volume, a.score_onchain, a.score_total,
       a.primary_driver,
@@ -190,7 +193,12 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       o.setup_outcome, o.setup_hit_tp1, o.setup_hit_tp2, o.setup_hit_stop,
       -- Shadow trade: el resultado del conditional_setup. Sin él, el modal pinta el trade
       -- que se habría tomado y no puede decir si llegó a darse la condición que lo activaba.
-      o.cond_outcome, o.cond_filled, o.cond_invalid_reason, o.cond_exit_price
+      o.cond_outcome, o.cond_filled, o.cond_invalid_reason, o.cond_exit_price,
+      -- ATR de 19 velas. Sin él summarizeShadowTrades no puede normalizar la distancia del
+      -- gatillo y trigger_base_rate_pct sale NULL — o sea que el registro se queda sin su
+      -- referencia y trigger_rate_pct vuelve a ser un número suelto. Persistido desde la
+      -- Fase 5 y sin exponer hasta el 2026-08-03: mismo defecto que tuvo conditional_setup.
+      o.atr_pct_at_analysis
     FROM analyses a
     LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
     WHERE a.coin = ?
@@ -207,12 +215,23 @@ export function getLastAnalysis(coin) {
   const db = getDb();
   return db.prepare(`
     SELECT
-      id, timestamp, action, confidence,
-      executive_summary, ai_response_full,
-      risk_score, score_total
-    FROM analyses
-    WHERE coin = ?
-    ORDER BY timestamp DESC
+      a.id, a.timestamp, a.action, a.confidence,
+      a.executive_summary, a.ai_response_full,
+      a.risk_score, a.score_total,
+      -- Lo que el PANEL necesita para pintar el plan condicional. Sin estos campos el
+      -- frontend no podía enseñarlo aunque quisiera: se persistía desde v9_0 y no salía
+      -- por ningún camino de lectura hacia el dashboard (mismo defecto que tuvo
+      -- conditional_setup en getAnalysisHistory hasta el 2026-07-31).
+      -- OJO: nada de backticks en estos comentarios — van DENTRO de un template literal.
+      a.primary_tf, a.price_current, a.conditional_setup,
+      -- ATR de 19 velas: el eje con el que se midió TRIGGER_BASE_RATE. NO es el de 180
+      -- que decide la banda de la rúbrica (lección B1). Puede ser NULL hasta que el job de
+      -- outcome pase por la fila; el describe devuelve null en vez de estimar.
+      o.atr_pct_at_analysis
+    FROM analyses a
+    LEFT JOIN analysis_outcome o ON o.analysis_id = a.id
+    WHERE a.coin = ?
+    ORDER BY a.timestamp DESC
     LIMIT 1
   `).get(coin.toUpperCase()) ?? null;
 }

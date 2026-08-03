@@ -1,3 +1,4 @@
+import { TF_DURATION_MS } from '../config/constants.js';
 /**
  * episodes.js — Agrupación de análisis en EPISODIOS independientes (Fase 5).
  *
@@ -18,12 +19,6 @@
 const HOUR_MS = 3600 * 1000;
 
 /** Duración de la vela de cada TF primario. */
-const TF_MS = {
-  '1h': HOUR_MS,
-  '4h': 4 * HOUR_MS,
-  '1D': 24 * HOUR_MS,
-  '1W': 7 * 24 * HOUR_MS,
-};
 
 /**
  * Clave de episodio de una fila: coin + TF + índice de la vela que contenía el análisis.
@@ -40,7 +35,7 @@ export function episodeKey(row) {
   const ms = new Date(row?.timestamp).getTime();
   if (!Number.isFinite(ms)) return null;
   const tf = row?.primary_tf;
-  const span = TF_MS[tf] ?? HOUR_MS;
+  const span = TF_DURATION_MS[tf] ?? HOUR_MS;
   const bucket = Math.floor(ms / span);
   return `${row?.coin ?? '?'}|${tf ?? '1h'}|${bucket}`;
 }

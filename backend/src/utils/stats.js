@@ -8,6 +8,7 @@
  */
 
 import { dedupeByEpisode } from './episodes.js';
+import { TF_DURATION_HOURS } from '../config/constants.js';
 import {
   SHADOW_FILL_RULE, SHADOW_MAX_WINDOW_MS, parseConditionalSetup, geometryDirection,
 } from './shadowTrade.js';
@@ -176,7 +177,6 @@ export const TRIGGER_BASE_RATE = {
 };
 
 /** Duración de una vela por TF, en horas. Para convertir la vigencia al TF del ATR. */
-const TF_HOURS_STATS = { '1h': 1, '4h': 4, '1D': 24, '1W': 168 };
 
 /**
  * Distancia normalizada del gatillo: cuántas "unidades de recorrido esperado" hay entre el
@@ -191,8 +191,8 @@ const TF_HOURS_STATS = { '1h': 1, '4h': 4, '1D': 24, '1W': 168 };
 export function normalizedTriggerDistance({ entryPrice, priceAtAnalysis, atrPct, validityCandles, tfExecution, primaryTf }) {
   if (![entryPrice, priceAtAnalysis, atrPct, validityCandles].every(Number.isFinite)) return null;
   if (!(priceAtAnalysis > 0) || !(atrPct > 0) || !(validityCandles > 0)) return null;
-  const execH = TF_HOURS_STATS[tfExecution] ?? TF_HOURS_STATS[primaryTf] ?? null;
-  const primH = TF_HOURS_STATS[primaryTf] ?? execH;
+  const execH = TF_DURATION_HOURS[tfExecution] ?? TF_DURATION_HOURS[primaryTf] ?? null;
+  const primH = TF_DURATION_HOURS[primaryTf] ?? execH;
   if (!execH || !primH) return null;
   const candlesInPrimary = (validityCandles * execH) / primH;
   if (!(candlesInPrimary > 0)) return null;

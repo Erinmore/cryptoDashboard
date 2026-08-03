@@ -331,7 +331,7 @@ function runMigrations(db) {
     -- para acumular más allá de la ventana que sus APIs re-fetchean en cada poll.
     CREATE TABLE IF NOT EXISTS history_series (
       coin TEXT NOT NULL,        -- 'BTC'/'ETH'/'SOL' o 'GLOBAL' (fear_greed)
-      metric TEXT NOT NULL,      -- funding_rate|open_interest|long_short_ratio|liquidations|cvd|vwap|fear_greed
+      metric TEXT NOT NULL,      -- funding_rate|open_interest|long_short_ratio|liquidations_1d|liquidations_1h|cvd|vwap|fear_greed
       ts_key INTEGER NOT NULL,   -- epoch seg; métricas por fecha usan medianoche UTC
       payload TEXT NOT NULL,     -- JSON del entry original
       PRIMARY KEY (coin, metric, ts_key)
@@ -345,6 +345,37 @@ function runMigrations(db) {
   // Para BBDD creadas antes de que existiera una columna: CREATE TABLE IF NOT EXISTS
   // no la añade a una tabla ya existente, así que la incorporamos con ALTER TABLE.
   // Las BBDD nuevas ya la traen del CREATE de arriba (el ensureColumn es no-op).
+  // ── Migración de DATOS (no de esquema) — renombrado de métrica, 2026-08-03 ──────
+  // `liquidations` → `liquidations_1d`. Al entrar `liquidations_1h` (serie de archivo en
+  // resolución horaria), la métrica sin sufijo quedaba ambigua justo al lado de una que sí
+  // declara su granularidad — la trampa de nombres que ya mordió cuatro veces aquí
+  // (`top_long_clusters`, `longs_usd` conteniendo monedas, dos `atr_pct`, dos `regime`).
+  //
+  // Idempotente por naturaleza: la segunda ejecución afecta a 0 filas. Va aquí y no en un
+  // script porque debe correr sola al arrancar en la Pi.
+  //
+  // Seguro para los datos: nadie LEE esta métrica de vuelta (`loadSeries` sólo se invoca para
+  // CVD/VWAP), o sea que es archivo write-only. La clave EN MEMORIA sigue llamándose
+  // `liquidations` a propósito — ésa sí viaja al payload del LLM.
+  {
+    const r = db.prepare(
+      `UPDATE history_series SET metric = 'liquidations_1d' WHERE metric = 'liquidations'`,
+    ).run();
+    if (r.changes > 0) {
+      logger.info({ rows: r.changes }, 'Migración: history_series liquidations → liquidations_1d');
+    }
+  }
+
+  // Versionado por fila (A3, 2026-08-03). Aditivas: las filas anteriores quedan NULL, que es
+  // la marca correcta de "producida antes de que se versionara" — no se rellenan a mano.
+  // Motivo de la muestra: separa la planificada de la dirigida por evento. Las filas
+  // anteriores quedan NULL — para ellas sigue valiendo la heurística horaria del backlog.
+  ensureColumn(db, 'analyses', 'sample_reason', 'TEXT');
+
+  ensureColumn(db, 'analyses', 'gate_version', 'TEXT');
+  ensureColumn(db, 'analyses', 'rubric_version', 'TEXT');
+  ensureColumn(db, 'analyses', 'feature_version', 'TEXT');
+
   ensureColumn(db, 'analyses', 'validation_warnings', 'TEXT');
   // missing_confirmations: array JSON de confirmaciones ausentes (por qué no se opera).
   ensureColumn(db, 'analyses', 'missing_confirmations', 'TEXT');

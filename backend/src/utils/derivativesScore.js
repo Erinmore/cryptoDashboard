@@ -1,3 +1,4 @@
+import { TF_DURATION_HOURS } from '../config/constants.js';
 /**
  * derivativesScore.js — Derivatives Score determinista (funciones puras, sin I/O).
  *
@@ -92,7 +93,6 @@ export const DERIVATIVES_RUBRIC = {
 };
 
 /** Duración de una vela por TF, en horas. */
-const TF_HOURS = { '1h': 1, '4h': 4, '1D': 24, '1W': 168 };
 
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
@@ -104,7 +104,7 @@ const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
  * Con TF de 1D o 1W la ventana de 24h no llega a una vela → factor 1 (no se sub-escala).
  */
 export function windowScale(primaryTf) {
-  const h = TF_HOURS[primaryTf];
+  const h = TF_DURATION_HOURS[primaryTf];
   if (!Number.isFinite(h) || h <= 0) return Math.sqrt(6); // fallback: 4h, el TF de producción
   return Math.sqrt(Math.max(1, 24 / h));
 }
@@ -127,7 +127,7 @@ export function windowScale(primaryTf) {
  */
 export function priceChange24hFromCandles(candles, primaryTf) {
   if (!Array.isArray(candles)) return null;
-  const h = TF_HOURS[primaryTf];
+  const h = TF_DURATION_HOURS[primaryTf];
   const back = Math.max(1, Math.round(24 / (Number.isFinite(h) && h > 0 ? h : 4)));
   if (candles.length <= back) return null;
   const now = candles.at(-1)?.close;

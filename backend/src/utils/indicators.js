@@ -6,7 +6,6 @@ import {
   WT_N1, WT_N2, WT_OVERBOUGHT, WT_OVERSOLD,
   ADX_PERIOD, ADX_TRENDING_THRESHOLD, ADX_RANGING_THRESHOLD,
   SUPERTREND_ATR_PERIOD, SUPERTREND_MULTIPLIER, SUPERTREND_ADAPTIVE_EMA,
-  REGIME_ATR_MULTIPLIER,
 } from '../config/constants.js';
 import { bucketByPercentile, rollingSums, quantile } from './percentiles.js';
 
