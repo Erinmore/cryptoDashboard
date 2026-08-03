@@ -405,15 +405,19 @@ oportunista, acotado a 1/día por moneda.
 ### ▶ Umbrales de INDICADOR que siguen decidiendo sin medición (2026-08-03)
 
 Salió al retirar las 14 constantes huérfanas: se rastreó cada constante superviviente hasta su
-sitio de uso, y **cinco siguen decidiendo cosas sin que nadie haya medido su distribución** —
-la regla que este proyecto no negocia. No entran en ningún cubo todavía porque **cuatro de las
-cinco alimentan el Execution Score**, y medir sus cortes antes de saber si Execution aporta algo
-(M2) sería el orden equivocado.
+sitio de uso, y cinco no tienen su distribución medida — la regla que este proyecto no negocia.
+
+⚠️ **Pero no son equivalentes, y el criterio para separarlas NO es el orden sino QUÉ DECIDEN.**
+Verificado el 2026-08-03 contra el código: las puertas direccionales exigen **sólo `derivatives`
+y `volume`** (`analysisValidator`), o sea que **Execution no entra en ninguna puerta**. Cuatro
+de los cinco umbrales alimentan Execution y por tanto **no gobiernan ninguna decisión hoy**:
+son contexto para el LLM y telemetría. Medir el corte de un voto en un score que no gatea nada
+no cambiaría nada. El quinto —**U2**— sí decide, y por eso se midió de inmediato.
 
 | # | Constante | Qué decide | Por qué preocupa |
 |---|---|---|---|
 | **U1** | `WT_OVERBOUGHT = 60` / `WT_OVERSOLD = -60` | El `signal` de WaveTrend, que es **uno de los cinco votos de Execution** | Dos números escritos a mano (defaults de LazyBear) gobiernan **un quinto de un score**. El más expuesto |
-| **U2** | `SR_TOLERANCE_PCT = 0.005` | Tolerancia de agrupamiento de S/R: `\|ancla − precio\| / ancla <= 0,005` | **Porcentaje ABSOLUTO, sin normalizar por volatilidad** — el patrón T5 literal. 0,5 % en BTC y en SOL son distancias muy distintas en ATR, y de esos clusters salen los niveles del veto y de `price_near_key_level`. **El más sospechoso**, y el único que NO depende de Execution → se mediría antes |
+| ~~**U2**~~ ✅ **MEDIDO** | `SR_TOLERANCE_PCT = 0.005` | Tolerancia de agrupamiento de S/R: `\|ancla − precio\| / ancla <= 0,005` | **Porcentaje ABSOLUTO, sin normalizar por volatilidad** — el patrón T5 literal. 0,5 % en BTC y en SOL son distancias muy distintas en ATR, y de esos clusters salen los niveles del veto y de `price_near_key_level`. **El más sospechoso**, y el único que NO depende de Execution → se mediría antes |
 | **U3** | `RSI_OVERBOUGHT = 70` / `RSI_OVERSOLD = 30` | La etiqueta `overbought`/`oversold` que viaja al LLM | La rúbrica de Execution vota con **55/45**, no con 70/30: **dos vocabularios de "RSI extremo"** conviviendo. No es doble conteo (uno etiqueta, otro vota) pero es la ambigüedad que ya costó cara con `adx.regime` y los dos `atr_pct` |
 | **U4** | `VOLUME_PROFILE_VALID_THRESHOLD_PCT` 5/8/12/20 | Validez del POC por TF | El comentario dice "calibrado por TF" pero **no cita medición**, y vuelven a ser porcentajes absolutos |
 | **U5** | `SUPERTREND_MULTIPLIER = 3.0` | Base del multiplicador adaptativo | SuperTrend es otro de los cinco votos de Execution |
@@ -430,8 +434,49 @@ números, así que desviarse tiene un coste real.
 al aire) y ahora la decisión la toma `bucketByPercentile` por terciles, con el 25 degradado a
 *fallback*.
 
-⚠️ **Orden si algún día se abren: M2 primero** (¿aporta Execution?), y sólo entonces U1/U3/U5.
-**U2 es independiente** y se mediría antes que todos.
+**U1 · U3 · U4 · U5 — CONGELADOS, y el motivo es que NO DECIDEN NADA.** No es "esperan turno":
+alimentan el Execution Score, que no entra en ninguna puerta. Se reevalúan **sólo si Execution
+pasa a gatear algo**, y entonces el orden sería M2 primero (¿aporta Execution?) y luego sus
+cortes. Mientras tanto, medirlos sería trabajo sin consecuencia.
+
+### ▶ U2 · MEDIDO (2026-08-03) — el % absoluto NO es inocuo
+
+`scripts/auditSrTolerance.mjs` · 180 d × 3 monedas × 3 TFs, con la función REAL
+(`calculateSupportResistance` ya acepta la tolerancia como 4º argumento, así que el
+contrafactual no reimplementa nada).
+
+**Las tres predicciones se firmaron antes de ejecutar. Las tres se cumplen:**
+
+| | Predicción | Medido |
+|---|---|---|
+| **P1** | La tolerancia en unidades de ATR difiere entre monedas | **×1,55-1,80** (0,25-0,39 ATR en 4h) |
+| **P2** | Menos niveles y más fuertes donde más agrupa | ✔ |
+| **P3** | La fracción que pasa `touches >= 3` —**el filtro del VETO**— difiere entre monedas | **11,6-12,3 pt** de dispersión en 1h y 4h |
+
+**Y el contrafactual cierra el argumento:** con tolerancia normalizada (`k × ATR%`) la
+dispersión entre monedas cae a **1,4-2,5 pt**, o sea ~5× menos. Las diferencias que hoy hay
+entre monedas **no vienen del mercado: las mete el umbral**.
+
+> ⚠️ **EL HALLAZGO MAYOR NO ES ENTRE MONEDAS, ES ENTRE TIMEFRAMES.** Con la tolerancia actual,
+> la fracción de niveles que pasan `touches >= 3` va **1h 42,9-55,2 % · 4h 18,0-29,5 % · 1D
+> 2,9-5,5 %**. En 1D la tolerancia vale 0,08-0,15 ATR: los pivotes casi no se agrupan y casi
+> nada llega a "nivel fuerte". Con `k = 0,5` los tres TFs convergen a ~33-41 %.
+>
+> **Importa porque el TF primario es un PARÁMETRO DE PETICIÓN** (documentado en CLAUDE.md): el
+> cron fija 4h, pero un análisis lanzado con el gráfico en 1h tendría **el doble** de niveles
+> "fuertes" y por tanto una pata S/R del veto mucho más fácil de disparar. Es el mismo tipo de
+> distorsión específica de 1h que ya está en la lista como **B2**.
+
+**Control de cordura:** en 4h sale 18,0-29,5 % (media ~24 %), que replica el **22,1 %** que
+midió T4 tras reescribir la función. La medición reproduce el número conocido.
+
+**Consecuencia — entra en el cubo 3 (punto cero) con su medición hecha, no se toca ahora:**
+normalizar la tolerancia cambia cuántos niveles son "fuertes" y por tanto **la frecuencia del
+veto**, que está medida (8,2 % / 6,6 % según ventana). Ancla propuesta para elegir `k`: **el
+valor que deja el comportamiento de 4h SIN CAMBIOS** (~24 % ⇒ `k ≈ 0,35`, entre el 15-17 % de
+k=0,25 y el 38-41 % de k=0,5). Así el cambio es un no-op para la muestra ya recogida y sólo
+corrige la incoherencia entre TFs y monedas — en vez de mover la puerta y la definición a la vez,
+que es lo que la regla de atribución prohíbe.
 
 ---
 
@@ -447,6 +492,7 @@ al aire) y ahora la decisión la toma `bucketByPercentile` por terciles, con el 
 | **B4** | **Banda muerta en la pata ESTRUCTURAL de `computeTrend`** (`neutral` sale 4,4 % y significa "ADX y SuperTrend se contradicen") | — (medido) |
 | **B5** | **Refactor `analysisController`** (1.306 líneas) → pipeline por etapas + registro de features con dueño único | — |
 | **F1** | **Ventana rodante de 24 h por TIEMPO, no por posición** (huecos = 0) | **M1 + M5** |
+| **F2** | **`SR_TOLERANCE_PCT` normalizado por ATR** (`k ≈ 0,35`, anclado a dejar 4h sin cambios) | — ✅ **medido** (§4 ▶ U2). Cambia la frecuencia del veto, así que va en el lote, no suelto |
 
 ### 5.2 · Condicionales (entran si su medición lo confirma)
 
