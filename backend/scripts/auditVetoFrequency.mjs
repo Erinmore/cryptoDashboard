@@ -27,6 +27,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { calculateCVD, calculateSupportResistance, calculateATR, detectMarketRegime } from '../src/utils/indicators.js';
 import { computeVetos, computeGating } from '../src/utils/gating.js';
+import { computeFirstPassage } from '../src/utils/pathMetrics.js';
+import { classifyPathOutcome } from '../src/utils/stats.js';
+import { disjointRate, verdictCI } from './lib/disjointAnchors.mjs';
 import { SR_LOOKBACK, SR_MIN_TOUCHES, SR_TOLERANCE_PCT } from '../src/config/constants.js';
 
 const COIN = process.env.COIN ?? 'SOL';
@@ -79,6 +82,9 @@ async function vetoFrequency() {
     n: 0, veto: 0, vetoLong: 0, vetoShort: 0,
     cvdLeg: 0, oiLeg: 0, levelLeg: 0, dataInsufficient: 0,
   };
+  // Se guardan los anclajes para que §3 mida el FUTURO de cada uno sin repetir el bucle: dos
+  // reconstrucciones del mismo estado en el mismo fichero acabarían divergiendo.
+  const anchors = [];
   // Rachas: un veto que dura 30 velas seguidas es UN episodio, no 30 señales.
   const episodes = []; let run = 0;
 
@@ -120,6 +126,14 @@ async function vetoFrequency() {
     if (c.long?.cvd_1d_bearish || c.short?.cvd_1d_bullish) stats.cvdLeg++;
     if (c.long?.oi_not_expanding) stats.oiLeg++;
     if (c.long?.near_resistance_3plus_touches || c.short?.near_support_3plus_touches) stats.levelLeg++;
+
+    anchors.push({
+      t: tNow,
+      price,
+      atrPct: atr && price ? (atr / price) * 100 : null,
+      vetoLong: !!v.veto_long,
+      vetoShort: !!v.veto_short,
+    });
   }
   if (run > 0) episodes.push(run);
 
@@ -146,6 +160,124 @@ async function vetoFrequency() {
     : p > 25 ? '⚠️  frecuente; vigilar si domina la muestra'
     : p < 2 ? '⚠️  casi inalcanzable — el problema anterior sin resolver'
     : '✅ razonable: excepción, no norma'}`);
+
+  return anchors;
+}
+
+// ── 4 · ¿Precede el veto a lo que prohíbe? (C3) ──────────────────────────────
+
+/**
+ * LA PREGUNTA. El veto es la única pieza de la ruta de decisión que PROHÍBE una dirección
+ * entera, y nunca se comprobó que prohíba la dirección equivocada. C3 lo sospecha con un
+ * argumento geométrico: *"precio pegado a un soporte probado"* —la pata de S/R del
+ * `veto_short`— es también la geometría exacta de una ROTURA. Si eso es cierto, el veto
+ * estaría cerrando la puerta justo cuando el corto funciona.
+ *
+ * CÓMO SE MIDE. Para cada anclaje se mira el FUTURO de 24h con las funciones REALES de
+ * producción (`computeFirstPassage` + `classifyPathOutcome`), no con una reimplementación:
+ * un corto "gana" si el precio recorre `targetK`×ATR a la baja antes que `adverseK`×ATR al
+ * alza, que es la misma definición con la que se puntúa el sistema en vivo. Los parámetros
+ * salen de `opportunityParamsFor(24)` — no se inventa ningún umbral aquí.
+ *
+ * CONTRA QUÉ SE COMPARA. Contra el COMPLEMENTO (los anclajes sin veto), nunca contra la base
+ * global: la base contiene al subconjunto y sus intervalos comparten observaciones.
+ *
+ * ⚠️ `opts.now = null` DESACTIVA la censura por horizonte de `classifyPathOutcome`. Aquí es
+ * correcto y obligatorio: se replica historia YA CERRADA con filas sin `timestamp`, y la
+ * cobertura la garantiza el propio recorte de la ventana de klines de 1h.
+ *
+ * ⚠️ ATR: se usa el de DECISIÓN (180 velas de 4h), el mismo con el que el veto normaliza sus
+ * umbrales en este bucle. No es el `atr_pct_at_analysis` de 19 velas del job de outcome —son
+ * números distintos y mezclarlos es el error que B1 quiere hacer imposible.
+ */
+async function vetoPredictivity(anchors) {
+  console.log(`\n${'═'.repeat(76)}\n4 · ¿PRECEDE EL VETO A LO QUE PROHÍBE? (C3) — ${COIN} ${PRIMARY_TF}, horizonte 24h\n`);
+  if (!anchors?.length) { console.log('  Sin anclajes — §1 no pudo reconstruir el veto.'); return; }
+
+  const k1h = await klines1hDeep();
+  if (k1h.length < 500) { console.log('  Sin suficientes velas de 1h para medir el recorrido.'); return; }
+  const lastT = k1h.at(-1).t;
+
+  const HORIZON_H = 24;
+  const HORIZON_SEC = HORIZON_H * 3600;
+  const STRIDE = 6;                       // 24h / 4h = fases distintas de la rejilla
+
+  const rows = [];
+  for (const a of anchors) {
+    if (!Number.isFinite(a.atrPct) || a.atrPct <= 0) continue;
+    // Sin ventana completa no se clasifica: un 'flat' por falta de datos se leería como
+    // "no pasó nada" y sesgaría a la baja las dos tasas por igual, pero sin decirlo.
+    if (a.t + HORIZON_SEC > lastT) continue;
+    const fp = computeFirstPassage(
+      k1h.map((c) => ({ ...c, t: c.t * 1000 })), a.price, a.atrPct, a.t * 1000, HORIZON_SEC * 1000,
+    );
+    if (!fp) continue;
+    const row = { path_first_passage: JSON.stringify(fp), timestamp: null };
+    const shortOut = classifyPathOutcome('Vender', row, { horizonH: HORIZON_H, now: null });
+    const longOut = classifyPathOutcome('Comprar', row, { horizonH: HORIZON_H, now: null });
+    rows.push({ ...a, shortOut, longOut });
+  }
+  if (!rows.length) { console.log('  Ningún anclaje evaluable.'); return; }
+
+  const line = (label, d) => console.log(`     ${label.padEnd(22)}`
+    + (d ? `${d.point.toFixed(1).padStart(5)} % [${d.low.toFixed(1)}-${d.high.toFixed(1)}] n_ef=${String(d.n_eff).padStart(3)}`
+      + (d.spread ? ` · arranques ${d.spread[0].toFixed(0)}-${d.spread[1].toFixed(0)}` : '')
+      : 'n insuficiente'));
+
+  for (const [name, flag, outKey, dirName] of [
+    ['VETO SHORT (prohíbe VENDER)', 'vetoShort', 'shortOut', 'un CORTO'],
+    ['VETO LONG (prohíbe COMPRAR)', 'vetoLong', 'longOut', 'un LARGO'],
+  ]) {
+    // Solo desenlaces resueltos: es el mismo `directional_n` del win-rate de producción.
+    const resolved = rows.filter((r) => r[outKey] === 'win' || r[outKey] === 'loss');
+    const withVeto = resolved.filter((r) => r[flag]);
+    const without = resolved.filter((r) => !r[flag]);
+    const hit = (r) => r[outKey] === 'win';
+
+    console.log(`  ${name} — ¿habría ganado ${dirName} en las 24h siguientes?`);
+    console.log(`     población resuelta: ${resolved.length} anclajes  (con veto ${withVeto.length} · sin veto ${without.length})`);
+    if (withVeto.length < 2) { console.log('     el veto no dispara lo suficiente para medirlo.\n'); continue; }
+
+    const a = disjointRate(withVeto, hit, { horizonSec: HORIZON_SEC, stride: STRIDE });
+    const b = disjointRate(without, hit, { horizonSec: HORIZON_SEC, stride: STRIDE });
+    line('con veto activo', a);
+    line('complemento', b);
+    const v = verdictCI(a, b);
+    const rawA = withVeto.filter(hit).length / withVeto.length * 100;
+    const rawB = without.filter(hit).length / without.length * 100;
+    console.log(`     Δ puntual ${(rawA - rawB) >= 0 ? '+' : ''}${(rawA - rawB).toFixed(1)} pt `
+      + `(solapados: ${rawA.toFixed(1)} % vs ${rawB.toFixed(1)} %)`);
+    console.log(`     veredicto  ${
+      v.separated === null ? 'n insuficiente'
+      : !v.separated ? '— solapa: NO DEMOSTRADO (ni a favor ni en contra)'
+      : v.side === 'above' ? '⚠️  SEPARA ARRIBA — el veto prohíbe la dirección que gana'
+      : '✅ SEPARA ABAJO — el veto protege: prohíbe la dirección que pierde'}\n`);
+  }
+
+  console.log('  Lectura: "solapa" NO es "no hay efecto" — el no-solape de dos IC es más estricto');
+  console.log('  que un contraste de proporciones. Y el Δ puntual va sobre anclajes SOLAPADOS,');
+  console.log('  así que es el mejor estimador disponible, no una medida con incertidumbre honesta.');
+}
+
+/** 90 días de velas de 1h (2.160) — Binance sirve 1.000 por petición, así que se pagina. */
+async function klines1hDeep(days = 90) {
+  const need = Math.ceil(days * 24);
+  const out = [];
+  let endTime = Date.now();
+  while (out.length < need) {
+    const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=${COIN}USDT&interval=1h&limit=1000&endTime=${endTime}`);
+    if (!r.ok) break;
+    const batch = (await r.json()).map((x) => ({
+      t: Math.floor(x[0] / 1000), open: +x[1], high: +x[2], low: +x[3], close: +x[4], volume: +x[5],
+    }));
+    if (!batch.length) break;
+    out.unshift(...batch);
+    endTime = batch[0].t * 1000 - 1;
+    if (batch.length < 1000) break;
+  }
+  // Dedupe defensivo por si dos páginas se tocan en el borde.
+  const seen = new Set();
+  return out.filter((c) => (seen.has(c.t) ? false : (seen.add(c.t), true))).sort((a, b) => a.t - b.t);
 }
 
 // ── 2 · Grupo 2: umbrales de derivados ───────────────────────────────────────
@@ -298,7 +430,8 @@ function trendOf(w) {
   return d > 1 ? 'bullish' : d < -1 ? 'bearish' : 'neutral';
 }
 
-await vetoFrequency();
+const anchors = await vetoFrequency();
 await derivativeThresholds();
 await decayGate();
+await vetoPredictivity(anchors);
 console.log('');

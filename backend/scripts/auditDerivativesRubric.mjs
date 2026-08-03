@@ -45,7 +45,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { calculateATRSeries } from '../src/utils/indicators.js';
-import { wilsonInterval } from '../src/utils/stats.js';
+import { disjointRate as disjointRateShared, verdictCI as verdictCIShared } from './lib/disjointAnchors.mjs';
 
 const COINS = (process.env.COINS ?? 'SOL,BTC,ETH').split(',').map((s) => s.trim());
 const DAYS = 90;
@@ -339,66 +339,17 @@ async function auditCoin(coin) {
   const STRIDE = LOOKBACK_4H;
 
   /**
-   * Cadena de anclajes con ventanas futuras DISJUNTAS, elegida por TIEMPO.
-   *
-   * ⚠️ CORREGIDO EL 2026-08-03 (A8). La versión anterior submuestreaba "1 de cada 6" por
-   * POSICIÓN DENTRO DEL SUBCONJUNTO ya filtrado (`i % STRIDE === off`). Sobre una población
-   * densa eso coincide con separar 24h — pero sobre un subconjunto DISPERSO (una celda del
-   * cuadro OI×precio, una cascada) sus elementos ya distan mucho más de 24h entre sí, así
-   * que tirar 5 de cada 6 no compraba independencia: la regalaba. Medido: la regla de §5ter
-   * pasaba de n=42 a **n_ef=7**, con un IC [8,2-64,1] que no puede refutar ni sostener nada.
-   * Ahora se acepta un ancla si su ventana futura no toca la de la última aceptada, que es
-   * la condición que de verdad hace falta. Sobre poblaciones densas reproduce la conducta
-   * anterior (anclas consecutivas → 1 de cada 6); sobre dispersas conserva casi todo.
-   *
-   * No es una corrección anticonservadora: la condición `>= FWD_HORIZON_SEC` es exactamente
-   * la que garantiza que dos ventanas de 24h no comparten ningún tramo de futuro.
+   * Anclajes independientes + Wilson. La implementación vive en `scripts/lib/disjointAnchors.mjs`
+   * (dueño único, extraído el 2026-08-03 al necesitarla también `auditVetoFrequency`): dos
+   * definiciones distintas de "qué es una muestra independiente" es justo el modo de fallo
+   * que este proyecto acaba de pagar con las claves de los clusters.
    */
-  const disjointChain = (sorted, startIdx) => {
-    const out = [];
-    let lastT = -Infinity;
-    for (let i = startIdx; i < sorted.length; i++) {
-      if (sorted[i].t - lastT >= FWD_HORIZON_SEC) { out.push(sorted[i]); lastT = sorted[i].t; }
-    }
-    // Guarda: si esto se rompiera, TODOS los IC del fichero seguirían imprimiéndose con
-    // buen aspecto y serían demasiado estrechos, sin ninguna señal externa. Coste ~0.
-    for (let i = 1; i < out.length; i++) {
-      if (out[i].t - out[i - 1].t < FWD_HORIZON_SEC) {
-        console.log('   ⚠️ BUG: la cadena "disjunta" contiene ventanas solapadas — IC no válidos.');
-        break;
-      }
-    }
-    return out;
-  };
+  const disjointRate = (sel, dir = -1) => disjointRateShared(
+    sel,
+    (r) => (dir < 0 ? r.fwdAtr < -FWD_BAND : r.fwdAtr > FWD_BAND),
+    { horizonSec: FWD_HORIZON_SEC, stride: STRIDE },
+  );
 
-  /**
-   * Tasa de continuación (bajista por defecto) con IC de Wilson sobre anclajes INDEPENDIENTES.
-   * Como el punto de partida de la cadena es arbitrario y cambia el resultado, se recorren
-   * `STRIDE` arranques y se reporta el rango — si el intervalo y el rango de arranques no
-   * coinciden, el número no es estable y hay que decirlo.
-   */
-  const disjointRate = (sel, dir = -1) => {
-    const hit = (r) => (dir < 0 ? r.fwdAtr < -FWD_BAND : r.fwdAtr > FWD_BAND);
-    const sorted = [...sel].sort((a, b) => a.t - b.t);
-    const rates = [];
-    let bestW = null;
-    for (let off = 0; off < STRIDE; off++) {
-      const sub = disjointChain(sorted, off);
-      if (sub.length < 2) continue;
-      // `wilsonInterval` ya devuelve PORCENTAJES (0-100), no proporciones.
-      const w = wilsonInterval(sub.filter(hit).length, sub.length);
-      rates.push(w.point);
-      if (!bestW || sub.length > bestW.n) bestW = { ...w, n: sub.length };
-    }
-    if (!bestW) return null;
-    return {
-      n_eff: bestW.n,
-      point: bestW.point,
-      low: bestW.low,
-      high: bestW.high,
-      spread: rates.length ? [Math.min(...rates), Math.max(...rates)] : null,
-    };
-  };
   const fmtCI = (d) => d
     ? `${d.point.toFixed(1).padStart(5)} % [${d.low.toFixed(1)}-${d.high.toFixed(1)}] n_ef=${String(d.n_eff).padStart(3)}`
       + (d.spread ? ` · arranques ${d.spread[0].toFixed(0)}-${d.spread[1].toFixed(0)}` : '')
@@ -425,10 +376,13 @@ async function auditCoin(coin) {
    *
    * No hay umbral de n: un n_ef bajo ensancha el Wilson hasta solapar por sí solo, así que
    * el propio intervalo hace de guarda y no hace falta inventar una constante.
+   *
+   * La REGLA vive en `scripts/lib/disjointAnchors.mjs` (dueño único); aquí solo se formatea.
    */
   const verdictCI = (a, b) => {
-    if (!a || !b) return 'n insuf.';
-    return (a.high < b.low || b.high < a.low) ? 'SEPARADO' : 'solapa  ';
+    const v = verdictCIShared(a, b);
+    if (v.separated === null) return 'n insuf.';
+    return v.separated ? 'SEPARADO' : 'solapa  ';
   };
   /**
    * Diferencia de los estimadores PUNTUALES, al lado del veredicto.
