@@ -16,6 +16,7 @@ import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
 import { computeGating } from '../utils/gating.js';
 import { computeDerivativesScore, priceChange24hFromCandles } from '../utils/derivativesScore.js';
+import { clusterDistancePct } from '../utils/liquidationClusters.js';
 import { computeExpectedScores, backendScoreTotal } from '../utils/expectedScores.js';
 import {
   normalizedTargetDistance, targetReachabilityFor, TARGET_UNREACHABLE_PCT,
@@ -1167,13 +1168,32 @@ export function buildFvgRows(analysisId, technical, currentPrice) {
 
 /**
  * Builds the liquidation cluster rows from context.derivatives.liquidation_clusters.
+ *
+ * ⚠️ BUG CORREGIDO EL 2026-08-02 — esta función llevaba escribiendo CERO filas desde
+ * siempre, y no por falta de dato. Leía `top_long_clusters`/`top_short_clusters` y el
+ * servicio emite `long_clusters`/`short_clusters` ([liquidationClusters.js]), así que el
+ * `?? []` se tragaba el bloque entero **en silencio**: `analysis_liquidation_snapshot`
+ * salió vacía en los 10 análisis del periodo. El LLM sí veía los clusters (la sección F5
+ * del prompt consume `magnetic_long/short_zone_active`); lo que se perdía era poder
+ * comprobar la tesis del imán A POSTERIORI — exactamente la deuda que `analysis_fvg_snapshot`
+ * vino a cerrar para los FVG. Un `?? []` sobre una clave inexistente no distingue "no hay
+ * clusters" de "me equivoqué de nombre"; el test de forma de `liquidationClusters.test.js`
+ * ancla ahora que lo que el servicio EMITE y lo que esto LEE es la misma clave.
+ *
+ * `distance_pct` no venía en los objetos de cluster (habría quedado NULL aunque el nombre
+ * hubiera casado): se deriva aquí contra el precio del análisis, igual que `buildFvgRows`,
+ * y con el dueño único de la fórmula (`clusterDistancePct`).
+ *
+ * @param {string} analysisId
+ * @param {object|null} liquidationClusters - context.derivatives.liquidation_clusters
+ * @param {number|null} currentPrice - context.price_current (misma referencia que los FVG)
  */
-function buildClusterRows(analysisId, liquidationClusters) {
+export function buildClusterRows(analysisId, liquidationClusters, currentPrice) {
   const rows = [];
   if (!liquidationClusters) return rows;
 
   for (const type of ['long', 'short']) {
-    const clusters = liquidationClusters[`top_${type}_clusters`] ?? [];
+    const clusters = liquidationClusters[`${type}_clusters`] ?? [];
     clusters.slice(0, 5).forEach((c, rank) => {
       rows.push({
         analysis_id:  analysisId,
@@ -1181,7 +1201,7 @@ function buildClusterRows(analysisId, liquidationClusters) {
         cluster_rank: rank,
         price:        c.price ?? null,
         total_usd:    c.total_usd ?? null,
-        distance_pct: c.distance_pct ?? null,
+        distance_pct: clusterDistancePct(currentPrice, c.price ?? null),
       });
     });
   }
@@ -1246,7 +1266,7 @@ export async function analyze(req, res, next) {
     header.validation_warnings = validation.warnings.length > 0 ? JSON.stringify(validation.warnings) : null;
 
     const tfSnapshots = buildTfSnapshots(id, context.technical);
-    const clusters    = buildClusterRows(id, context.derivatives?.liquidation_clusters);
+    const clusters    = buildClusterRows(id, context.derivatives?.liquidation_clusters, context.price_current);
     const fvgs        = buildFvgRows(id, context.technical, context.price_current);
 
     saveAnalysis({ header, tfSnapshots, clusters, fvgs });

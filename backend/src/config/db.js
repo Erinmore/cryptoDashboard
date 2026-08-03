@@ -462,6 +462,16 @@ function runMigrations(db) {
   // mismo lado. Se guarda el PRECIO, no el R — el R se deriva de él y de la geometría ya
   // persistida (hechos, no interpretaciones).
   ensureColumn(db, 'analysis_outcome', 'cond_exit_price', 'REAL');
+
+  // Procedencia de la fila de clusters. 0 = escrita por el análisis en vivo; 1 = reconstruida
+  // a posteriori por `scripts/backfillLiquidationClusters.mjs`. Existe porque la
+  // reconstrucción NO es bit-exacta: la última hora de la ventana estaba a medio formar
+  // cuando corrió el análisis y está cerrada cuando corre el backfill, así que el rango de
+  // precio (y con él el centro de cada bin) puede moverse un poco. Es la misma clase de
+  // caveat que ya obligó a persistir `band_pct` en vez de recalcularlo. Sin esta columna,
+  // una fila reconstruida sería indistinguible de una original y nadie podría acotar el
+  // error al leerla.
+  ensureColumn(db, 'analysis_liquidation_snapshot', 'reconstructed', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 export function closeDb() {
