@@ -34,7 +34,7 @@ START=$(date +%s)
 BODY="$(curl -s --max-time 240 -w '\n%{http_code}' \
   -X POST "$API/api/analyze" \
   -H 'Content-Type: application/json' \
-  -d "{\"coin\":\"$COIN\",\"primary_tf\":\"$TF\",\"model\":\"$MODEL\"}" 2>&1)"
+  -d "{\"coin\":\"$COIN\",\"primary_tf\":\"$TF\",\"model\":\"$MODEL\",\"sample_reason\":\"$REASON\"}" 2>&1)"
 CURL_RC=$?
 
 HTTP="$(printf '%s' "$BODY" | tail -n1)"

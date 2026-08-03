@@ -21,7 +21,13 @@ TF="${TF:-4h}"
 API="${API:-http://localhost:8080}"
 LOG_DIR="${LOG_DIR:-$HOME/cryptex/.collect}"
 LOG="${LOG:-$LOG_DIR/collect.log}"
-MARKER="${MARKER:-$LOG_DIR/last-opportunistic.date}"
+# ⚠️ MARCADOR POR MONEDA (2026-08-03). Era un fichero ÚNICO compartido, y con la recogida de
+# tres monedas eso convertía el freno 1 ("un oportunista al día") en "un oportunista al día EN
+# TOTAL": la primera moneda en disparar bloqueaba a las otras dos hasta la medianoche. Y como
+# el cron va 33/35/37, SOL habría ganado la carrera SIEMPRE — un sesgo sistemático, no
+# aleatorio, justo en la comparación entre monedas que motiva recogerlas. El freno es por
+# moneda porque cada moneda es su propia muestra.
+MARKER="${MARKER:-$LOG_DIR/last-opportunistic-$COIN.date}"
 DB="${DB:-$HOME/cryptex/backend/data/cryptex.db}"
 BACKEND_DIR="${BACKEND_DIR:-$HOME/cryptex/backend}"
 NODE_BIN="${NODE_BIN:-$HOME/.nvm/versions/node/v18.20.8/bin/node}"
@@ -83,7 +89,13 @@ PAYLOAD="$(curl -s --max-time 60 "$API/api/analyze/payload?coin=$COIN&primary_tf
 #
 # Comparando con el estado del chequeo anterior, solo se dispara con condiciones NUEVAS, que
 # es lo que la intención original pedía: capturar el momento en que el camino se activa.
-STATE_FILE="${STATE_FILE:-$LOG_DIR/last-gating-state}"
+# ⚠️ ESTADO POR MONEDA (2026-08-03). Era un fichero ÚNICO, y con tres monedas cada una habría
+# comparado sus condiciones contra las de LA MONEDA ANTERIOR (SOL :33 → BTC :35 → ETH :37), no
+# contra las suyas del chequeo previo. Eso no bloquea el disparo: CORROMPE la detección de
+# transición — inventa condiciones "nuevas" que solo son diferencias entre monedas y tapa las
+# reales cuando coinciden. Segundo fichero de estado compartido del mismo script (el otro era
+# el marcador diario); los dos eran invisibles mientras solo se recogía una moneda.
+STATE_FILE="${STATE_FILE:-$LOG_DIR/last-gating-state-$COIN}"
 PREV="$(cat "$STATE_FILE" 2>/dev/null || true)"
 
 # shellcheck disable=SC2016  # las plantillas son de JS, no del shell

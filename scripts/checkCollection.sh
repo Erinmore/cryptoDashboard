@@ -29,6 +29,8 @@ COLLECT_DIR="${COLLECT_DIR:-$HOME/cryptex/.collect}"
 STATE_FILE="${STATE_FILE:-$COLLECT_DIR/health.json}"
 NODE_BIN="${NODE_BIN:-$HOME/.nvm/versions/node/v18.20.8/bin/node}"
 COIN="${COIN:-SOL}"
+# Monedas cuya recogida debe vigilarse. Se activaron BTC y ETH el 2026-08-03 (0-bis).
+COINS_ESPERADAS="${COINS_ESPERADAS:-SOL BTC ETH}"
 MAX_ANALYSIS_AGE_H="${MAX_ANALYSIS_AGE_H:-26}"   # 2 disparos/día → 12h; 26h tolera uno perdido
 PAUSE_FILE="${PAUSE_FILE:-$COLLECT_DIR/PAUSED}"
 QUIET=0
@@ -52,6 +54,15 @@ DBJSON="$(cd "$BACKEND_DIR" && "$NODE_BIN" -e '
     out.cvd_days = db.prepare("SELECT COUNT(*) c FROM history_series WHERE metric=? AND coin=?").get("cvd", coin).c;
     out.cvd_last = db.prepare("SELECT MAX(ts_key) t FROM history_series WHERE metric=? AND coin=?").get("cvd", coin).t ?? null;
     out.outcomes = db.prepare("SELECT COUNT(*) c FROM analysis_outcome").get().c;
+    // Estado POR MONEDA. Sin esto, activar la recogida de BTC/ETH (2026-08-03) habría dejado
+    // dos tercios de la muestra sin vigilar: un fallo en BTC se descubriría semanas después,
+    // al ir a comparar y encontrar el hueco. Se vigila lo que se recoge.
+    out.per_coin = db.prepare(
+      "SELECT coin, COUNT(*) n, MAX(timestamp) t FROM analyses GROUP BY coin"
+    ).all().map((r) => ({
+      coin: r.coin, n: r.n,
+      hours: r.t ? (Date.now() - new Date(r.t).getTime()) / 3600000 : null,
+    }));
     out.ok = true;
   } catch (e) { out.error = e.message; }
   process.stdout.write(JSON.stringify(out));
@@ -97,6 +108,32 @@ else
     PROBLEMS+=("sin análisis desde hace ${H_INT}h (esperado <= ${MAX_ANALYSIS_AGE_H}h)")
     say "  ✗ la recogida parece parada"
   fi
+fi
+
+# 1-bis · Frescura POR MONEDA (desde que se recogen las tres, 2026-08-03)
+if [ "$PAUSED" != "1" ]; then
+  PER_COIN="$(printf '%s' "$DBJSON" | "$NODE_BIN" -e '
+    let d=""; process.stdin.on("data",c=>d+=c).on("end",()=>{
+      try {
+        const pc = JSON.parse(d).per_coin ?? [];
+        process.stdout.write(pc.map((r) => `${r.coin}:${r.n}:${r.hours == null ? -1 : Math.floor(r.hours)}`).join(" "));
+      } catch { process.stdout.write(""); }
+    });' 2>/dev/null)"
+  for ESPERADA in $COINS_ESPERADAS; do
+    ENTRADA=""
+    for E in $PER_COIN; do case "$E" in "$ESPERADA":*) ENTRADA="$E";; esac; done
+    if [ -z "$ENTRADA" ]; then
+      say "  · $ESPERADA: sin análisis todavía"
+      continue
+    fi
+    N_C="${ENTRADA#*:}"; N_C="${N_C%%:*}"
+    H_C="${ENTRADA##*:}"
+    say "  · $ESPERADA: $N_C análisis · último hace ${H_C}h"
+    if [ "$H_C" -gt "$MAX_ANALYSIS_AGE_H" ] 2>/dev/null; then
+      PROBLEMS+=("$ESPERADA sin análisis desde hace ${H_C}h")
+      say "  ✗ recogida de $ESPERADA parada"
+    fi
+  done
 fi
 
 # 2 · Backup del día
