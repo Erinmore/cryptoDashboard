@@ -5,7 +5,8 @@ import {
   addFundingRateEntry,
   addOpenInterestEntry,
   addLongShortRatioEntry,
-  addLiquidationsEntry,
+  addLiquidationsDailyEntry,
+  addLiquidationsHourlyEntries,
 } from './historyService.js';
 import { COINALYZE_SYMBOLS } from '../config/constants.js';
 import env from '../config/env.js';
@@ -418,10 +419,16 @@ export async function fetchLiquidations(coin) {
         byDate.set(date, bucket);
       }
       for (const [date, { longs, shorts }] of byDate) {
-        addLiquidationsEntry(coin, date, longs, shorts);
+        addLiquidationsDailyEntry(coin, date, longs, shorts);
       }
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-      addLiquidationsEntry(coin, today, longs_coins, shorts_coins);
+      addLiquidationsDailyEntry(coin, today, longs_coins, shorts_coins);
+
+      // Serie de ARCHIVO en resolución horaria (sólo BBDD, no entra en la ventana del LLM).
+      // Los `hist` horarios ya están descargados aquí y hasta ahora se tiraban al agregarlos
+      // por día — y la mediana rodante de 24h que normaliza la cascada NO se puede
+      // reconstruir desde agregados diarios. Ver el docstring de la función.
+      addLiquidationsHourlyEntries(coin, hist);
     } catch (e) {
       logger.warn({ coin, err: e.message }, 'Failed to add Liquidations to history');
     }

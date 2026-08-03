@@ -13,7 +13,8 @@
  *   addFundingRateEntry(coin, candle)                          — {t, o, h, l, c, trend}
  *   addOpenInterestEntry(coin, candle)                         — {t, o, h, l, c}
  *   addLongShortRatioEntry(coin, entry)                        — {t, long_pct, short_pct}
- *   addLiquidationsEntry(coin, date, longs_coins, shorts_coins)
+ *   addLiquidationsDailyEntry(coin, date, longs_coins, shorts_coins)
+ *   addLiquidationsHourlyEntries(coin, candles)                — serie de ARCHIVO, sólo BBDD
  *   addCVDEntry(coin, date, value, trend, divergence, delta?)
  *   addVWAPEntry(coin, date, value, trend, divergence)
  *   getHistories(coin)                                         — retorna los históricos del coin + fear_greed global
@@ -47,13 +48,23 @@ const METRIC_NAME = {
   fundingRate:    'funding_rate',
   openInterest:   'open_interest',
   longShortRatio: 'long_short_ratio',
-  liquidations:   'liquidations',
+  // ⚠️ El sufijo de granularidad es OBLIGATORIO en las dos. `liquidations` a secas junto a
+  // `liquidations_1h` era la trampa de nombres que ya mordió cuatro veces en este proyecto
+  // (`top_long_clusters`, `longs_usd` conteniendo monedas, dos `atr_pct`, dos `regime`):
+  // media disciplina es peor que ninguna, porque la clave sin sufijo parece deliberada.
+  // Renombrado el 2026-08-03 con migración de datos idempotente en `config/db.js`.
+  liquidations1d: 'liquidations_1d',
+  liquidations1h: 'liquidations_1h',
   cvd:            'cvd',
   vwap:           'vwap',
 };
 
 const DB_RETENTION_DAYS = 400;  // > cualquier ventana en memoria
 const DAY_SEC = 86400;
+
+// Margen de reescritura de la serie horaria de liquidaciones: la última vela puede estar
+// formándose cuando se descarga, así que se vuelve a escribir en el siguiente poll.
+const HOURLY_REWRITE_MARGIN_SEC = 2 * 3600;
 
 // epoch (seg) de la medianoche UTC de una fecha YYYY-MM-DD. null si inválida.
 function dateToTsKey(date) {
@@ -200,8 +211,12 @@ export function addLongShortRatioEntry(coin, entry) {
  * cada día pasado y no se guarda. Las filas persistidas ANTES del fix llevan las claves
  * `longs_usd`/`shorts_usd` con contenido en monedas: los lectores aceptan ambas.
  */
-export function addLiquidationsEntry(coin, date, longs_coins, shorts_coins) {
+export function addLiquidationsDailyEntry(coin, date, longs_coins, shorts_coins) {
   if (!coin || date == null || longs_coins == null || shorts_coins == null) return;
+  // ⚠️ La clave EN MEMORIA sigue llamándose `liquidations` a propósito: viaja al payload del
+  // LLM (`histories.liquidations`, analysisController.js:348) y renombrarla sería cambiar el
+  // dataset del modelo, o sea ruta de decisión. El sufijo de granularidad sólo aplica al
+  // nombre de la MÉTRICA PERSISTIDA, que es donde la ambigüedad hace daño a futuro.
   const history = getCoinHistory(coin).liquidations;
 
   const entry = {
@@ -209,8 +224,90 @@ export function addLiquidationsEntry(coin, date, longs_coins, shorts_coins) {
     longs_coins: parseFloat(longs_coins.toFixed(4)),
     shorts_coins: parseFloat(shorts_coins.toFixed(4)),
   };
-  persist(coin, METRIC_NAME.liquidations, dateToTsKey(entry.date), entry);
+  persist(coin, METRIC_NAME.liquidations1d, dateToTsKey(entry.date), entry);
   upsertByKey(history, entry, 'date', LIMITS.liquidations);
+}
+
+/**
+ * Liquidaciones HORARIAS — serie de archivo, SOLO persistencia (no entra en memoria ni en
+ * la ventana del LLM).
+ *
+ * ─── POR QUÉ EXISTE, SEPARADA DE LA DIARIA ────────────────────────────────────────────
+ *
+ * `liquidationCascade` (utils/derivativesScore.js) normaliza la magnitud de una cascada
+ * contra la MEDIANA de ~697 ventanas RODANTES de 24h sobre 30 días, y se abstiene por el
+ * guard `cascade_min_points: 620`. Esa mediana **no se puede reconstruir desde agregados
+ * diarios**: con 30 puntos/día nunca se alcanzan los 620, así que el término de cascada
+ * quedaría permanentemente mudo en cualquier auditoría a posteriori.
+ *
+ * Y la cascada importa: es una de las dos vías por las que el score se ha movido en
+ * producción, y la ÚNICA que sobrevive en una caída (la fila bajista del cuadro OI×precio
+ * vale 0 en sus tres celdas — hallazgo D6).
+ *
+ * LO QUE ESTO COMPRA. Coinalyze sirve 90 días y ni uno más; esa ventana RUEDA y olvida.
+ * La rúbrica se calibró el 2026-07-29 sobre los 90 días anteriores, así que hoy **no existe
+ * ninguna ventana fuera de muestra** con la que validarla — y con la API sola no existirá
+ * nunca. Esta serie es el único mecanismo que rompe ese muro: lo que se guarda hoy sigue
+ * aquí cuando la API ya lo haya olvidado. No sirve para nada HOY; es la condición necesaria
+ * para poder responder dentro de unos meses.
+ *
+ * POR QUÉ UNA MÉTRICA NUEVA Y NO CAMBIAR `liquidations`. Dos granularidades bajo la misma
+ * clave serían dos definiciones en la misma serie, sin marca que las distinga — exactamente
+ * lo que `backfillHistorySeries.mjs` aborta por diseño con el CVD `heuristic` vs
+ * `taker_real`. La diaria se queda intacta: la consume la ventana del LLM.
+ *
+ * POR QUÉ NO SE HIDRATA EN MEMORIA. La ventana del LLM son 7 entradas diarias; 720 horarias
+ * costarían tokens en cada análisis sin aportar una lectura que el modelo pueda usar. El
+ * consumidor de esta serie es un script de auditoría, no el prompt.
+ *
+ * ESCRITURA INCREMENTAL. La primera ejecución escribe la ventana entera; en régimen escribe
+ * 1-3 filas. Tras una caída del servicio se rellena sola hasta donde alcance la ventana que
+ * se le pase (30 días en el poller, 90 en el backfill). El margen de reescritura cubre que
+ * la última vela horaria puede estar todavía formándose cuando se descarga.
+ *
+ * ⚠️ UNIDAD: monedas base, NO USD — igual que la diaria (Coinalyze reporta así). El USD no se
+ * puede derivar aquí porque exigiría el spot de cada hora pasada, que no se guarda.
+ *
+ * @param {string} coin
+ * @param {Array<{t:number, l:number, s:number}>} candles - horarias de Coinalyze (`t` en
+ *   segundos epoch). Se ignoran las que no traigan números utilizables.
+ * @returns {number} filas escritas (0 si no había nada nuevo o la DB no está disponible).
+ */
+export function addLiquidationsHourlyEntries(coin, candles) {
+  if (!coin || !Array.isArray(candles) || !candles.length) return 0;
+  const metric = METRIC_NAME.liquidations1h;
+
+  try {
+    const db = getDb();
+    // Sólo lo nuevo. Sin esto, cada poll reescribiría las ~720 filas de la ventana entera.
+    const last = stmt('SELECT MAX(ts_key) mx FROM history_series WHERE coin = ? AND metric = ?')
+      .get(coin, metric)?.mx ?? null;
+    const from = last == null ? -Infinity : last - HOURLY_REWRITE_MARGIN_SEC;
+
+    const rows = candles.filter((c) => c
+      && Number.isFinite(c.t) && c.t > from
+      && (Number.isFinite(c.l) || Number.isFinite(c.s)));
+    if (!rows.length) return 0;
+
+    const write = db.transaction((list) => {
+      for (const c of list) {
+        persist(coin, metric, c.t, {
+          t: c.t,
+          longs_coins: parseFloat((c.l ?? 0).toFixed(4)),
+          shorts_coins: parseFloat((c.s ?? 0).toFixed(4)),
+        });
+      }
+      // Poda aquí porque `loadSeries` (el único sitio que poda) sólo se llama para CVD/VWAP,
+      // y ésta crece 24 veces más rápido que cualquier serie diaria.
+      stmt('DELETE FROM history_series WHERE coin = ? AND metric = ? AND ts_key < ?')
+        .run(coin, metric, Math.floor(Date.now() / 1000) - DB_RETENTION_DAYS * DAY_SEC);
+    });
+    write(rows);
+    return rows.length;
+  } catch (err) {
+    logger.debug({ err: err.message, coin }, 'liquidations_1h persist skipped');
+    return 0;
+  }
 }
 
 // ─── CVD ──────────────────────────────────────────────────────────────────
