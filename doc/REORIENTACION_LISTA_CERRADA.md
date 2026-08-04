@@ -632,18 +632,25 @@ AHORA — la v1 está entregada. Lo único vivo es ACUMULAR MUESTRA.
    · El cron llena trigger_price y el registro del shadow trade solo.
    · Con muestra: cerrar P3 (evaluador exige confirmación) y leer el registro.
 
-SE PUEDE ADELANTAR YA — solo lectura o preserva comportamiento (§7-bis)
-   ├─ M10  línea base de expectativa como curva   → desbloquea enseñar expectancy_r
-   ├─ B5   refactor de buildAnalyzeContext        → desbloquea la réplica histórica del LLM
-   │        ⚠️ exige diff del payload, no sólo tests verdes
-   ├─ M1+M5 · M4  mediciones previas              → el punto cero llega preparado
-   └─ L4   lecciones aprendidas (constantes medidas y RETRACTADAS)
+✅ COMPLETADO EL 2026-08-04 — el bloque «se puede adelantar ya», entero
+   ├─ M4   TRIGGER_BASE_RATE sobre el eje de 180  ≤1,1 pt → B1 NO obliga a re-medir la tabla
+   ├─ M1+M5  ventana rodante por TIEMPO            F1 casi un no-op · los cortes no se mueven
+   ├─ M10  línea base de expectativa              LA CURVA NO EXISTE → hace falta una GUARDA
+   ├─ B5   refactor de buildAnalyzeContext        4 etapas · DIFF LIMPIO en local y en la Pi
+   │        · control nulo, cobertura declarada y 815/815 tests
+   └─ L4   constantes y retractaciones            doc/CONSTANTES_Y_RETRACTACIONES.md
 
 CONGELADO — y por tres motivos DISTINTOS, no uno (§7-bis)
    ├─ exige punto cero:  B1 · B2 · B4 · F1 · F2 · cubo 0
+   │    · B1 y F1 llegan ya CON SU MEDICIÓN HECHA, y las dos dicen «cambio pequeño»
    ├─ no decide nada:    U1 · U3 · U4 · U5 · M2
    └─ falta muestra:     M11 · D1
         └─ PUNTO CERO 6 · mucho más pequeño de lo previsto, y aún sin fecha
+
+NUEVO, salido de M10 (no exige punto cero: es una condición para CALLARSE)
+   └─ guarda de expectativa: no enseñar expectancy_r con el stop a <1,5×ATR de la
+      entrada, porque el convenio de empate del evaluador la mueve hasta 0,66R.
+      Los setups reales van a ~1,7×ATR, o sea que hoy NO recorta nada.
 ```
 
 **Las ONCE mediciones, cada una con su sitio.** Esta tabla existe porque M2, M3 y M7 estuvieron
@@ -658,10 +665,10 @@ es una medición pendiente, es una que nadie va a hacer. Si se añade una M12, s
 | **M7** coste del `SHADOW_FILL_RULE` | ✅ **hecha** | Su consecuencia (P3) resultó ser **un campo de esquema que no existía**, no un cambio de evaluador ni de prompt: `trigger_price`, añadido el mismo día. El cierre de P3 espera muestra, no trabajo |
 | ~~**M3**~~ `risk_score` | ❌ **INNECESARIA** | Se decidió **RETIRAR** `risk_score` (P1) en vez de medirlo. Medir una magnitud que se va a borrar es trabajo por definición inútil. Reabrir sólo si alguna vez se decide conservarlo |
 | **M2** rúbrica de Execution | ⏸️ **CONGELADA** | Su motivo era decidir si Execution entraba en el `bias`; con la fase 0 en NO-GO ese camino está cerrado. Sigue viva como deuda: **4 de los 5 umbrales sin medir alimentan Execution**, así que va ANTES que ellos si algún día se abren |
-| **M1** huecos de la ventana rodante | ⏸️ congelada | Requisito de **F1**, que está en el grupo DESPUÉS |
-| **M5** cortes de la cascada | ⏸️ congelada | Requisito de **F1**, ídem |
-| **M4** `auditTriggerBaseRate` sobre el eje unificado | ⏸️ congelada | Requisito de **B1**, ídem |
-| **M10** línea base de expectativa como curva | ⏸️ congelada | Requisito de la **v2**: la v1 no enseña `expectancy_r` (§7-bis) |
+| ~~**M1**~~ huecos de la ventana rodante | ✅ **HECHA (04-08)** | `scripts/auditLiquidationWindow.mjs` · **F1 resulta casi un no-op**: BTC/ETH **0 discrepancias exactas**, SOL 5,2 % vs 4,3 % (4 anclajes de 349) |
+| ~~**M5**~~ cortes de la cascada | ✅ **HECHA (04-08)** | Mismo script · **los cortes NO se mueven** con la ventana corregida → nada que recalibrar |
+| ~~**M4**~~ `auditTriggerBaseRate` sobre el eje unificado | ✅ **HECHA (04-08)** | ≤1,1 pt en las 16 celdas con anclajes IDÉNTICOS → **B1 no obliga a re-medir la tabla**. El 1er intento fue un confundido de periodo (−3,3 pt, de los que sólo −0,9 eran el ATR) |
+| ~~**M10**~~ línea base de expectativa como curva | ✅ **HECHA (04-08) · la curva NO existe** | `scripts/auditExpectancyCurve.mjs` · la línea base es PLANA (la vigencia no importa) y el rincón negativo era el **evaluador**, no el mercado. Lo que hace falta no es una curva, es una **guarda** |
 | **M11** gradiente de entrada rotura↔retroceso | ⏸️ congelada | Sugerente sin IC que separe. Necesita más muestra, no un cambio |
 
 
