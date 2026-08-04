@@ -494,7 +494,12 @@ export function computeHistorySummaries(histories) {
  * @param {object} technical - bloque technical del activo analizado (para el caso BTC).
  * @returns {Promise<{trend_1d:string|null, trend_1w:string|null, source:string}|null>}
  */
-async function buildBtcContext(coin, technical) {
+/**
+ * ETAPA 3 · el único I/O que NO cabe en la etapa 1, porque depende de los indicadores ya
+ * calculados (para `coin === 'BTC'` el contexto es el suyo propio). Exportada desde B5 para
+ * que las cuatro etapas del pipeline sean visibles y comprobables por separado.
+ */
+export async function buildBtcContext(coin, technical) {
   if (coin === 'BTC') {
     return {
       trend_1d: technical?.['1D']?.trend ?? null,
@@ -516,9 +521,20 @@ async function buildBtcContext(coin, technical) {
   }
 }
 
-async function buildAnalyzeContext(coin, primaryTf) {
-  logger.info({ coin, primaryTf }, 'Building analysis payload');
-
+/**
+ * ETAPA 1 · PEDIR — todo el I/O externo de un análisis, y NADA de ensamblado (B5).
+ *
+ * POR QUÉ ESTÁ SEPARADA. `buildAnalyzeContext` mezclaba pedir datos con darles forma, y esa
+ * mezcla es el bloqueo para montar un payload desde datos GUARDADOS en vez de APIs vivas —
+ * que es lo que hace falta para responder la pregunta abierta *"¿aporta algo el juicio del
+ * LLM?"*, hoy incontestable porque el payload no se puede reconstruir punto-en-el-tiempo.
+ * Con la costura puesta, un futuro reproductor sólo tiene que fabricar este mismo objeto.
+ *
+ * Ningún fallo externo rompe el análisis: `Promise.allSettled` + `resolve` → null (degraded).
+ *
+ * @returns {Promise<object>} fuentes crudas, una clave por servicio.
+ */
+export async function fetchAnalyzeSources(coin) {
   const binanceSymbols = { BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT' };
   const binanceSymbol = binanceSymbols[coin];
 
@@ -558,30 +574,34 @@ async function buildAnalyzeContext(coin, primaryTf) {
 
   const resolve = (result) => (result.status === 'fulfilled' ? result.value : null);
 
-  const candles = {
-    '1h': resolve(ohlc1h),
-    '4h': resolve(ohlc4h),
-    '1D': resolve(ohlc1D),
-    '1W': resolve(ohlc1W),
+  return {
+    candles: {
+      '1h': resolve(ohlc1h),
+      '4h': resolve(ohlc4h),
+      '1D': resolve(ohlc1D),
+      '1W': resolve(ohlc1W),
+    },
+    fearGreed:    resolve(fearGreedResult),
+    derivatives:  resolve(derivativesResult),
+    globalMarket: resolve(globalMarketResult),
+    coinMarket:   resolve(coinMarketResult),
+    price:        resolve(priceResult),
+    orderBook:    resolve(orderBookResult),
+    liquidationClusters: resolve(liquidationClustersResult),
+    onchain:      resolve(onchainResult),
+    etfFlows:     resolve(etfFlowsResult),
+    macro:        resolve(macroResult),
+    volatility:   resolve(volatilityResult),
   };
+}
 
-  const fearGreed    = resolve(fearGreedResult);
-  const derivatives  = resolve(derivativesResult);
-  const globalMarket = resolve(globalMarketResult);
-  const coinMarket   = resolve(coinMarketResult);
-  const price        = resolve(priceResult);
-  const orderBook    = resolve(orderBookResult);
-  const liquidationClusters = resolve(liquidationClustersResult);
-  const onchain      = resolve(onchainResult);
-  const etfFlows     = resolve(etfFlowsResult);
-  const macro        = resolve(macroResult);
-  const volatility   = resolve(volatilityResult);
-
-  const currentPrice = price?.price ?? null;
-
+/**
+ * ETAPA 2 · DERIVAR — indicadores por TF. Función PURA sobre velas y precio (B5).
+ */
+export function computeTechnicalByTf(candles, currentPrice) {
   const technical = {};
   for (const tf of TIMEFRAMES) {
-    if (candles[tf]?.length) {
+    if (candles?.[tf]?.length) {
       const indicators = computeIndicators(candles[tf], tf);
       const sr = indicators?.support_resistance;
       const distances = computeLevelDistances(
@@ -597,11 +617,28 @@ async function buildAnalyzeContext(coin, primaryTf) {
       technical[tf] = { ...indicators, ...distances };
     }
   }
+  return technical;
+}
 
-  // Contexto estructural de BTC (real, no el del alt) para el BTC DOMINANCE OVERRIDE (C3).
-  const btcContext = await buildBtcContext(coin, technical);
+/**
+ * ETAPA 4 · ENSAMBLAR — el payload, a partir de fuentes ya obtenidas. Función PURA (B5).
+ *
+ * No pide nada a nadie: recibe las fuentes (etapa 1), los indicadores (etapa 2), el contexto
+ * de BTC y los históricos (etapa 3, la que sí hace I/O). Eso es lo que permitiría alimentarla
+ * con datos persistidos para reconstruir un payload histórico.
+ *
+ * ⚠️ NO cambia ninguna regla respecto de la versión monolítica: es un movimiento de código.
+ * El requisito de B5 es precisamente ése, y por eso se comprueba con un DIFF del payload real
+ * (`scripts/diffAnalyzeContext.mjs`) y no sólo con los tests, que mockean el LLM y no cubren
+ * la forma completa de la respuesta.
+ */
+export function assembleAnalyzeContext({ coin, primaryTf, sources, technical, btcContext, histories }) {
+  const {
+    candles, fearGreed, derivatives, globalMarket, coinMarket, price,
+    orderBook, liquidationClusters, onchain, etfFlows, macro, volatility,
+  } = sources;
+  const currentPrice = price?.price ?? null;
 
-  const histories = getHistories(coin);
   const { fearGreedSummary, fundingRateSummary, openInterestSummary, longShortSummary, liquidationsSummary, cvdSummary, vwapSummary } =
     computeHistorySummaries(histories);
 
@@ -874,6 +911,26 @@ async function buildAnalyzeContext(coin, primaryTf) {
       vwap: vwapSummary,
     },
   };
+}
+
+/**
+ * El pipeline completo. Misma firma y mismo resultado que la versión monolítica anterior.
+ *
+ * La ETAPA 3 (contexto de BTC + históricos) no puede ir en la 1: `buildBtcContext` necesita
+ * los indicadores ya calculados para el caso `coin === 'BTC'` (`source: 'self'`), así que
+ * depende de la etapa 2. Es la única razón por la que hay I/O después de la etapa 1, y está
+ * aquí anotada para que nadie la "arregle" moviéndola arriba.
+ */
+async function buildAnalyzeContext(coin, primaryTf) {
+  logger.info({ coin, primaryTf }, 'Building analysis payload');
+
+  const sources = await fetchAnalyzeSources(coin);
+  const technical = computeTechnicalByTf(sources.candles, sources.price?.price ?? null);
+  // Contexto estructural de BTC (real, no el del alt) para el BTC DOMINANCE OVERRIDE (C3).
+  const btcContext = await buildBtcContext(coin, technical);
+  const histories = getHistories(coin);
+
+  return assembleAnalyzeContext({ coin, primaryTf, sources, technical, btcContext, histories });
 }
 
 /**

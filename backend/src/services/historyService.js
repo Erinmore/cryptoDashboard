@@ -97,7 +97,26 @@ function persist(coin, metric, tsKey, entry) {
 }
 
 // Poda lo más viejo que DB_RETENTION_DAYS y devuelve los últimos `limit` (oldest→newest).
+//
+// ⚠️ ESTE `catch` CONFUNDÍA DOS FALLOS MUY DISTINTOS, y el confundido era invisible.
+// `getDb()` LANZA si la BBDD no está inicializada, así que "no he podido mirar" y "la serie
+// está vacía" salían igual: `[]`, y con nivel `debug`, que en producción no se ve.
+//
+// Los dos siguen degradando a `[]` —fallar aquí no debe tumbar la app, y en producción no
+// muerde porque `app.js` inicializa la BBDD antes que nada—, pero el primero significa que
+// NADIE HA MIRADO y ahora lo dice en `warn`. Es la misma familia de defecto que este proyecto
+// lleva cazando toda la semana: degradación silenciosa que produce un valor PLAUSIBLE.
+// Mordió de verdad el 2026-08-04: el diff del payload de B5 pasó por vacío sobre CVD y VWAP
+// —las dos únicas series que se hidratan desde BBDD— creyendo que estaban vacías, y sólo se
+// vio al ir a comprobar la cobertura a mano.
 function loadSeries(coin, metric, limit) {
+  try {
+    getDb();
+  } catch (err) {
+    logger.warn({ err: err.message, coin, metric },
+      'history_series: BBDD no disponible — la serie NO se ha leído (distinto de estar vacía)');
+    return [];
+  }
   try {
     const cutoff = Math.floor(Date.now() / 1000) - DB_RETENTION_DAYS * DAY_SEC;
     stmt(`DELETE FROM history_series WHERE coin = ? AND metric = ? AND ts_key < ?`)
@@ -108,6 +127,7 @@ function loadSeries(coin, metric, limit) {
       .all(coin, metric, limit);
     return rows.reverse().map(r => JSON.parse(r.payload)); // newest→oldest ⇒ oldest→newest
   } catch (err) {
+    // Aquí sí es un fallo puntual de consulta con la BBDD disponible: `debug` basta.
     logger.debug({ err: err.message, coin, metric }, 'history_series load skipped');
     return [];
   }
