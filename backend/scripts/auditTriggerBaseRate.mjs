@@ -37,10 +37,54 @@
  * su lift no significa nada. Los cortes de la rejilla se eligen para cubrir el rango en que
  * los condicionales reales caen (los 7 primeros de producción están en d≈0,4).
  *
+ * ── M4 (2026-08-04) · POR QUÉ LA VENTANA DEL ATR ES AHORA UN PARÁMETRO ──────────────────
+ *
+ * **B1** quiere unificar los dos ATR% del sistema dejando SOLO el de decisión (Wilder(14) con
+ * la ventana de 180 velas que usa `indicatorService`) y retirando la reconstrucción de 19 que
+ * hace el outcome job. Esta tabla se midió con el de 19, así que **si B1 entra sin re-medir,
+ * la curva y su eje dejarían de ser pareja** — que es exactamente el fallo que la cabecera de
+ * `TRIGGER_BASE_RATE` avisa ("da igual cuál sea mientras tabla y consumidor usen el mismo; lo
+ * que no vale es mezclarlos").
+ *
+ * `ATR_WINDOW` por defecto sigue siendo 19: el script reproduce sin tocar nada la tabla
+ * publicada. `ATR_WINDOW=180` mide el eje unificado. Comparar las dos salidas ES M4.
+ *
+ * ▶ RESULTADO M4 (2026-08-04): **la tabla NO hay que re-medirla para B1.**
+ *
+ *   · CONTROL previo — con `ATR_WINDOW=19` por defecto la salida REPRODUCE la tabla publicada
+ *     el 2026-08-01 dentro de ±0,7 pt (73,5/74,1 · 61,5/62,2 · 50,7/52,4 · 41,6/44,6 · …)
+ *     pese a que la ventana de 1.000 velas ha rodado tres días. El arnés mide lo que dice.
+ *
+ *   · **⚠️ EL PRIMER INTENTO FUE UN CONFUNDIDO, y por poco pasa.** Comparadas las dos ramas
+ *     tal cual, la curva de 180 caía hasta **−3,3 pt** en `long` y no se movía en `short` —
+ *     una asimetría con pinta de hallazgo. No lo era: con 180 el primer anclaje con ventana
+ *     completa llega 161 velas más tarde, así que las dos ramas medían **PERIODOS distintos**
+ *     (982 anclajes contra 821). De ahí `ANCHOR_START`, que iguala el conjunto de anclajes.
+ *
+ *   · Con anclajes IDÉNTICOS (n=1.624/moneda), 19 → 180 mueve la curva **≤1,1 pt en las 16
+ *     celdas**, siempre a la baja y de forma monótona en `d`: dentro del IC (±2,4 pt, y ése
+ *     ya es optimista por el solape de anclajes). O sea que **de los −3,3 pt originales, −0,9
+ *     eran el ATR y −2,4 el periodo.** Replica el ≤1,6 pt que ya anotaba `TARGET_REACHABILITY`
+ *     al comprobar lo mismo por su cuenta: `d` normaliza por el mismo ATR con el que se
+ *     construye la distancia, así que la elección se cancela casi entera.
+ *
+ *   · **Lo que B1 SÍ mueve, y conviene tenerlo escrito:** en un setup REAL la entrada tiene un
+ *     precio fijo, así que lo que se desplaza es `d`. Medido el cociente ATR180/ATR19 sobre
+ *     los mismos anclajes: **mediana 1,008-1,010 · p10-p90 0,91-1,14** en las 3 monedas. En la
+ *     mediana el efecto es ~0,4 pt de `P(disparo)` mostrada; en las colas, hasta ~4 pt. Acotado
+ *     y pequeño, pero no cero: B1 cambia el número que ve el usuario en análisis concretos
+ *     aunque la tabla se quede igual.
+ *
+ * ⚠️ EL `n` QUE IMPRIME NO ES EFECTIVO. Los anclajes son cada vela de 4h y el horizonte son
+ * 6-12 velas, así que ventanas consecutivas comparten 5/6 de su futuro: el IC de Wilson de
+ * abajo sale demasiado estrecho. Sirve para comparar celdas entre sí (todas comparten el
+ * sesgo), no para afirmar una precisión absoluta.
+ *
  * SOLO LECTURA: no toca BBDD, producción ni la ruta de decisión.
  *
  * Uso:  node scripts/auditTriggerBaseRate.mjs
  *       COINS=SOL node scripts/auditTriggerBaseRate.mjs
+ *       ATR_WINDOW=180 node scripts/auditTriggerBaseRate.mjs    # M4: eje de DECISIÓN
  */
 
 import { calculateATR } from '../src/utils/indicators.js';
@@ -48,7 +92,13 @@ import { wilsonInterval } from '../src/utils/stats.js';
 
 const COINS = (process.env.COINS ?? 'SOL,BTC,ETH').split(',').map((s) => s.trim());
 const ATR_PERIOD = 14;
-const ATR_WINDOW = ATR_PERIOD + 5;         // outcomeService.js:58 — misma ventana
+/**
+ * Velas que entran en el cálculo del ATR. 19 (= ATR_PERIOD+5) reproduce
+ * `atr_pct_at_analysis` (outcomeService.js:58); 180 reproduce el ATR de DECISIÓN
+ * (`technical['4h'].atr.pct`, que `indicatorService` calcula sobre TODAS las velas del TF).
+ * El de Wilder es recursivo: con más calentamiento el número es OTRO, no más preciso.
+ */
+const ATR_WINDOW = Number(process.env.ATR_WINDOW ?? ATR_PERIOD + 5);
 /** Rejilla del eje: distancia normalizada por ATR%×√velas. */
 const GRID = [0.2, 0.3, 0.4, 0.5, 0.6, 0.75, 1.0, 1.25];
 /** Vigencias en velas del TF primario (4h): 24h y 48h. Sirven para comprobar el colapso. */
@@ -63,7 +113,7 @@ async function klines(coin, interval = '4h', limit = 1000) {
   }));
 }
 
-/** Reproduce `atr_pct_at_analysis`: Wilder(14) sobre las 19 velas cerradas previas. */
+/** ATR% en el anclaje `i`: Wilder(14) sobre las `ATR_WINDOW` velas cerradas previas. */
 function atrPctAt(candles, i) {
   const w = candles.slice(Math.max(0, i - ATR_WINDOW + 1), i + 1);
   if (w.length < ATR_WINDOW) return null;
@@ -73,10 +123,19 @@ function atrPctAt(candles, i) {
   return parseFloat((atr / close * 100).toFixed(2));   // mismo redondeo que computeAtrPct
 }
 
+/**
+ * Primer anclaje. Por defecto el primero para el que hay ventana de ATR completa — pero eso
+ * hace que dos ejecuciones con `ATR_WINDOW` distinto midan PERIODOS distintos (con 180 se
+ * pierden 161 velas por delante frente a 19), y entonces cualquier diferencia entre las dos
+ * salidas mezcla "otro ATR" con "otros días". Fijarlo iguala el conjunto de anclajes y deja
+ * la ventana del ATR como única variable — el control que M4 necesita para ser interpretable.
+ */
+const ANCHOR_START = Number(process.env.ANCHOR_START ?? ATR_WINDOW - 1);
+
 async function auditCoin(coin) {
   const k = await klines(coin);
   const anchors = [];
-  for (let i = ATR_WINDOW - 1; i < k.length; i++) {
+  for (let i = Math.max(ATR_WINDOW - 1, ANCHOR_START); i < k.length; i++) {
     const atr = atrPctAt(k, i);
     if (atr && atr > 0) anchors.push({ i, close: k[i].close, atr });
   }
@@ -97,7 +156,8 @@ async function auditCoin(coin) {
     return { pct: n ? (hits / n) * 100 : null, n, hits };
   };
 
-  console.log(`\n${'═'.repeat(74)}\n${coin}\n${'═'.repeat(74)}`);
+  console.log(`\n${'═'.repeat(74)}\n${coin}  ·  ATR Wilder(${ATR_PERIOD}) sobre ${ATR_WINDOW} velas`
+    + `  ·  ${anchors.length} anclajes de ${k.length} velas 4h\n${'═'.repeat(74)}`);
   console.log('  d      long 24h  long 48h  |  short 24h  short 48h  |  |Δ| máx 24h-48h');
   console.log('  ' + '-'.repeat(70));
   const out = {};
@@ -148,5 +208,6 @@ if (results.length) {
   console.log('  ── Para pegar en utils/stats.js ──');
   console.log(`  points: ${JSON.stringify(table)},`);
   console.log(`  measured_at: '${new Date().toISOString().slice(0, 10)}',`);
-  console.log(`  source: 'scripts/auditTriggerBaseRate.mjs · 90d · ${COINS.join('/')} · TF 4h · fill=touch_entry_intrabar',`);
+  console.log(`  source: 'scripts/auditTriggerBaseRate.mjs · ${COINS.join('/')} · TF 4h`
+    + ` · ATR Wilder(${ATR_PERIOD})/${ATR_WINDOW} velas · fill=touch_entry_intrabar',`);
 }
