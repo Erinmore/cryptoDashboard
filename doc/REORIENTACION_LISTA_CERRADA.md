@@ -5,6 +5,11 @@
 > punto cero, lista cerrada ANTES de empezar** — y de momento **no ha hecho falta ninguno**.
 >
 > **Fecha:** 2026-08-03 (macro-sesión) · Muestra del periodo 5 declarada **cumplida** (§0).
+> **Actualizado 2026-08-04:** las CINCO fichas de "se puede adelantar ya" (§7-bis) se hicieron —
+> M4, M1+M5 y M10 medidas (todas dicen "cambio pequeño" o, en M10, "la curva prevista no existe
+> y hay una mejor"); B5 refactorizado con diff limpio en local y en la Pi; L4 documentado en
+> [`CONSTANTES_Y_RETRACTACIONES.md`](CONSTANTES_Y_RETRACTACIONES.md). Nace **P7** (§6), guarda
+> de expectativa sin punto cero. Detalle en `SESSION_STATE.md`, diario del 2026-08-04.
 > · **Relato cronológico y motivo de la reorientación:** [`SESSION_STATE.md` §0-R](../SESSION_STATE.md)
 > · **Porqué histórico de cada ítem:** `SESSION_STATE.md` §0 y §6
 > · Aquí está el **qué, en qué orden, con qué requisito previo y en qué estado**.
@@ -486,12 +491,12 @@ que es lo que la regla de atribución prohíbe.
 
 | # | Ítem | Requisito previo |
 |---|---|---|
-| **B1** | **Unificar los dos ATR%** — persistir el de decisión (180), retirar la reconstrucción de 19 | **M4** |
+| **B1** | **Unificar los dos ATR%** — persistir el de decisión (180), retirar la reconstrucción de 19 | ✅ **M4 medida (04-08): ≤1,1 pt en las 16 celdas con anclajes idénticos → cambio pequeño, sin sorpresas al entrar al punto cero** |
 | **B2** | **Suelo de `dynamicNearLevelPct` en 1h** (0,5 % muerde el 47,9 % del decil tranquilo en 1h; 0,0 % en 4h) | — (medido) |
 | ~~**B3**~~ | **Vigencias con dueño único** | ✅ **HECHA el 2026-08-03** — detalle en ▶ B3 (§4) |
 | **B4** | **Banda muerta en la pata ESTRUCTURAL de `computeTrend`** (`neutral` sale 4,4 % y significa "ADX y SuperTrend se contradicen") | — (medido) |
 | **B5** | **Refactor `analysisController`** (1.306 líneas) → pipeline por etapas + registro de features con dueño único | — |
-| **F1** | **Ventana rodante de 24 h por TIEMPO, no por posición** (huecos = 0) | **M1 + M5** |
+| **F1** | **Ventana rodante de 24 h por TIEMPO, no por posición** (huecos = 0) | ✅ **M1+M5 medidas (04-08): casi un no-op** — BTC/ETH 0 discrepancias exactas, SOL 5,2 % vs 4,3 % (4 anclajes de 349); los cortes NO se mueven |
 | **F2** | **`SR_TOLERANCE_PCT` normalizado por ATR** (`k ≈ 0,35`, anclado a dejar 4h sin cambios) | — ✅ **medido** (§4 ▶ U2). Cambia la frecuencia del veto, así que va en el lote, no suelto |
 
 ### 5.2 · Condicionales (entran si su medición lo confirma)
@@ -519,6 +524,7 @@ válido n horas, entrada x, salida y"*. Tres de esos cuatro campos **no tienen r
 | **P3** | **Alinear `SHADOW_FILL_RULE` con lo prometido** ⏳ **desbloqueado** | M7 lo midió: el registro **infla la ACTIVIDAD casi al doble** (56,9 % de llenados contra 30,6 % de la regla declarada), pero **el R:R NO engaña**. Faltaba un campo, no una regla: `trigger_price` ya se emite; cuando haya muestra el evaluador podrá exigir la confirmación |
 | ~~**P5**~~ | **Retirar `Preparar`** ✅ **HECHO** (`v9_1_no_preparar`) | Exigía L2 antes, que se hizo el mismo día. **0 filas** lo usaban. Escritores dejan de emitirlo; **lectores lo siguen entendiendo** (filtros de abstención, badge del historial) |
 | **P6** | **`Structure` sin dueño determinista** | En el prompt es prosa (*"+2 = estructura alcista limpia"*). Y el proxy obvio, `computeTrend`, **contiene 4 de los 5 votos de Execution + volumen** → usarlo sería triple conteo |
+| **P7** ⏳ **nuevo (04-08)** | **Guarda de expectativa**: no enseñar `expectancy_r` si el stop declarado está a **menos de ~1,5×ATR** de la entrada | Sale de **M10**: por debajo de ese umbral el convenio de empate del evaluador (¿qué toca primero dentro de una vela de 1h?) mueve la expectativa hasta **0,66R**, más que cualquier ventaja real. **No exige punto cero** (es una condición para CALLARSE, no un cambio de puerta) y **hoy no recorta nada** — los `conditional_setup` reales van a ~1,7×ATR, dentro de la meseta donde la línea base **+0,004R** es legible. Espera a que la v2 decida enseñar `expectancy_r` (§7-bis); mientras tanto queda documentada para no perderla |
 
 ---
 
@@ -714,15 +720,23 @@ congelar mediciones es incoherente.
 | **Exige PUNTO CERO** — cambia la ruta de decisión | B1 · B2 · B4 · F1 · **F2** · todo el cubo 0 | ❌ No. Su MEDICIÓN sí (columna de abajo) |
 | **No decide nada hoy** — medirlo no tendría consecuencia | U1 · U3 · U4 · U5 · **M2** | ❌ No, y el motivo no es orden: Execution no entra en ninguna puerta |
 | **Falta MUESTRA** — no hay atajo | M11 · D1 (calibración de convicción) | ❌ No. Sólo el tiempo lo resuelve |
-| **DISPONIBLE** — solo lectura, o preserva comportamiento | **M10** · **M1** · **M5** · **M4** · **B5** · **L4** | ✅ **Sí.** Ver abajo |
+| **DISPONIBLE** — solo lectura, o preserva comportamiento | ~~**M10**~~ · ~~**M1**~~ · ~~**M5**~~ · ~~**M4**~~ · ~~**B5**~~ · ~~**L4**~~ | ✅ **Sí, y las 5 fichas se hicieron el 2026-08-04** — ver ▶ resultados en §4 |
 
-**Lo DISPONIBLE, y qué desbloquea cada uno:**
+> ✅ **Las CINCO fichas de este bloque están HECHAS.** Lo que sigue documenta el motivo por el
+> que se hicieron y qué desbloqueó cada una; ya no es un plan, es historial.
 
-- **M10** — la única que desbloquea una función del producto: hoy el panel **no puede enseñar
-  `expectancy_r`** porque su referencia es una curva sin medir. Reutiliza el arnés de M8.
+**Qué desbloqueó cada una:**
+
+- **M10** — ⚠️ **no dio la curva que se esperaba: dio otra cosa, y mejor.** La línea base de
+  `expectancy_r` **no depende de la vigencia** (era la hipótesis a comprobar) y el rincón
+  negativo que M8 atribuyó al mercado resultó ser el **convenio de empate del evaluador**. La
+  línea base sigue siendo **+0,004R**, legible con el stop a **≥1,5×ATR** de la entrada — donde
+  caen los setups reales. Nace **P7** (§6): la guarda que calla por debajo de ese umbral.
 - **M1 + M5 · M4** — no desbloquean nada hoy, pero hacen que el punto cero llegue **con sus
   mediciones hechas** en vez de convertirse en "cinco líneas más una medición" justo al empezar.
-  M1 sólo es posible desde el 2026-08-03, gracias a `liquidations_1h`.
+  M1 sólo es posible desde el 2026-08-03, gracias a `liquidations_1h`. **Y las tres dicen lo
+  mismo: el cambio es pequeño.** F1 casi un no-op (BTC/ETH 0 discrepancias exactas) y B1 mueve
+  `TRIGGER_BASE_RATE` ≤1,1 pt con anclajes idénticos — el punto cero llega sin sorpresas.
 - **B5** — ⚠️ **NO exige punto cero: es un refactor que preserva comportamiento.** Se agrupó con
   el punto cero cuando su única justificación era *"si el lote va a ser largo de todas formas"*;
   ahora tiene una propia y mejor: `buildAnalyzeContext` mezcla **pedir** datos con
@@ -731,10 +745,19 @@ congelar mediciones es incoherente.
   **Requisito para que cuente como preservador de comportamiento:** no basta con que pasen los
   tests (mockean el LLM y no cubren la forma completa del payload). Hace falta **diff del
   payload real antes y después** sobre las 3 monedas. Sin ese diff, es un cambio de ruta de
-  decisión disfrazado de refactor.
+  decisión disfrazado de refactor. ✅ **Hecho (04-08):** `buildAnalyzeContext` → 4 etapas
+  (la de ensamblado, PURA), verificado con `scripts/diffAnalyzeContext.mjs` **en local y en la
+  Pi** contra el `.env` de producción — rutas idénticas y 0 diferencias de valor inesperadas en
+  SOL/BTC/ETH. Dos trampas cazadas por el propio arnés antes de dar el diff por bueno: 7
+  diferencias en `order_book` que un CONTROL NULO (la versión vieja contra sí misma) demostró
+  ser ruido de una fuente sin caché (12 diferencias en el control, más que el refactor); y un
+  pase por VACÍO sobre CVD/VWAP por no inicializar la BBDD en el script, que llevó a añadir una
+  guarda `warn` en `historyService.js` (antes confundía "no he podido mirar" con "está vacía").
 - **L4** — lecciones aprendidas: las constantes medidas con su alcance y, sobre todo, **las
   retractadas**. Es lo que evita que dentro de tres meses alguien reproponga el 45,6 %, la banda
-  al 0,75× o el DVOL.
+  al 0,75× o el DVOL. ✅ **Hecho (04-08):** [`doc/CONSTANTES_Y_RETRACTACIONES.md`](CONSTANTES_Y_RETRACTACIONES.md)
+  — 20 constantes vivas, 12 cambios descartados, 15 cifras que resultaron ruido o artefacto, y
+  los 10 controles que las cazaron.
 
 **Lo que esta sección SÍ prohíbe, y sigue en pie:** abrir un ítem del primer bloque *"porque se
 ve mal"*. De las mediciones de estos dos días, dos dijeron *no cambies nada*, una corrigió el
