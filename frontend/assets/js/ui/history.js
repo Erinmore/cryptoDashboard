@@ -151,7 +151,10 @@ function renderCard(a) {
   // todos a 0 (señal H3 de la fase de recogida), y el modal —que es donde se comparan unos
   // con otros— no la mostraba. Revisión crítica 2026-07-26, M4.
   if (a.conviction != null) metaBits.push(`convicción ${Number(a.conviction).toFixed(2)}`);
-  if (a.risk_score != null) metaBits.push(`riesgo ${a.risk_score}/10`);
+  // `risk_score` RETIRADO (P1, 2026-08-03): su única regla en todo el sistema era "entero
+  // entre 1 y 10" — sin rúbrica, sin medición. Se quitó del panel en vivo (sidebar.js) pero
+  // se quedó aquí sin nadie darse cuenta — un dato con dos sitios donde se pinta, y solo se
+  // corrigió uno. No reintroducir sin la misma medición que le falta desde siempre.
   if (a.price_current != null) metaBits.push(fmtPrice(a.price_current));
   if (a.primary_tf) metaBits.push(`TF ${a.primary_tf}`);
   if (a.macro_regime) metaBits.push(a.macro_regime);
@@ -245,39 +248,59 @@ function renderCard(a) {
   // Setup CONDICIONAL: el trade que se tomaría si apareciera lo que falta. Es lo que hace
   // medible una abstención — sin geometría declarada, un `Esperar` es incontestable. Se
   // persistía desde v9_0 pero no se devolvía por la API ni se pintaba (corregido 2026-07-31).
-  if (a.conditional_setup) {
-    let cs = null;
-    try { cs = JSON.parse(a.conditional_setup); } catch { /* ignore */ }
-    if (cs && cs.entry_price != null) {
-      const box = el('div', 'hist-conditional');
-      const dir = cs.direction === 'short' ? 'CORTO' : 'LARGO';
-      box.appendChild(el('span', 'hist-conditional-label', `Si se cumpliera · ${dir}`));
-      const geo = el('div', 'hist-conditional-geo');
-      geo.textContent = `Entrada ${fmtPrice(cs.entry_price)}  ·  SL ${fmtPrice(cs.stop_price)}`
-        + `  ·  TP ${fmtPrice(cs.tp1_price)}`
-        + (cs.validity_candles ? `  ·  ${cs.validity_candles} velas ${cs.tf_execution ?? ''}` : '');
-      box.appendChild(geo);
-      if (cs.trigger) {
-        const trg = el('div', 'hist-conditional-trigger');
-        trg.textContent = `Disparo: ${cs.trigger}`;
-        box.appendChild(trg);
-      }
-      // R:R calculado aquí y no en el backend: es una lectura de la geometría, no un dato.
-      const risk = Math.abs(cs.entry_price - cs.stop_price);
-      const reward = Math.abs((cs.tp1_price ?? cs.entry_price) - cs.entry_price);
-      if (risk > 0 && reward > 0) {
-        box.appendChild(el('div', 'hist-conditional-rr', `R:R ${(reward / risk).toFixed(2)}`));
-      }
-      // Resultado del SHADOW TRADE: ¿llegó a darse la condición que este análisis nombró,
-      // y qué habría hecho el trade? Es lo que convierte una abstención en algo evaluable.
-      if (a.cond_outcome) {
-        const r = shadowResult(a.cond_outcome, a.cond_filled, a.cond_invalid_reason);
-        const badge = el('div', `hist-conditional-result ${r.cls}`, r.text);
-        badge.dataset.tooltip = r.tip;
-        box.appendChild(badge);
-      }
-      card.appendChild(box);
+  // El plan condicional se lee de `conditional_plan` (calculado por el backend en tiempo de
+  // LECTURA, `describeConditionalPlan` — mismo dueño que el panel en vivo, historyController.js)
+  // y NO de `conditional_setup` a pelo: hasta el 2026-08-09 esta tarjeta reparseaba el JSON y
+  // recalculaba su propio R:R sin `trigger_prob_pct` ni `target_reachability_pct`, así que en
+  // cuanto un plan pasaba de "recién analizado" a "historial" perdía las dos cifras medidas
+  // que hacen honesto el producto (quedaban solo en el panel en vivo). `conditional_plan` ya
+  // trae la geometría completa, así que no hace falta tocar `conditional_setup` aquí.
+  const plan = a.conditional_plan;
+  if (plan && plan.entry_price != null) {
+    const box = el('div', 'hist-conditional');
+    const dir = plan.direction === 'short' ? 'CORTO' : 'LARGO';
+    box.appendChild(el('span', 'hist-conditional-label', `Si se cumpliera · ${dir}`));
+    const geo = el('div', 'hist-conditional-geo');
+    geo.textContent = `Entrada ${fmtPrice(plan.entry_price)}  ·  SL ${fmtPrice(plan.stop_price)}`
+      + `  ·  TP ${fmtPrice(plan.tp1_price)}`
+      + (plan.validity_candles ? `  ·  ${plan.validity_candles} velas ${plan.tf_execution ?? ''}` : '');
+    box.appendChild(geo);
+    if (plan.trigger) {
+      const trg = el('div', 'hist-conditional-trigger');
+      trg.textContent = `Disparo: ${plan.trigger}`;
+      box.appendChild(trg);
     }
+    // Las cifras MEDIDAS — mismo trío que el panel en vivo (sidebar.js `renderConditionalPlan`),
+    // con el mismo texto y los mismos umbrales, para que no diverjan entre las dos pantallas.
+    if (plan.rr != null) {
+      const stats = el('div', 'hist-conditional-stats');
+      const add = (text, warn = false, title = '') => {
+        const row = el('div', `hist-conditional-stat${warn ? ' warn' : ''}`, text);
+        if (title) row.dataset.tooltip = title;
+        stats.appendChild(row);
+      };
+      add(`R:R ${plan.rr} → acertar >${plan.breakeven_win_rate_pct}% para empatar`, false,
+        'Aritmética del R:R, no un pronóstico: por debajo de ese acierto el plan pierde dinero.');
+      if (plan.trigger_prob_pct != null) {
+        add(`${plan.trigger_prob_pct}% de las veces se cumple el disparo a esta distancia`, false,
+          'TRIGGER_BASE_RATE, medida sobre ~3.000 anclas por celda.');
+      }
+      if (plan.target_reachability_pct != null) {
+        add(`${plan.target_reachability_pct}% de las veces el objetivo se alcanza dentro de la vigencia`,
+          plan.target_reachability_pct < 15,
+          'TARGET_REACHABILITY. Por debajo del ~10% lo normal es que el plan caduque abierto.');
+      }
+      box.appendChild(stats);
+    }
+    // Resultado del SHADOW TRADE: ¿llegó a darse la condición que este análisis nombró,
+    // y qué habría hecho el trade? Es lo que convierte una abstención en algo evaluable.
+    if (a.cond_outcome) {
+      const r = shadowResult(a.cond_outcome, a.cond_filled, a.cond_invalid_reason);
+      const badge = el('div', `hist-conditional-result ${r.cls}`, r.text);
+      badge.dataset.tooltip = r.tip;
+      box.appendChild(badge);
+    }
+    card.appendChild(box);
   }
 
   if (a.missing_confirmations) {

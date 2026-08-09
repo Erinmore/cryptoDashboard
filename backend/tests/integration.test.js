@@ -734,6 +734,18 @@ describe('POST /api/analyze', () => {
     expect(typeof entry.contradiction_count).toBe('number');
     expect(entry).toHaveProperty('contradictions_found');
 
+    // `conditional_plan` (2026-08-09): cada fila del historial debe traer su plan derivado,
+    // no solo el análisis recién hecho vía `last_analysis` — si no, el modal de Historial
+    // pierde `trigger_prob_pct`/`target_reachability_pct` en cuanto un análisis deja de ser
+    // el último. Sin ATR persistido todavía (el job de outcome no ha corrido), las dos curvas
+    // salen null pero R:R/equilibrio son aritmética pura y sí deben estar.
+    expect(entry).toHaveProperty('conditional_plan');
+    if (entry.conditional_plan) {
+      expect(entry.conditional_plan).toHaveProperty('rr');
+      expect(entry.conditional_plan).toHaveProperty('trigger_prob_pct');
+      expect(entry.conditional_plan).toHaveProperty('target_reachability_pct');
+    }
+
     // Deuda §6: analysis_fvg_snapshot existe y el POST la deja consultable sin romper la
     // transacción. NOTA: MOCK_CANDLES es una rampa lineal con rangos solapados, donde
     // low[i] > high[i-2] es imposible → nunca genera FVGs. Por eso aquí solo se verifica

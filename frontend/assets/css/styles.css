@@ -1153,6 +1153,20 @@ html, body {
   color: var(--text-muted);
   margin-top: var(--sp-xs);
 }
+/* Cifras medidas del plan (R:R/equilibrio, P(gatillo), P(objetivo)) — mismo trío que el
+   panel en vivo (`#rec-plan-stats`), en formato de lista compacta para la tarjeta del historial. */
+.hist-conditional-stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xs);
+  margin-top: var(--sp-md);
+}
+.hist-conditional-stat {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  cursor: help;
+}
+.hist-conditional-stat.warn { color: var(--alert-warning-text); }
 /* Resultado del shadow trade (evaluación a posteriori del conditional_setup). */
 .hist-conditional-result {
   display: inline-block;
