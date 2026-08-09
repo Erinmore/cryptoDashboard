@@ -120,7 +120,18 @@ export const SR_LOOKBACK = 100;
 // La calidad la lleva ahora `touches`/`strength`, no la pertenencia a la lista: con minTouches=1
 // el filtro de "nivel fuerte" del veto (>=3) selecciona el 18,8 % en 4h, frente al 89,1 % de antes.
 export const SR_MIN_TOUCHES = 1;
-export const SR_TOLERANCE_PCT = 0.005; // 0.5%
+export const SR_TOLERANCE_PCT = 0.005; // 0.5% — fallback fijo cuando no hay ATR% disponible
+// F2 (2026-08-09, U2 / `auditSrTolerance.mjs`): agrupar niveles con un % ABSOLUTO es
+// incoherente con `dynamicNearLevelPct`, que juzga la CERCANÍA a esos niveles normalizada por
+// ATR desde T5 — los niveles se construían con un criterio y se juzgaban con otro. Medido
+// (180d, TF 4h, SOL/BTC/ETH): con el 0.5% fijo, el filtro `touches>=3` (el que usa el VETO)
+// salía 19.5%(SOL)/31.0%(BTC)/22.5%(ETH) — BTC agrupa el doble de agresivo que SOL en unidades
+// de ATR. Con tolerancia `k×ATR%`, k=0.30 es el punto que dispersa MENOS entre monedas
+// (19.8–23.2%, 3.4 pt) dejando el nivel medio de 4h donde ya estaba — no k≈0.35 (25.0–28.7%,
+// sube el nivel por encima del actual), que es lo que se había anotado sin verificar el punto
+// exacto. Consumido en `indicatorService.computeIndicators`; `calculateSupportResistance` no
+// cambia (ya acepta `tolerancePct` como 4º argumento).
+export const SR_TOLERANCE_ATR_MULT = 0.30;
 
 // ─── Fibonacci ────────────────────────────────────────────────
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -194,4 +205,7 @@ export const SAMPLE_REASONS = ['fixed', 'opportunistic', 'ui', 'manual', 'adhoc'
 // Un lote que toque los tres sube los tres; uno que sólo mueva un corte sube `FEATURE`.
 export const GATE_VERSION    = 'g2_no_prepare_gate';   // puertas direccionales + fail-safe
 export const RUBRIC_VERSION  = 'r1_oi_price_2026_07_29'; // rúbrica de derivados (measured_at)
-export const FEATURE_VERSION = 'f1_atr180_band050';    // ventanas/cortes/normalizadores
+// f2 (2026-08-09, Punto Cero 6 fase 1): B1 unifica los dos ATR% (180 de decisión, ya no 19
+// reconstruidos) + F2 normaliza SR_TOLERANCE por ATR (k=0.30) + B4 banda muerta en el voto
+// de ADX de computeTrend. Los tres son normalizadores/umbrales — la categoría de este campo.
+export const FEATURE_VERSION = 'f2_sr_atr_norm_adx_deadband'; // ventanas/cortes/normalizadores

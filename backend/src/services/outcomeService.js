@@ -140,7 +140,13 @@ async function processAnalysis(a, now) {
   // El ATR se calcula una sola vez y se conserva; el recorrido se recalcula mientras la
   // ventana de 7d siga creciendo. Si el fetch falla, se dejan a null y el COALESCE del
   // upsert preserva lo ya medido en ciclos anteriores.
-  let atrPct = a.atr_pct_at_analysis ?? null;
+  // B1 (2026-08-09): antes de reconstruir con 19 velas, preferir el ATR% de DECISIÓN
+  // (180 velas, `atr_pct_decision`) persistido desde `assembleAnalyzeContext` — es el mismo
+  // que ya gobierna `dynamicNearLevelPct` y `priceBandPct`, así que unifica el eje en vez de
+  // tener dos ATR% del mismo instante que pueden divergir (ya mordió una vez, 01-08: una
+  // serie "1,76→1,16" mezclaba el de backtest con el de decisión). `fetchAtrPctAt` (19 velas)
+  // queda como fallback SOLO para filas anteriores a este campo (`atr_pct_decision` NULL).
+  let atrPct = a.atr_pct_at_analysis ?? a.atr_pct_decision ?? null;
   if (atrPct == null) {
     try {
       atrPct = await fetchAtrPctAt(a.coin, a.primary_tf, tMs);

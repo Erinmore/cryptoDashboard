@@ -287,6 +287,67 @@ describe('runOutcomeJob — banda muerta normalizada por ATR', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// B1 (2026-08-09) — unificación de los dos ATR%. `atr_pct_decision` (180 velas, persistido
+// desde `assembleAnalyzeContext`) se prefiere sobre la reconstrucción de 19 velas
+// (`fetchAtrPctAt`), que queda de fallback solo para filas anteriores a este campo.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('runOutcomeJob — atr_pct_decision (B1, unificación de los dos ATR%)', () => {
+  const velas = (tMs, pares) => pares.map(([high, low], i) => ({
+    t: tMs + i * HOUR, open: low, close: high, high, low, volume: 1,
+  }));
+
+  test('atr_pct_decision presente → se usa tal cual, sin reconstruir con klines', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    fetchHistoricalKlines.mockResolvedValueOnce(velas(tMs, [[103, 99]]));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      atr_pct_decision: 1.75,
+    })]);
+
+    await runOutcomeJob();
+
+    // Solo la llamada del recorrido: ninguna para reconstruir el ATR.
+    expect(fetchHistoricalKlines).toHaveBeenCalledTimes(1);
+    const out = upsertOutcome.mock.calls[0][0];
+    expect(out.atr_pct_at_analysis).toBe(1.75);
+  });
+
+  test('atr_pct_at_analysis ya persistido gana sobre atr_pct_decision (no lo pisa)', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    fetchHistoricalKlines.mockResolvedValueOnce(velas(tMs, [[103, 99]]));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      atr_pct_at_analysis: 2.5, atr_pct_decision: 1.75,
+    })]);
+
+    await runOutcomeJob();
+
+    expect(fetchHistoricalKlines).toHaveBeenCalledTimes(1);
+    expect(upsertOutcome.mock.calls[0][0].atr_pct_at_analysis).toBe(2.5);
+  });
+
+  test('fila LEGACY sin atr_pct_decision → cae al fallback de 19 velas (sin regresión)', async () => {
+    const now = Date.now();
+    const tMs = now - 25 * HOUR;
+    fetchHistoricalKlines
+      .mockResolvedValueOnce(velas(tMs, [[103, 99]]))
+      .mockResolvedValueOnce(velas(tMs - 30 * 4 * HOUR, Array(20).fill([102, 98])));
+    getAnalysesNeedingOutcome.mockReturnValue([analysisRow({
+      action: 'Esperar', primary_tf: '4h', timestamp: iso(tMs),
+      // sin atr_pct_decision ni atr_pct_at_analysis
+    })]);
+
+    await runOutcomeJob();
+
+    // Recorrido + reconstrucción de 19 velas: el fallback sigue vivo para filas viejas.
+    expect(fetchHistoricalKlines).toHaveBeenCalledTimes(2);
+    expect(upsertOutcome.mock.calls[0][0].atr_pct_at_analysis).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Vigencia del setup (2026-07-28). Los helpers puros se cubren en outcome.test.js;
 // aquí se verifica el CABLEADO, que es donde estaba el fallo: que el servicio acote
 // de verdad las velas del barrier y que la caducidad la marque la vigencia declarada

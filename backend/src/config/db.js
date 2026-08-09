@@ -503,6 +503,13 @@ function runMigrations(db) {
   // una fila reconstruida sería indistinguible de una original y nadie podría acotar el
   // error al leerla.
   ensureColumn(db, 'analysis_liquidation_snapshot', 'reconstructed', 'INTEGER NOT NULL DEFAULT 0');
+
+  // B1 (2026-08-09) · unifica los dos ATR% que podían divergir: éste es el de DECISIÓN
+  // (180 velas, technical[primaryTf].atr.pct, ya calculado en `assembleAnalyzeContext` pero
+  // hasta ahora no persistido). El job de outcome lo prefiere sobre su propia reconstrucción
+  // de 19 velas (`fetchAtrPctAt`), que queda solo como fallback para filas anteriores a este
+  // cambio (NULL aquí). Ver outcomeService.js.
+  ensureColumn(db, 'analyses', 'atr_pct_decision', 'REAL');
 }
 
 export function closeDb() {

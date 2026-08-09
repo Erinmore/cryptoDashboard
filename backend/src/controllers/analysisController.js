@@ -968,6 +968,11 @@ export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai
     price_change_24h_pct:     context.price_change_24h_pct ?? null,
     btc_dominance_pct:        context.global_market?.btc_dominance_pct ?? null,
     market_cap_change_24h_pct: context.global_market?.market_cap_change_24h_pct ?? null,
+    // B1 (2026-08-09): ATR% de DECISIÓN (180 velas, TF primario) — ya vivía en el contexto
+    // (`assembleAnalyzeContext`) pero no se persistía, y el job de outcome reconstruía otro
+    // con 19 velas para el mismo instante. Unificado: outcomeService.js lo prefiere sobre su
+    // reconstrucción, que queda de fallback solo para filas anteriores a este campo.
+    atr_pct_decision: context.atrPct ?? null,
 
     fear_greed_value:    fg?.value ?? null,
     fear_greed_class:    fg?.classification ?? null,

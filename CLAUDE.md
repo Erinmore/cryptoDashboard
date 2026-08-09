@@ -188,7 +188,7 @@ src/services/                ← Lógica de negocio, I/O externo, cache
   (scripts) backfillHistorySeries.mjs ← **Reconstruye CVD/VWAP hacia atrás** desde klines (3 monedas, idempotente, `--force`/`--dry-run`). Sirve para recuperarse de un apagado y, sobre todo, para **sembrar** la serie tras un punto cero: el LLM arranca con la ventana de 30 días llena en vez de acumular un día cada 24h. Guarda de integridad: aborta si el CVD sale `heuristic` en vez de `taker_real`, para no mezclar dos definiciones en la misma serie
   historyPoller.js           ← Poller de fondo (index.js, no app.js): cada HISTORY_POLLER_INTERVAL_SEC (300s) recorre las 3 monedas y persiste su history_series (CVD/VWAP + backfill derivados) + F&G — desacopla la persistencia de la moneda visualizada en el frontend. Flag HISTORY_POLLER_ENABLED
   analysisValidator.js       ← Validador determinista del output LLM (§6.4): validateAnalysis() (reglas duras → warnings) + applyFailSafe() (degrada a Esperar ante violación severa). Funciones puras. **`conditional_low_rr` RETIRADO el 2026-08-01** tras medirlo (`scripts/auditConditionalRR.mjs`): el corte en R:R < 1 presuponía que por debajo la geometría rinde peor y **la expectativa es plana en todo el rango** — el acierto baja exactamente lo que sube el premio, que es la identidad del paseo sin deriva. Lo único que cambia con el R:R ya viaja en `breakeven_win_rate_pct`. Siguen vivos los avisos de geometría IMPOSIBLE (`conditional_tp_side`, `conditional_stop_eq_entry`, `conditional_direction_mismatch`), que no son cuestión de grado. **En su lugar entra `conditional_target_unreachable`** (minor, corte MEDIDO en `scripts/auditTargetReachability.mjs`): el TP1 a una distancia que el mercado no recorre en la vigencia declarada hace que el resultado lo decida la caducidad y no el objetivo. ⚠️ **Llega YA CALCULADO por `opts.targetReachability`**, no importado: este módulo se declara *sin dependencias* y la curva `TARGET_REACHABILITY` tiene un único dueño en `utils/stats.js` — el cálculo lo hace `computeTargetReachability` en el controller, que es quien tiene el ATR% y el TF. Sin ATR% no se avisa (dato ausente ≠ defecto). El argumento entero está en el sitio del código donde estaba la regla, y hay un test que impide reinstaurarla en silencio
-  outcomeService.js          ← Job de backtesting (index.js, cada OUTCOME_JOB_INTERVAL_SEC=900s): runOutcomeJob() rellena analysis_outcome (precios 1h/4h/24h/7d vía klines históricas, outcome direccional, barrier TP/stop) **+ métricas de RECORRIDO (Fase 5)**: pide las klines 1h para TODOS los análisis (antes solo con setup ejecutable) y deriva excursiones + primeros cruces; el ATR% del TF primario se reconstruye desde klines una sola vez (retroactivo, `atr_pct_at_analysis`). Endpoints POST /api/outcome/run + GET /api/outcome/stats. Lógica pura en utils/outcome.js + utils/pathMetrics.js. Flag OUTCOME_JOB_ENABLED. **El barrier se evalúa SOLO dentro de la vigencia declarada por el propio análisis** (`setup_validity_candles` × TF de `setup_tf_execution`, con fallback a `primary_tf`) vía `setupExpiryMs`/`candlesWithinValidity`: hasta el 2026-07-28 ese campo se persistía y **no lo leía nadie**, así que el barrier recorría los 7d completos y acreditaba como `tp1` un TP tocado días después de que el setup caducase — sesgo no neutro, porque el stop suele estar más cerca que el TP y alargar la ventana favorece al TP. La caducidad la marca ahora la vigencia, no el horizonte de 7d (un setup válido 24h ya no se queda `open` seis días más). **Las métricas de recorrido siguen usando los 7d completos**: miden el mercado, no la decisión. FAIL-OPEN: sin vigencia utilizable no se recorta (preserva el comportamiento anterior en vez de inventar una ventana)
+  outcomeService.js          ← Job de backtesting (index.js, cada OUTCOME_JOB_INTERVAL_SEC=900s): runOutcomeJob() rellena analysis_outcome (precios 1h/4h/24h/7d vía klines históricas, outcome direccional, barrier TP/stop) **+ métricas de RECORRIDO (Fase 5)**: pide las klines 1h para TODOS los análisis (antes solo con setup ejecutable) y deriva excursiones + primeros cruces. **B1 (2026-08-09) — unificación de los dos ATR%:** `atr_pct_at_analysis` prefiere ahora `analyses.atr_pct_decision` (180 velas, el mismo ATR% de DECISIÓN que ya gobierna `dynamicNearLevelPct`/`priceBandPct`, persistido desde `assembleAnalyzeContext`) en vez de reconstruir con 19 velas (`ATR_PERIOD+5`) desde klines — los dos ATR% del mismo instante podían divergir (mordió una vez, 01-08). La reconstrucción de 19 velas (`fetchAtrPctAt`) queda como fallback SOLO para filas anteriores a este campo. Endpoints POST /api/outcome/run + GET /api/outcome/stats. Lógica pura en utils/outcome.js + utils/pathMetrics.js. Flag OUTCOME_JOB_ENABLED. **El barrier se evalúa SOLO dentro de la vigencia declarada por el propio análisis** (`setup_validity_candles` × TF de `setup_tf_execution`, con fallback a `primary_tf`) vía `setupExpiryMs`/`candlesWithinValidity`: hasta el 2026-07-28 ese campo se persistía y **no lo leía nadie**, así que el barrier recorría los 7d completos y acreditaba como `tp1` un TP tocado días después de que el setup caducase — sesgo no neutro, porque el stop suele estar más cerca que el TP y alargar la ventana favorece al TP. La caducidad la marca ahora la vigencia, no el horizonte de 7d (un setup válido 24h ya no se queda `open` seis días más). **Las métricas de recorrido siguen usando los 7d completos**: miden el mercado, no la decisión. FAIL-OPEN: sin vigencia utilizable no se recorta (preserva el comportamiento anterior en vez de inventar una ventana)
   cacheService.js            ← Cache en memoria con TTL
 src/utils/
   indicators.js              ← Funciones matemáticas puras (sin I/O)
@@ -471,13 +471,13 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | `calculateCVD(candles)` | Cumulative Volume Delta — mismo patrón taker_real / heuristic. Delta real = `2*taker_buy_base - volume` |
 | `calculateVWAP(candles, period?)` | VWAP (rolling 20-period) — Volume-Weighted Average Price |
 | `calculateFibonacci(high, low, levels?)` | Niveles Fibonacci — el wrapper en `indicatorService` lo expone como `{ swing_high, swing_low, swing_high_date, swing_low_date, type: 'retracement', levels[] }` |
-| `calculateSupportResistance(candles, ...)` | Soporte & Resistencia sobre **pivotes fractales** con **ancla fija**. Devuelve `{supports, resistances}` sin campo `type`. `touches` = rechazos locales reales, no tiempo de permanencia (ver auditoría de umbrales T4) |
+| `calculateSupportResistance(candles, ...)` | Soporte & Resistencia sobre **pivotes fractales** con **ancla fija**. Devuelve `{supports, resistances}` sin campo `type`. `touches` = rechazos locales reales, no tiempo de permanencia (ver auditoría de umbrales T4). **F2 (2026-08-09):** la tolerancia de agrupamiento (4º argumento) la calcula ahora `indicatorService.computeIndicators` como `0.30 × ATR%` del TF (`SR_TOLERANCE_ATR_MULT`, medido en `scripts/auditSrTolerance.mjs`) en vez del `SR_TOLERANCE_PCT` fijo (0.5%) — antes BTC agrupaba el doble de agresivo que SOL en unidades de ATR, y el filtro `touches>=3` del veto variaba 19.5–31.0% entre monedas por eso. `SR_TOLERANCE_PCT` sigue viva como fallback cuando no hay ATR. La función en sí no cambia — ya aceptaba `tolerancePct` como parámetro |
 | `detectRSIDivergence(closes, ...)` | Divergencias RSI |
 | `detectMarketRegime(candles, closes)` | Régimen TRENDING/RANGING/HIGH_VOLATILITY — devuelve string plano, no objeto |
 
 **Helpers adicionales (no en `indicators.js`):**
 - `calculateVolumeProfile(candles, opts?)` en `utils/volumeProfile.js` — POC, VAH, VAL, HVN/LVN (top 5), bin_size, total_volume. Distribución uniforme: cada vela contribuye `volume / numBins` a cada bin que cubre su rango.
-- `computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta })` en `services/indicatorService.js` — string ponderado por jerarquía del SYSTEM_PROMPT: estructura 50% (ADX+SuperTrend), ejecución 30% (RSI+MACD+WaveTrend+StochRSI), volumen 20%. Devuelve `strongly_bullish | bullish | neutral | bearish | strongly_bearish`.
+- `computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta })` en `services/indicatorService.js` — string ponderado por jerarquía del SYSTEM_PROMPT: estructura 50% (ADX+SuperTrend), ejecución 30% (RSI+MACD+WaveTrend+StochRSI), volumen 20%. Devuelve `strongly_bullish | bullish | neutral | bearish | strongly_bearish`. **B4 (2026-08-09):** el voto de ADX en la pata estructural usa `signWithDeadband(plus_di - minus_di, ADX_DI_DEADBAND=3)` en vez de un `? 1 : -1` binario — medido (`scripts/auditComputeTrend.mjs`, sección B4): |plus_di-minus_di| en régimen no-ranging tiene p10≈3.3, una franja real de empates ruidosos. **SuperTrend se midió igual y se dejó SIN banda muerta**: la distancia al nivel de flip en unidades de ATR no muestra cúmulo cerca de cero (su propio mecanismo de bandas ya actúa como histéresis) — no tocar sin datos nuevos. Efecto: `neutral` sube del 4.4% histórico a ~7-8% (menos disparado por empates de ADX, más por desacuerdo estructural real).
 - `calculateSMC(candles, opts?)` en `utils/smc.js` — wrapper que devuelve `{ last_bos, last_choch, unmitigated_fvgs }`. Funciones internas: `detectSwings` (pivote fractal lookback=2), `detectLastBOS` (continuación de tendencia HH/HL o LH/LL), `detectLastCHoCH` (ruptura en dirección opuesta = primer aviso de reversión), `detectUnmitigatedFVGs` (ventana 100 velas, top 5 por dirección, más recientes primero). Expuesto como `technical[tf].smc`.
 
 ---
@@ -486,8 +486,8 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 
 | | |
 |---|---|
-| Código | **`v9_2_trigger_price`** · gate `g2_no_prepare_gate` · **817 tests** (38 suites) |
-| Fase | **PRODUCTO v1 ENTREGADO** (2026-08-03) — acumulando muestra, sin punto cero pendiente |
+| Código | **`v9_2_trigger_price`** · gate `g2_no_prepare_gate` · feature `f2_sr_atr_norm_adx_deadband` · **825 tests** (38 suites) |
+| Fase | **Punto Cero 6 — fase 1 IMPLEMENTADA Y DESPLEGADA, fase 2 CERRADA SIN CÓDIGO (2026-08-09).** Fase 1: B1 (unifica los dos ATR%) + F2 (SR_TOLERANCE normalizado por ATR, k=0.30) + B4 (banda muerta ADX en `computeTrend`) — en producción. Fase 2 (C2 banda OI, C6 prompt anti-formulario): medida antes de reactivar el cron, las tres hipótesis se cayeron con la muestra de 56 análisis — **sin cambio de código**. Recogida sigue PAUSADA (H4 confirmada, ver SESSION_STATE.md §7) — solo queda ejecutar el ritual de punto cero (backup → `dbClear analyses` → resembrar → descomentar crons) para reanudar |
 | Producto | Lectura + geometría condicional + 3 cifras medidas + registro del shadow trade, en el panel |
 | Producción | Pi `192.168.1.250:8080` · **3 monedas** (SOL/BTC/ETH), fijo + oportunista |
 | Dónde mirar | **[`doc/REORIENTACION_LISTA_CERRADA.md`](./doc/REORIENTACION_LISTA_CERRADA.md)** §6-bis (sistema objetivo) · §7 (estado) · §7-bis (congelado) · **`SESSION_STATE.md` §0-R** (relato y motivo) |
@@ -943,6 +943,71 @@ CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `-
 ### Ficheros Docker (alternativa, NO en uso)
 
 `backend/Dockerfile`, `frontend/Dockerfile` y `docker-compose.yml` siguen en el repo por si algún día se migra al modelo contenedores + reverse-proxy (p. ej. al añadir más proyectos a la Pi). El diseño single-process actual se contiene en 1 sola imagen trivialmente. El plan original documentado (NPM en `:80` enrutando por hostname, red externa `proxy`, dos contenedores) queda **archivado** — no refleja lo desplegado.
+
+---
+
+## Punto Cero 6, fase 1 — B1 + B4 + F2 (2026-08-09, `f1_atr180_band050` → `f2_sr_atr_norm_adx_deadband`)
+
+Tras pausar la recogida (56 análisis, H4 confirmada — ver SESSION_STATE.md §7), primer lote de
+la lista cerrada del backlog §6.2: solo lo **firme y ya medido**, sin reabrir la pregunta
+direccional (Fase 0/M9 siguen NO-GO). Los condicionales (C2 banda OI, C6 prompt) esperan a una
+fase 2 con medición propia — decisión explícita del usuario ("paso a paso"). **825 tests**
+(38 suites, +8 sobre los 817 previos).
+
+- **B1 · unificación de los dos ATR%.** `analyses.atr_pct_decision` (columna nueva, aditiva)
+  persiste el ATR% de DECISIÓN (180 velas, ya vivía en `context.atrPct` sin guardarse) desde
+  `buildAnalysisHeader`. `outcomeService.js` lo prefiere sobre su propia reconstrucción de 19
+  velas (`fetchAtrPctAt`), que queda de fallback solo para filas anteriores a este campo — y de
+  paso ahorra una petición a Binance por análisis en el job. M4 (`auditTriggerBaseRate`
+  parametrizado, 04-08) ya había confirmado que el cambio de eje mueve `TRIGGER_BASE_RATE`
+  ≤1.1 pt con anclajes idénticos, así que no hizo falta re-medir esa tabla.
+- **F2 · `SR_TOLERANCE_PCT` normalizado por ATR.** Agrupar niveles S/R con un % absoluto era
+  incoherente con `dynamicNearLevelPct` (ya normalizado por ATR desde T5). Medido de nuevo hoy
+  con `scripts/auditSrTolerance.mjs` + una sonda fina (`k=0.30/0.35/0.40`, 180d/4h/3 monedas):
+  **k=0.30** (`SR_TOLERANCE_ATR_MULT`, nueva constante) es el punto que menos dispersa entre
+  monedas (19.8–23.2%, 3.4 pt) dejando el nivel medio de 4h donde ya estaba — **no k≈0.35**,
+  que se había anotado antes sin probar el punto exacto y en realidad sube el nivel medio por
+  encima del actual. Consumida en `indicatorService.computeIndicators`; `calculateSupportResistance`
+  no cambia (ya aceptaba `tolerancePct` como argumento).
+- **B4 · banda muerta en el voto de ADX de `computeTrend`.** Medido hoy sobre klines reales
+  (180d/4h/3 monedas, n=625 no-ranging): `|plus_di - minus_di|` tiene p10≈3.3 — una franja real
+  de empates ruidosos que el voto binario volcaba a ±1 completo, igual que le pasaba a la pata
+  de ejecución antes de H5. Nueva constante `ADX_DI_DEADBAND=3` (exportada, y **`scripts/auditComputeTrend.mjs`
+  la importa en vez de reimplementarla** — dos "3" que puedan divergir es la clase de bug que
+  este proyecto lleva sprints eliminando). **SuperTrend se midió igual y se descartó**: la
+  distancia al nivel de flip en unidades de ATR no tiene cúmulo cerca de cero (su propio
+  mecanismo de bandas ya actúa como histéresis) — no tocar sin datos nuevos, mismo criterio que
+  DVOL o la banda de precio 0.50×. Efecto medido: `neutral` sube de ~4.4% a ~7-8% (menos
+  parpadeo de ADX, más desacuerdo estructural real). ⚠️ Corregidas de paso 6 fixtures de test
+  en `indicators.test.js` que construían `adx:{trend_direction:'bullish'}` sin `plus_di`/`minus_di`
+  — con el cambio, esos campos ausentes dan `NaN` y el voto se neutraliza a 0 en vez de asumir
+  el signo de `trend_direction` (que `computeTrend` ya no lee); los tests pasaban igual por
+  coincidencia aritmética, pero medían otra cosa de la que decían.
+- **Deploy verificado el mismo día** (2026-08-09): `./scripts/deploy.sh` a la Pi, `cryptex.service`
+  activo, migración de `atr_pct_decision` aplicada en el log de arranque, health check en verde.
+
+### Fase 2 — C2 + C6 medidos ANTES de reactivar el cron, cerrados SIN código (mismo día)
+
+Antes de ejecutar el ritual de punto cero se preguntó: F2 y B4 (a diferencia de B1, que es solo
+medición/backtest) **sí tocan la ruta de decisión** — reactivar el cron ya arriesgaba medir una
+configuración que la fase 2 podía volver a cambiar, el mismo patrón de "punto cero → siguiente
+hallazgo → repetir" que la reorientación del 03-08 existió para cortar. Se midió primero:
+
+- **C2 (banda OI 0,50×→0,35×) — NO se toca.** `auditPriceBand.mjs` re-ejecutado en la Pi con la
+  ventana de Coinalyze de HOY (rueda; no es la del 30-07): aflojar a 0,35× **empeora** el lift en
+  SOL (`OI↑px↑` 17,2→13,0 pt; `OI↓px↑` 13,8→7,2) y es mixto en ETH; en BTC ninguna banda arregla
+  que `OI↑px↑` no replique (ya sabido, A8-bis). 0,50× sale mejor que 0,35×, no solo empatado.
+- **C6 (prompt "anti-formulario") — cerrado, sin cambios.** Los tres síntomas se caen con la
+  muestra de 56 análisis: (a) las rachas más largas de `contradiction_codes` idéntico (SOL n=8,
+  ETH n=7) coinciden con precio moviéndose solo 0,26–2,54% durante la racha — persistencia real
+  del mercado, no un "formulario" (y `contradiction_codes` lo calcula `gating.js` de forma
+  determinista, el LLM no lo escribe); (b) el R:R por moneda sobre los 56 análisis no tiene
+  tendencia (la "degradación monótona" era ruido de una racha de 4 puntos); (c) el déficit de
+  disparo del gatillo está concentrado en `short` (lift −22,4 vs `long` −4,0) — la misma
+  asimetría que C7/D6 ya habían cerrado como propiedad de la rúbrica, no de la redacción.
+
+**Consecuencia:** fase 1 queda como el único cambio de ruta de decisión de la sesión — no hace
+falta un segundo punto cero. Detalle completo en SESSION_STATE.md §5 (diario 2026-08-09 18:30).
 
 ---
 

@@ -18,6 +18,7 @@ import {
 } from '../src/utils/indicators.js';
 import { computeTrend, computeIndicators, signWithDeadband } from '../src/services/indicatorService.js';
 import { calculateVolumeProfile } from '../src/utils/volumeProfile.js';
+import { SR_LOOKBACK, SR_MIN_TOUCHES, SR_TOLERANCE_ATR_MULT } from '../src/config/constants.js';
 import {
   detectSwings,
   detectLastBOS,
@@ -685,7 +686,7 @@ describe('computeTrend', () => {
   test('H5 · MACD histogram marginal (ruido sub-tick) no vuelca la ejecución', () => {
     // Con value/signal a escala 500, un histograma de 1 (0.2% de la escala) queda dentro
     // del dead-band (2%) → cuenta como 0, no como -1. Sin dead-band habría restado un nivel.
-    const base = { adx: { trend_direction: 'bullish', regime: 'trending' }, superTrend: { trend: 'UP' } };
+    const base = { adx: { plus_di: 30, minus_di: 10, regime: 'trending' }, superTrend: { trend: 'UP' } };
     const withNoise = computeTrend({ ...base, macd: { value: 500, signal: 499, histogram: 1 } });
     const withZero  = computeTrend({ ...base, macd: { value: 500, signal: 500, histogram: 0 } });
     expect(withNoise).toBe(withZero); // el ruido marginal no cambia la etiqueta
@@ -695,7 +696,7 @@ describe('computeTrend', () => {
     const trend = computeTrend({
       rsi: { value: 70 },
       macd: { histogram: 1 },
-      adx: { trend_direction: 'bullish' },
+      adx: { plus_di: 30, minus_di: 10 },
       superTrend: { trend: 'UP' },
       waveTrend: { wt1: 10, wt2: 5 },
       stochRsi: { k: 60, d: 50 },
@@ -708,7 +709,7 @@ describe('computeTrend', () => {
     const trend = computeTrend({
       rsi: { value: 30 },
       macd: { histogram: -1 },
-      adx: { trend_direction: 'bearish' },
+      adx: { plus_di: 10, minus_di: 30 },
       superTrend: { trend: 'DOWN' },
       waveTrend: { wt1: -10, wt2: -5 },
       stochRsi: { k: 40, d: 50 },
@@ -723,7 +724,7 @@ describe('computeTrend', () => {
       macd: { histogram: -1 },
       waveTrend: { wt1: -10, wt2: -5 },
       stochRsi: { k: 40, d: 50 },
-      adx: { trend_direction: 'bullish' },
+      adx: { plus_di: 30, minus_di: 10 },
       superTrend: { trend: 'UP' },
       volumeDelta: { buy_pressure_pct: 50 },
     });
@@ -746,7 +747,7 @@ describe('computeTrend', () => {
   test('two setups with same bullScore but different distribution diverge', () => {
     // Setup A: estructura alcista pura, ejecución neutra
     const a = computeTrend({
-      adx: { trend_direction: 'bullish' },
+      adx: { plus_di: 30, minus_di: 10 },
       superTrend: { trend: 'UP' },
     });
     // Setup B: ejecución alcista pura, estructura ausente
@@ -1091,6 +1092,37 @@ describe('computeIndicators — flags precalculados baratos (Fase 5)', () => {
   });
 });
 
+describe('computeIndicators — S/R con tolerancia normalizada por ATR (F2, 2026-08-09)', () => {
+  // Serie de baja volatilidad (paso fijo pequeño → ATR% bajo).
+  const calm = Array.from({ length: 60 }, (_, i) => {
+    const base = 100 + i * 0.1;
+    return { t: i * 3600000, open: base, high: base + 0.15, low: base - 0.05, close: base + 0.1, volume: 1000 };
+  });
+  // Misma forma de precio, pero con rangos intradía mucho más anchos → ATR% alto.
+  const volatile = Array.from({ length: 60 }, (_, i) => {
+    const base = 100 + i * 0.1;
+    return { t: i * 3600000, open: base, high: base + 6, low: base - 4, close: base + 0.1, volume: 1000 };
+  });
+
+  test('la tolerancia de agrupamiento usada es 0.30 × ATR%, no el 0.5% fijo (cableado)', () => {
+    for (const candles of [calm, volatile]) {
+      const ind = computeIndicators(candles, '1h');
+      const expectedTolerancePct = (SR_TOLERANCE_ATR_MULT * ind.atr.pct) / 100;
+      const direct = calculateSupportResistance(candles, SR_LOOKBACK, SR_MIN_TOUCHES, expectedTolerancePct);
+      expect(ind.support_resistance).toEqual(direct);
+    }
+  });
+
+  test('a más ATR%, mayor tolerancia en unidades de precio (no un % fijo entre series)', () => {
+    const calmInd = computeIndicators(calm, '1h');
+    const volatileInd = computeIndicators(volatile, '1h');
+    expect(volatileInd.atr.pct).toBeGreaterThan(calmInd.atr.pct);
+    const tolCalm = (SR_TOLERANCE_ATR_MULT * calmInd.atr.pct) / 100;
+    const tolVolatile = (SR_TOLERANCE_ATR_MULT * volatileInd.atr.pct) / 100;
+    expect(tolVolatile).toBeGreaterThan(tolCalm);
+  });
+});
+
 // ─── Audit hardening tests ───────────────────────────────────────────────────
 
 describe('calculateRSI — flat market guard', () => {
@@ -1202,7 +1234,7 @@ describe('computeTrend — ADX ranging does not contribute structure', () => {
 
   test('trending ADX does contribute structure (full bull stack reaches strongly_bullish)', () => {
     const trend = computeTrend({
-      adx: { trend_direction: 'bullish', regime: 'trending' },
+      adx: { plus_di: 30, minus_di: 10, regime: 'trending' },
       superTrend: { trend: 'UP' },
       rsi: { value: 70 },
       macd: { histogram: 1 },
@@ -1226,6 +1258,56 @@ describe('computeTrend — ADX ranging does not contribute structure', () => {
     // structure=+1 (solo SuperTrend), exec=+1, vol=+1 → bias = 0.5+0.3+0.2 = 1.0
     // pero structure ahora pesa solo 0.5 (no 1.0 con dos componentes), igualmente strongly_bullish
     expect(['bullish', 'strongly_bullish']).toContain(trend);
+  });
+});
+
+describe('computeTrend — ADX_DI_DEADBAND en la pata estructural (B4, 2026-08-09)', () => {
+  test('DI+/DI- casi empatados (diff < 3) → ADX aporta 0, pero sigue contando en el denominador', () => {
+    // diff=2 < ADX_DI_DEADBAND(3): mismo caso que el 'split' de ranging (ADX no aporta signo),
+    // pero aquí SÍ cuenta en structureCount (no está en ranging) — dilución, no exclusión.
+    const withNearTie = computeTrend({
+      adx: { plus_di: 21, minus_di: 19, regime: 'trending' }, // diff=2
+      superTrend: { trend: 'UP' },
+    });
+    // structureScore = 0(ADX dead-banded) + 1(ST) = 1; structureCount=2 → structure=0.5
+    // bias = 0.5*0.5 = 0.25 → bullish (no strongly_bullish, que exigiría el voto de ADX también)
+    expect(withNearTie).toBe('bullish');
+
+    const withClearAdx = computeTrend({
+      adx: { plus_di: 30, minus_di: 10, regime: 'trending' }, // diff=20, claramente por encima
+      superTrend: { trend: 'UP' },
+    });
+    // structureScore = 1(ADX) + 1(ST) = 2; structure=1 → bias=0.5 → sigue "bullish"
+    // (el bias de 0.5 no llega a strongly_bullish sin aporte de ejecución/volumen), pero el
+    // punto es que difiere internamente: con acuerdo total, un ADX contrario SÍ cambiaría esto.
+    expect(withClearAdx).toBe('bullish');
+
+    // La prueba real de la banda muerta: con acuerdo casi empatado y SuperTrend en la
+    // dirección CONTRARIA, la etiqueta debe depender solo de SuperTrend (ADX = 0 no debe
+    // volcar el signo hacia bearish por un empate de 2 puntos).
+    const nearTieOpposedToSuperTrend = computeTrend({
+      adx: { plus_di: 19, minus_di: 21, regime: 'trending' }, // diff=-2, "bearish" de matrícula
+      superTrend: { trend: 'UP' },
+    });
+    expect(nearTieOpposedToSuperTrend).toBe('bullish'); // ADX no arrastra hacia bearish/neutral
+  });
+
+  test('DI+/DI- claramente separado en contra de SuperTrend → sí se neutralizan entre sí', () => {
+    const trend = computeTrend({
+      adx: { plus_di: 10, minus_di: 30, regime: 'trending' }, // diff=-20, bearish real
+      superTrend: { trend: 'UP' },
+    });
+    // structureScore = -1(ADX) + 1(ST) = 0 → structure=0 → sin ejecución/volumen, neutral.
+    expect(trend).toBe('neutral');
+  });
+
+  test('sin plus_di/minus_di (NaN) el voto de ADX se neutraliza en vez de asumir un signo', () => {
+    // Salvaguarda: sin los campos, `signWithDeadband(NaN, ...)` es 0, no un ±1 arbitrario.
+    const trend = computeTrend({
+      adx: { regime: 'trending' }, // sin plus_di/minus_di
+      superTrend: { trend: 'UP' },
+    });
+    expect(trend).toBe('bullish'); // solo SuperTrend aporta; ADX ni suma ni resta
   });
 });
 

@@ -20,7 +20,10 @@ import {
 import { percentileRank } from '../utils/percentiles.js';
 import { calculateVolumeProfile } from '../utils/volumeProfile.js';
 import { calculateSMC } from '../utils/smc.js';
-import { RSI_OVERBOUGHT, RSI_OVERSOLD, VOLUME_PROFILE_VALID_THRESHOLD_PCT, TIMEFRAME_MINUTES } from '../config/constants.js';
+import {
+  RSI_OVERBOUGHT, RSI_OVERSOLD, VOLUME_PROFILE_VALID_THRESHOLD_PCT, TIMEFRAME_MINUTES,
+  SR_LOOKBACK, SR_MIN_TOUCHES, SR_TOLERANCE_PCT, SR_TOLERANCE_ATR_MULT,
+} from '../config/constants.js';
 
 // `cvdStrength` vivía aquí con cortes fijos 2 %/8 %. Se retiró en la auditoría de umbrales
 // (2026-07-26, T3): el corte caía sobre la mediana del 4h y dejaba "strong" vacío por encima
@@ -162,7 +165,12 @@ export function computeIndicators(candles, timeframe) {
   };
 
   // ── Support & Resistance ─────────────────────────────────────
-  const sr = calculateSupportResistance(candles);
+  // F2 (2026-08-09): tolerancia de agrupamiento normalizada por ATR (k=0.30, medido en
+  // `auditSrTolerance.mjs`) en vez del 0.5% absoluto — antes BTC agrupaba el doble de
+  // agresivo que SOL en unidades de volatilidad. Sin ATR (candles insuficientes) se cae al
+  // fallback fijo `SR_TOLERANCE_PCT`, igual que el resto de umbrales normalizados del proyecto.
+  const srTolerancePct = atr?.pct ? (SR_TOLERANCE_ATR_MULT * atr.pct) / 100 : SR_TOLERANCE_PCT;
+  const sr = calculateSupportResistance(candles, SR_LOOKBACK, SR_MIN_TOUCHES, srTolerancePct);
 
   // ── Volume Profile ───────────────────────────────────────────
   const vpRaw = calculateVolumeProfile(candles);
@@ -261,6 +269,24 @@ export function signWithDeadband(diff, band) {
  *   estructura (50%) > ejecución (30%) > volumen local (20%).
  * Derivados y on-chain son macro y se incorporan al payload fuera del bloque technical.
  */
+// B4 (2026-08-09) · banda muerta del voto de ADX en la pata ESTRUCTURAL de `computeTrend`.
+// Medido sobre klines reales (180d, 4h, SOL/BTC/ETH, n=625 ventanas no-ranging):
+// |plus_di - minus_di| tiene p10≈3.3 / p20≈5.75 / mediana≈12.8 — hay una franja real de
+// empates ruidosos por debajo de ~3 puntos (ver scripts/auditComputeTrend.mjs, sección de
+// banda muerta). 3 puntos es del mismo orden que la banda de StochRSI (3, escala 0-100
+// compartida con el DI). SIN esta banda, `adx.trend_direction` volcaba un ±1 completo ante
+// diferencias mínimas de DI+/DI-, igual que hacía la pata de ejecución antes de H5.
+//
+// SuperTrend se midió igual (distancia del close al nivel de flip, en unidades de ATR:
+// p5≈0.43 / p10≈0.74 / mediana≈2.18) y NO se le añade banda muerta: no hay cúmulo cerca de
+// cero — su propio mecanismo de bandas (ratchet) ya actúa como histéresis y no muestra
+// evidencia de parpadeo. No tocar sin datos nuevos (mismo criterio que DVOL o la banda de
+// precio 0.50×: medido y descartado).
+// Exportada para que `scripts/auditComputeTrend.mjs` mida contra la MISMA constante en vez
+// de duplicarla — dos "3" que puedan divergir es justo la clase de bug que este proyecto
+// lleva sprints eliminando (dueño único).
+export const ADX_DI_DEADBAND = 3;
+
 export function computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, volumeDelta }) {
   // Estructura: ADX trend_direction + SuperTrend.
   // En ranging el trend_direction es ruido estadístico (DI+ vs DI- por diferencia
@@ -268,7 +294,7 @@ export function computeTrend({ rsi, macd, adx, superTrend, waveTrend, stochRsi, 
   // hay tendencia (trending o weak_trend).
   let structureScore = 0, structureCount = 0;
   if (adx && adx.regime !== 'ranging') {
-    structureScore += adx.trend_direction === 'bullish' ? 1 : -1;
+    structureScore += signWithDeadband(adx.plus_di - adx.minus_di, ADX_DI_DEADBAND);
     structureCount++;
   }
   if (superTrend) {

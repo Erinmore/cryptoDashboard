@@ -42,7 +42,7 @@ import {
   calculateRSI, calculateMACD, calculateADX, calculateSuperTrend,
   calculateWaveTrend, calculateStochRSI, calculateVolumeDelta,
 } from '../src/utils/indicators.js';
-import { computeTrend } from '../src/services/indicatorService.js';
+import { computeTrend, signWithDeadband, ADX_DI_DEADBAND } from '../src/services/indicatorService.js';
 
 const COINS = (process.env.COINS ?? 'SOL,BTC,ETH').split(',');
 const TFS = (process.env.TFS ?? '1h,4h,1D').split(',');
@@ -76,11 +76,15 @@ async function klines(symbol, interval, limit, endTime) {
  * para volver a |bias| < 0,2. Medido: con acuerdo estructural `neutral` sale el 1,04 %;
  * con la estructura dividida, el 47,47 %. O sea que `neutral` no significa "sin sesgo":
  * significa, casi siempre, "ADX y SuperTrend se contradicen".
+ *
+ * B4 (2026-08-09): el voto de ADX usa `signWithDeadband` + `ADX_DI_DEADBAND`, IMPORTADOS de
+ * `indicatorService.js` (no reimplementados) — así esta función describe exactamente lo que
+ * hace `computeTrend` en producción, banda muerta incluida.
  */
 function structureOf(candles) {
   const adx = calculateADX(candles), st = calculateSuperTrend(candles);
   let score = 0, count = 0;
-  if (adx && adx.regime !== 'ranging') { score += adx.trend_direction === 'bullish' ? 1 : -1; count++; }
+  if (adx && adx.regime !== 'ranging') { score += signWithDeadband(adx.plus_di - adx.minus_di, ADX_DI_DEADBAND); count++; }
   if (st) { score += st.trend === 'UP' ? 1 : -1; count++; }
   return count > 0 ? score / count : 0;
 }
@@ -175,8 +179,9 @@ for (const l of LABELS) {
     + `  (n=${agg.counts[l]})`);
 }
 
-console.log('\n    Descomposición del reparto — el término de ESTRUCTURA pesa 0,5 y sus dos');
-console.log('    componentes (ADX en tendencia, SuperTrend) son binarios SIN banda muerta:');
+console.log('\n    Descomposición del reparto — el término de ESTRUCTURA pesa 0,5. Desde B4');
+console.log('    (2026-08-09) el voto de ADX lleva banda muerta (±3 en DI+/DI-); SuperTrend');
+console.log('    sigue binario (medido y descartado — ver sección B4 más abajo):');
 console.log(`      estructura con ACUERDO (±1 → aporta ±0,5): ${(agg.struct.agree / agg.n * 100).toFixed(1)}%`
   + `  → de ellas neutral: ${agg.neutralWhen.agree} (${(agg.neutralWhen.agree / Math.max(agg.struct.agree, 1) * 100).toFixed(2)}%)`);
 console.log(`      estructura DIVIDIDA o ausente (0):         ${(agg.struct.split / agg.n * 100).toFixed(1)}%`
@@ -187,3 +192,48 @@ console.log(`    ${'etiqueta'.padEnd(17)}${'deriva ventana'.padStart(16)}${`deri
 for (const l of LABELS) {
   console.log(`    ${l.padEnd(17)}${fmt(mean(agg.past[l])).padStart(16)}${fmt(mean(agg.fwd[l])).padStart(18)}`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// B4 (2026-08-09) · ¿merece banda muerta la pata ESTRUCTURAL? Dos componentes, dos preguntas:
+//   - ADX: |plus_di - minus_di| en régimen no-ranging — ¿hay una franja de empates ruidosos?
+//   - SuperTrend: distancia del close al nivel de flip, en unidades de ATR — ¿hay un cúmulo
+//     cerca de cero que delate parpadeo, o el propio mecanismo de bandas ya lo evita?
+// Fija el ANCLA de `ADX_DI_DEADBAND` (indicatorService.js): debe caer cerca del p10 medido
+// aquí. Si esta medición cambiara de régimen, revisar la constante junto con este script.
+// ─────────────────────────────────────────────────────────────────────────────────────────
+const diDiffs = [];
+const stDistAtr = [];
+for (const tf of TFS) {
+  const win = TF_LIMIT[tf];
+  for (const coin of COINS) {
+    try {
+      const all = await klines(coin, BINANCE_TF[tf], win + ANCHORS);
+      if (all.length < win + 20) continue;
+      for (let end = win; end <= all.length; end += 6) {
+        const w = all.slice(end - win, end);
+        const adx = calculateADX(w);
+        if (adx && adx.regime !== 'ranging') diDiffs.push(Math.abs(adx.plus_di - adx.minus_di));
+        const st = calculateSuperTrend(w);
+        if (st && st.atr > 0) {
+          const close = w.at(-1).close;
+          const level = st.trend === 'UP' ? st.support : st.resistance;
+          if (level != null) stDistAtr.push(Math.abs(close - level) / st.atr);
+        }
+      }
+    } catch { /* moneda/TF sin datos suficientes, se ignora en esta sección */ }
+  }
+}
+const pctl = (arr, p) => {
+  const s = [...arr].sort((a, b) => a - b);
+  return s.length ? s[Math.floor(s.length * p)] : null;
+};
+const pfmt = (x) => (x == null ? '  —  ' : x.toFixed(2));
+console.log(`\n${'═'.repeat(78)}\nB4 · ¿BANDA MUERTA EN LA PATA ESTRUCTURAL? (n_adx=${diDiffs.length}, n_st=${stDistAtr.length})`);
+console.log('    |plus_di - minus_di| en régimen no-ranging (candidato a banda muerta):');
+console.log(`      p5=${pfmt(pctl(diDiffs, 0.05))}  p10=${pfmt(pctl(diDiffs, 0.10))}  `
+  + `p20=${pfmt(pctl(diDiffs, 0.20))}  mediana=${pfmt(pctl(diDiffs, 0.5))}`
+  + `  → ADX_DI_DEADBAND=${ADX_DI_DEADBAND} (indicatorService.js)`);
+console.log('    distancia SuperTrend→flip, en unidades de ATR (¿cúmulo cerca de 0?):');
+console.log(`      p5=${pfmt(pctl(stDistAtr, 0.05))}  p10=${pfmt(pctl(stDistAtr, 0.10))}  `
+  + `p20=${pfmt(pctl(stDistAtr, 0.20))}  mediana=${pfmt(pctl(stDistAtr, 0.5))}`
+  + `  → sin banda muerta (no hay cúmulo cerca de 0; su ratchet ya actúa como histéresis)`);
