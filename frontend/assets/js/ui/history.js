@@ -434,14 +434,26 @@ function renderStats(s) {
       `Movimiento limpio de ${k.target_k_atr}×ATR antes de ${k.adverse_k_atr}×ATR en contra.`);
     // El % absoluto no dice nada sin la tasa base: si esperar acierta al mismo ritmo que
     // un instante al azar, la abstención no aporta información. Lo que informa es el lift.
+    // 2026-08-09: `offered_pct` lleva IC de Wilson — sin él, un lift negativo con muestra
+    // pequeña se leía como "peor que el azar" cuando la base cae dentro del propio intervalo.
+    // Mismo tratamiento que `expectancy_r`: si el IC no aísla la base, el titular es el rango
+    // y solo se colorea cuando `lift_significant` es true.
     if (opp.lift_pct != null) {
       const signo = opp.lift_pct > 0 ? '+' : '';
-      m('vs. azar (lift)', `${signo}${opp.lift_pct} pts`,
-        opp.lift_pct > 5 ? 'loss' : opp.lift_pct < -5 ? 'win' : '',
+      const puntoLift = `${signo}${opp.lift_pct} pts`;
+      const rangoOfrecido = opp.offered_pct_ci_low == null ? null
+        : `${opp.offered_pct_ci_low}–${opp.offered_pct_ci_high}%`;
+      const titular = !opp.lift_significant && rangoOfrecido ? `IC ${rangoOfrecido}` : puntoLift;
+      m('vs. azar (lift)', titular,
+        opp.lift_significant ? (opp.lift_pct > 0 ? 'loss' : 'win') : '',
         `Tasa base incondicional: ${opp.base_rate_pct}% (medida ${opp.base_rate_measured_at} `
         + 'sobre 90d de SOL/BTC/ETH). Negativo = se esperó en momentos que ofrecían MENOS '
-        + 'que el azar, o sea criterio. Cerca de 0 = la abstención no informa. '
-        + 'Positivo = se dejó pasar recorrido que sí estaba ahí.');
+        + 'que el azar. Positivo = se dejó pasar recorrido que sí estaba ahí. '
+        + (rangoOfrecido ? `Mercado ofrecía con IC 95%: ${rangoOfrecido}. ` : '')
+        + (opp.lift_significant
+          ? 'La base queda FUERA del intervalo: el lift sí se puede afirmar.'
+          : `Lift puntual: ${puntoLift}, pero la base (${opp.base_rate_pct}%) cae DENTRO del `
+            + 'intervalo — con esta muestra no se puede distinguir de azar todavía.'));
     }
     if (opp.median_hours_to_target != null) {
       m('Mediana hasta objetivo', `${opp.median_hours_to_target} h`, '',
@@ -499,13 +511,24 @@ function renderStats(s) {
     }
     // El porcentaje anterior, solo, no dice nada: hay que compararlo con lo que habría dado
     // el azar A IGUAL GEOMETRÍA (misma distancia normalizada y misma vigencia).
+    // 2026-08-09: mismo tratamiento que el lift de oportunidad — `trigger_rate_pct` lleva IC
+    // de Wilson, y solo se colorea/afirma cuando `trigger_lift_significant` es true.
     if (sh.trigger_lift_pct != null) {
-      m('vs. azar (lift)', `${sh.trigger_lift_pct > 0 ? '+' : ''}${sh.trigger_lift_pct} pt`,
-        sh.trigger_lift_pct > 0 ? 'win' : sh.trigger_lift_pct < 0 ? 'loss' : '',
+      const puntoLift = `${sh.trigger_lift_pct > 0 ? '+' : ''}${sh.trigger_lift_pct} pt`;
+      const rangoGatillo = sh.trigger_rate_ci_low == null ? null
+        : `${sh.trigger_rate_ci_low}–${sh.trigger_rate_ci_high}%`;
+      const titular = !sh.trigger_lift_significant && rangoGatillo ? `IC ${rangoGatillo}` : puntoLift;
+      m('vs. azar (lift)', titular,
+        sh.trigger_lift_significant ? (sh.trigger_lift_pct > 0 ? 'win' : 'loss') : '',
         `Tasa base para estas geometrías: ${sh.trigger_base_rate_pct}%. El lift es la `
         + 'diferencia, y es lo único que refuta o confirma: si los gatillos se dan al mismo '
-        + 'ritmo que por azar, nombrarlos no aporta criterio. El resultado por defecto es '
-        + `≈0. Curva medida el ${sh.trigger_base_rate_measured_at} (${sh.trigger_base_rate_source}).`);
+        + 'ritmo que por azar, nombrarlos no aporta criterio. '
+        + (rangoGatillo ? `Gatillo se dio con IC 95%: ${rangoGatillo}. ` : '')
+        + (sh.trigger_lift_significant
+          ? 'La base queda FUERA del intervalo: el lift sí se puede afirmar.'
+          : `Lift puntual: ${puntoLift}, pero la base (${sh.trigger_base_rate_pct}%) cae DENTRO `
+            + 'del intervalo — con esta muestra no se puede distinguir de azar todavía.')
+        + ` Curva medida el ${sh.trigger_base_rate_measured_at} (${sh.trigger_base_rate_source}).`);
     }
     // Referencia SIN la que el win-rate no se puede leer: con R:R 2 el equilibrio está en
     // 33 %, no en 50 %. Pintar contra 50 marcaría como pérdida una geometría rentable.

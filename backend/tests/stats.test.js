@@ -240,6 +240,34 @@ describe('summarizeOpportunity — comparación contra la tasa base', () => {
     expect(s.lift_pct).toBeCloseTo(15.2, 1);
   });
 
+  // 2026-08-09: `offered_pct`/`lift_pct` eran la otra proporción de la familia (junto a
+  // `trigger_rate_pct`) sin IC de Wilson — a diferencia de `win_rate`/`expectancy_r`, que sí
+  // lo llevan. Sin él, un lift negativo se lee como "peor que el azar" cuando puede ser sólo
+  // muestra insuficiente.
+  test('offered_pct lleva IC de Wilson, y la base cayendo dentro del IC marca lift NO significativo', () => {
+    const rows = [fila({ 2: 5 }, {}), fila({ 2: 6 }, {}), fila({}, {}), fila({}, {})];
+    const s = summarizeOpportunity(rows, { horizonH: 24 });
+    expect(s.offered_pct_ci_low).toBeCloseTo(15, 0);
+    expect(s.offered_pct_ci_high).toBeCloseTo(85, 0);
+    // La base (34.8) cae dentro de [15, 85] → el lift de +15.2 no es significativo con n=4.
+    expect(s.lift_significant).toBe(false);
+  });
+
+  test('sin ninguna fila ofrecida, el IC no inventa un 0% sólido (sigue siendo ancho)', () => {
+    const rows = [fila({}, {}), fila({}, {})];
+    const s = summarizeOpportunity(rows, { horizonH: 24 });
+    expect(s.offered_pct).toBe(0);
+    expect(s.offered_pct_ci_low).toBe(0);
+    expect(s.offered_pct_ci_high).toBeCloseTo(65.8, 0);
+  });
+
+  test('sin filas evaluables, el IC es null (no 0/0)', () => {
+    const s = summarizeOpportunity([{ path_first_passage: null }], { horizonH: 24 });
+    expect(s.offered_pct_ci_low).toBeNull();
+    expect(s.offered_pct_ci_high).toBeNull();
+    expect(s.lift_significant).toBeNull();
+  });
+
   test('el horizonte de 7d usa su propio par calibrado (4×, no 2×)', () => {
     // Con 2×/1× a 7 días la tasa base era 68,5% y saturaba: el objetivo escala con la
     // ventana, así que cada horizonte tiene sus múltiplos.

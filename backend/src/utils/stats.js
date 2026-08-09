@@ -571,6 +571,13 @@ export function summarizeOpportunity(rows, opts = {}) {
 
   const offeredPct = evaluable.length
     ? parseFloat(((offered.length / evaluable.length) * 100).toFixed(1)) : null;
+  // IC de Wilson (2026-08-09): `offered_pct`/`lift_pct` se leían como si el punto fuera
+  // sólido, pero era el único par de la familia (junto a `trigger_rate_pct`) sin intervalo —
+  // `win_rate`/`expectancy_r` sí lo llevan. Verificado con los 56 primeros análisis: en las
+  // 4 celdas medidas (24h/7d × global/por dirección) la base cae DENTRO del IC en las 4 — el
+  // "lift" negativo no es distinguible de ruido a este tamaño de muestra, y sin el IC a la
+  // vista es fácil leerlo como "el sistema va peor que el azar" en vez de "no se sabe todavía".
+  const offeredCi = wilsonInterval(offered.length, evaluable.length);
 
   // Comparación contra la tasa base: es lo que convierte el % en evidencia. Solo aplica
   // con el par calibrado del horizonte — con otros múltiplos la referencia medida no vale.
@@ -586,12 +593,18 @@ export function summarizeOpportunity(rows, opts = {}) {
     pending_n: pending,
     offered_n: offered.length,
     offered_pct: offeredPct,
+    offered_pct_ci_low: evaluable.length ? offeredCi.low : null,
+    offered_pct_ci_high: evaluable.length ? offeredCi.high : null,
     // lift < 0 → el sistema esperó en momentos que ofrecían MENOS que el azar (criterio).
     // lift ≈ 0 → esperó como quien no mira (la abstención no informa).
     // lift > 0 → esperó justo cuando había algo que operar (coste de oportunidad real).
+    // ⚠️ Leer SIEMPRE junto a `offered_pct_ci_*`: un lift negativo con la base DENTRO del IC
+    // no es "peor que el azar", es "esta muestra no tiene poder para decir nada todavía".
     base_rate_pct: base?.pct ?? null,
     lift_pct: base && offeredPct != null
       ? parseFloat((offeredPct - base.pct).toFixed(1)) : null,
+    lift_significant: base && evaluable.length
+      ? (base.pct < offeredCi.low || base.pct > offeredCi.high) : null,
     base_rate_discriminates: base?.discriminates ?? null,
     base_rate_measured_at: base ? OPPORTUNITY_BASE_RATE.measured_at : null,
     // Contexto de la referencia: se midió sobre velas 4h de SOL/BTC/ETH. Comparar contra
@@ -768,6 +781,11 @@ export function summarizeShadowTrades(rows, opts = {}) {
       .filter(Number.isFinite);
     const baseRate = baseRates.length ? parseFloat((baseRates.reduce((a, b) => a + b, 0) / baseRates.length).toFixed(1)) : null;
     const triggerRate = conclusive ? parseFloat(((triggered / conclusive) * 100).toFixed(1)) : null;
+    // IC de Wilson (2026-08-09): mismo hallazgo que en `summarizeOpportunity` — `trigger_rate_pct`
+    // era la otra proporción de la familia sin intervalo. Verificado con la muestra de 56: la
+    // base cae dentro del IC en total, en `long` y en `short` (el caso más extremo, lift −22,4,
+    // queda justo al borde del IC) — ninguno de los tres es lift `_significant` todavía.
+    const triggerCi = wilsonInterval(triggered, conclusive);
 
     // ── EXPECTATIVA ──────────────────────────────────────────────────────────
     // El win-rate solo no es interpretable: con R:R 1,77 el equilibrio está en el 36,2 %, así
@@ -804,10 +822,16 @@ export function summarizeShadowTrades(rows, opts = {}) {
 
     return {
       trigger_base_rate_pct: baseRate,
+      trigger_rate_ci_low: conclusive ? triggerCi.low : null,
+      trigger_rate_ci_high: conclusive ? triggerCi.high : null,
       // lift > 0 ⇒ el sistema nombra gatillos que se dan MÁS que a igual geometría por azar.
       // El resultado por defecto es lift ≈ 0: demostrar es que salga distinto.
+      // ⚠️ Leer junto a `trigger_rate_ci_*`: un lift negativo con la base dentro del IC no es
+      // evidencia de que el sistema elija peor que el azar, es muestra insuficiente para saberlo.
       trigger_lift_pct: baseRate != null && triggerRate != null
         ? parseFloat((triggerRate - baseRate).toFixed(1)) : null,
+      trigger_lift_significant: baseRate != null && conclusive
+        ? (baseRate < triggerCi.low || baseRate > triggerCi.high) : null,
       rr_median: rrMedian != null ? parseFloat(rrMedian.toFixed(2)) : null,
       // Win-rate por encima del cual la geometría gana dinero. Es la referencia que hace
       // legible el win_rate; se calcula de la mediana de R:R, así que es orientativa cuando

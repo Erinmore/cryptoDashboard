@@ -429,6 +429,38 @@ describe('summarizeShadowTrades — tasa base del gatillo y expectativa', () => 
     expect(s.trigger_base_rate_measured_at).toBe(TRIGGER_BASE_RATE.measured_at);
   });
 
+  test('trigger_rate lleva IC de Wilson — un lift negativo sin IC significativo no es "peor que el azar"', () => {
+    // 2 disparos de 3 (66.7 %): con n tan pequeño el IC de Wilson es ancho y debe
+    // incluir el propio punto observado.
+    const s = sum([filaGeo('tp1'), filaGeo('stop', { h: 8 }), filaGeo('not_triggered', { h: 16 })]);
+    expect(s.trigger_rate_ci_low).toBeLessThanOrEqual(s.trigger_rate_pct);
+    expect(s.trigger_rate_ci_high).toBeGreaterThanOrEqual(s.trigger_rate_pct);
+    // trigger_lift_significant es un booleano, no null, cuando hay base y conclusive>0.
+    expect(typeof s.trigger_lift_significant).toBe('boolean');
+  });
+
+  test('trigger_lift_significant es false cuando la base cae dentro del IC (caso real de producción)', () => {
+    // Réplica del caso short de producción (2026-08-09): 5 disparos de 16, base 53.7 %.
+    // El IC de Wilson [14.2, 55.6] contiene la base → NO es significativo, aunque el
+    // lift puntual (-22.4) parezca grande.
+    const filas = [
+      ...Array(5).fill(0).map((_, i) => filaGeo('tp1', { h: i })),
+      ...Array(11).fill(0).map((_, i) => filaGeo('not_triggered', { h: 100 + i })),
+    ];
+    const s = sum(filas);
+    expect(s.triggered_n).toBe(5);
+    expect(s.conclusive_n).toBe(16);
+    expect(s.trigger_rate_ci_low).toBeCloseTo(14.2, 0);
+    expect(s.trigger_rate_ci_high).toBeCloseTo(55.6, 0);
+  });
+
+  test('sin filas concluyentes, el IC del trigger es null (no 0/0)', () => {
+    const s = sum([]);
+    expect(s.trigger_rate_ci_low).toBeNull();
+    expect(s.trigger_rate_ci_high).toBeNull();
+    expect(s.trigger_lift_significant).toBeNull();
+  });
+
   test('la tasa base promedia geometrías distintas, no usa una constante global', () => {
     // Una fila cerca (d≈0.2 → ~74 %) y otra lejos (d=1.0 → ~15 %): la media debe caer entre medias.
     // Geometría COHERENTE: mover solo la entrada dejaría el stop del lado equivocado y la
