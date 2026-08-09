@@ -37,7 +37,7 @@ import {
  * binario de facto y la frontera, arbitraria. Un cuarto del ATR es una banda comparable entre
  * TFs y activos. Sin ATR se cae al 0,05 % de antes.
  */
-function priceSide(price, level, atrPct = null) {
+export function priceSide(price, level, atrPct = null) {
   if (price == null || level == null) return null;
   const band = Number.isFinite(atrPct) && atrPct > 0 ? atrPct * 0.25 : 0.05;
   const diffPct = ((price - level) / level) * 100;
