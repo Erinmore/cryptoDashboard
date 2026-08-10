@@ -7,13 +7,13 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { extractJson, assertStructuredShape } from '../src/services/anthropicService.js';
+import { extractJson, assertNarrativeShape } from '../src/services/anthropicService.js';
 
-const obj = { structured: { action: 'Esperar' }, narrative: { text: 'ok' } };
+const obj = { narrative: { text: 'ok' }, executive_summary: 'resumen' };
 
-const fullStructured = {
-  action: 'Esperar', confidence: 'Media', risk_score: 6, conviction: 0.4,
-  scores: { derivatives: 0, structure: 0, volume: 0, total: 0 },
+const fullNarrative = {
+  structure_read: 'a', divergences_anomalies: 'a', key_levels_and_liquidity: 'a',
+  volatility_and_regime: 'a', cycle_and_macro_read: 'a', scenarios: 'a',
 };
 
 describe('extractJson', () => {
@@ -48,29 +48,27 @@ describe('extractJson', () => {
   });
 
   test('} dentro de un string del narrative se ignora', () => {
-    const withBrace = { structured: { action: 'Esperar' }, narrative: { text: 'cierra } y sigue' } };
+    const withBrace = { narrative: { text: 'cierra } y sigue' }, executive_summary: 'x' };
     const raw = `preámbulo\n${JSON.stringify(withBrace)}\ntrailing`;
     expect(JSON.parse(extractJson(raw))).toEqual(withBrace);
   });
 });
 
-describe('assertStructuredShape', () => {
-  test('structured completo no lanza', () => {
-    expect(() => assertStructuredShape(fullStructured)).not.toThrow();
+describe('assertNarrativeShape', () => {
+  test('narrative + executive_summary completos no lanza', () => {
+    expect(() => assertNarrativeShape({ narrative: fullNarrative, executive_summary: 'x' })).not.toThrow();
   });
 
-  test('falta un campo de nivel superior → AppError 502', () => {
-    const { conviction, ...noConviction } = fullStructured;
-    expect(() => assertStructuredShape(noConviction)).toThrow(/conviction/);
+  test('falta executive_summary → AppError 502', () => {
+    expect(() => assertNarrativeShape({ narrative: fullNarrative })).toThrow(/executive_summary/);
   });
 
-  test('falta un score requerido → AppError 502', () => {
-    const bad = { ...fullStructured, scores: { derivatives: 0, structure: 0, total: 0 } };
-    expect(() => assertStructuredShape(bad)).toThrow(/scores\.volume/);
+  test('falta un campo de narrative → AppError 502', () => {
+    const { scenarios, ...bad } = fullNarrative;
+    expect(() => assertNarrativeShape({ narrative: bad, executive_summary: 'x' })).toThrow(/narrative\.scenarios/);
   });
 
-  test('scores ausente por completo → AppError 502', () => {
-    const { scores, ...noScores } = fullStructured;
-    expect(() => assertStructuredShape(noScores)).toThrow(/scores/);
+  test('narrative ausente por completo → AppError 502', () => {
+    expect(() => assertNarrativeShape({ executive_summary: 'x' })).toThrow(/narrative/);
   });
 });

@@ -122,15 +122,10 @@ describe('métricas de recorrido — persistencia y agregación contra BD real',
     expect(opp.thresholds.target_k_atr).toBe(2);
   });
 
-  test('con 100% Esperar el win-rate sigue sin reportar, pero el coste ya se mide', () => {
-    // El hallazgo central de la Fase 5: no es que falte muestra, es que la salida
-    // dominante no cruzaba TP ni stop y por tanto era inevaluable.
-    const stats = dbService.getOutcomeStats('SOL');
-    expect(stats.path_win_rate.directional_n).toBe(0);
-    expect(stats.path_win_rate.win_rate).toBeNull();
-    expect(stats.path_win_rate.sample_insufficient).toBe(true);
-    expect(stats.opportunity_cost['24h'].offered_pct).not.toBeNull();
-  });
+  // `path_win_rate` se retiró de getOutcomeStats con el pivot a ayudante de riesgo
+  // (§REORIENTACIÓN): sin dictamen direccional no hay win-rate path-aware que reportar.
+  // `opportunity_cost` (probado arriba y abajo) es el que sigue midiendo algo, y ya no
+  // se filtra por `action==='Esperar'` — se mide sobre TODAS las filas.
 
   test('los episodios colapsan los análisis de la misma vela 4h', () => {
     const stats = dbService.getOutcomeStats('SOL');
@@ -139,13 +134,8 @@ describe('métricas de recorrido — persistencia y agregación contra BD real',
     expect(stats.episodes.episodes_n).toBe(1);
   });
 
-  test('la calibración de convicción agrupa por bucket', () => {
-    const cal = dbService.getOutcomeStats('SOL').conviction_calibration;
-    expect(cal).toHaveLength(1);            // los 3 con conviction 0.35
-    expect(cal[0].bucket).toBe('baja');
-    expect(cal[0].n).toBe(3);
-    expect(cal[0].waits_offered_pct).toBeCloseTo(66.7, 1);
-  });
+  // `conviction_calibration` se retiró con el mismo pivot: `conviction` sigue viajando en
+  // el schema (columna histórica) pero ningún análisis nuevo la puebla.
 
   test('un análisis recién hecho queda pending y NO baja el offered_pct', () => {
     // La regresión del 2026-08-01: el bloque de 7d publicaba `offered_pct 0,0` (lift −36)

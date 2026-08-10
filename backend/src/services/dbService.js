@@ -1,9 +1,6 @@
 import { getDb } from '../config/db.js';
 import { MAX_ANALYSES_STORED } from '../config/constants.js';
-import {
-  wilsonInterval, MIN_DIRECTIONAL_SAMPLE,
-  summarizeOpportunity, summarizePathWinRate, summarizeConviction, summarizeShadowTrades,
-} from '../utils/stats.js';
+import { wilsonInterval, MIN_DIRECTIONAL_SAMPLE, summarizeOpportunity } from '../utils/stats.js';
 import { countEpisodes } from '../utils/episodes.js';
 
 // ─── Save analysis (4-table transaction) ──────────────────────────────────────
@@ -46,6 +43,7 @@ export function saveAnalysis(data) {
       score_derivatives_backend, derivatives_score_components, derivatives_data_insufficient,
       setup_entry_price, setup_stop_price, setup_tp1_price, setup_tp2_price,
       setup_validity_candles, setup_tf_execution, conditional_setup,
+      risk_geometry,
       executive_summary, ai_response_full, validation_warnings,
       processing_time_ms, input_tokens, output_tokens, model_used
     ) VALUES (
@@ -72,6 +70,7 @@ export function saveAnalysis(data) {
       @score_derivatives_backend, @derivatives_score_components, @derivatives_data_insufficient,
       @setup_entry_price, @setup_stop_price, @setup_tp1_price, @setup_tp2_price,
       @setup_validity_candles, @setup_tf_execution, @conditional_setup,
+      @risk_geometry,
       @executive_summary, @ai_response_full, @validation_warnings,
       @processing_time_ms, @input_tokens, @output_tokens, @model_used
     )
@@ -185,6 +184,9 @@ export function getAnalysisHistory(coin, limit = 10, offset = 0) {
       -- conditional_setup es lo que hace medible una abstención; sin él, el historial
       -- muestra un Esperar sin decir qué trade se estaba descartando.
       a.conditional_setup, a.score_derivatives_backend, a.derivatives_data_insufficient,
+      -- Pivot a ayudante de riesgo: geometría SIMÉTRICA long+short, ver utils/riskGeometry.js.
+      -- NULL en filas anteriores al pivot (siguen con conditional_setup, arriba).
+      a.risk_geometry,
 
       a.tf_conflict, a.macro_regime,
       a.executive_summary, a.validation_warnings, a.missing_confirmations,
@@ -226,6 +228,10 @@ export function getLastAnalysis(coin) {
       -- conditional_setup en getAnalysisHistory hasta el 2026-07-31).
       -- OJO: nada de backticks en estos comentarios — van DENTRO de un template literal.
       a.primary_tf, a.price_current, a.conditional_setup,
+      -- Pivot a ayudante de riesgo: geometría ya calculada y persistida en el momento del
+      -- análisis (usa el ATR de decisión, síncrono) — a diferencia de conditional_setup, no
+      -- hace falta esperar al job de outcome para tenerla completa.
+      a.risk_geometry,
       -- ATR de 19 velas: el eje con el que se midió TRIGGER_BASE_RATE. NO es el de 180
       -- que decide la banda de la rúbrica (lección B1). Puede ser NULL hasta que el job de
       -- outcome pase por la fila; el describe devuelve null en vez de estimar.
@@ -393,6 +399,13 @@ const OUTCOME_FROM = `FROM analysis_outcome o JOIN analyses a ON a.id = o.analys
 /**
  * Enriquece una fila de agregados con win-rate + IC de Wilson + fill-rate.
  * Aplica el gate de muestra mínima: sin n suficiente, win_rate_24h=null e insuficiente=true.
+ *
+ * ⚠️ INERTE PARA FILAS NUEVAS desde el pivot a ayudante de riesgo (§REORIENTACIÓN): `action`
+ * es siempre NULL, así que `classifyOutcome` cae en la rama no-direccional (`dir=0` →
+ * 'moved'/'flat', nunca 'win'/'loss') — `win_24h`/`loss_24h`/`win_rate_24h` quedan
+ * congelados en lo que ya medían las filas de antes del pivot. Se conserva como telemetría
+ * de la cola histórica, no como algo que siga midiendo nada nuevo. Mismo razonamiento para
+ * `setup_fill_rate` (depende de `setup_outcome`, que también deja de producirse).
  */
 function decorateOutcomeRow(row) {
   const wins = row.win_24h ?? 0;
@@ -442,38 +455,29 @@ export function getOutcomeStats(coin = null) {
   // MAX_ANALYSES_STORED por moneda, así que cabe en memoria sin problema.
   const rows = db.prepare(`
     SELECT a.id, a.coin, a.timestamp, a.primary_tf, a.action, a.conviction,
-           -- price_current: origen de la distancia normalizada del gatillo, que es el eje
-           -- de TRIGGER_BASE_RATE. Sin él, trigger_rate_pct vuelve a no tener referencia.
            a.price_current,
-           a.conditional_setup,
            o.atr_pct_at_analysis,
            o.max_up_pct_24h, o.max_down_pct_24h, o.max_up_pct_7d, o.max_down_pct_7d,
-           o.path_first_passage,
-           o.cond_outcome, o.cond_filled, o.cond_exit_price
+           o.path_first_passage
     ${OUTCOME_FROM}
     WHERE (@coin IS NULL OR a.coin = @coin)
     ORDER BY a.timestamp ASC
   `).all({ coin: coinArg });
-
-  // El coste de oportunidad se mide sobre las ABSTENCIONES: es la salida dominante del
-  // sistema y la única que el win-rate direccional no puede evaluar.
-  const waits = rows.filter((r) => r.action === 'Esperar' || r.action === 'Preparar');
 
   return {
     ...decorateOutcomeRow(overall),
     min_directional_sample: MIN_DIRECTIONAL_SAMPLE,
     by_primary_tf: byField('primary_tf'),
     by_model: byField('model_used'),
+    // Pivot a ayudante de riesgo (§REORIENTACIÓN): sin dictamen direccional, `action` es
+    // siempre NULL en filas nuevas — ya no hay "abstenciones" que separar del resto. Se
+    // mide sobre TODAS las filas: "¿con qué frecuencia el mercado ofrece un movimiento
+    // limpio desde un instante cualquiera?", que es direction-agnostic por construcción
+    // (`classifyOpportunity` no mira ninguna dirección propuesta, solo el recorrido real).
     opportunity_cost: {
-      '24h': summarizeOpportunity(waits, { horizonH: 24 }),
-      '7d': summarizeOpportunity(waits, { horizonH: null }),
+      '24h': summarizeOpportunity(rows, { horizonH: 24 }),
+      '7d': summarizeOpportunity(rows, { horizonH: null }),
     },
-    path_win_rate: summarizePathWinRate(rows),
-    // El shadow trade es hoy el único canal que produce evidencia a la escala del
-    // checkpoint: los gatillos condicionales se resuelven mucho más a menudo que las
-    // puertas direccionales (medido el 2026-08-01: 34-74 % frente al 3-4 %).
-    shadow_trades: summarizeShadowTrades(rows),
-    conviction_calibration: summarizeConviction(rows),
     // n de análisis vs n de episodios: la diferencia es la autocorrelación de la muestra.
     episodes: { analyses_n: rows.length, episodes_n: countEpisodes(rows) },
   };

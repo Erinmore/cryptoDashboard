@@ -1,10 +1,17 @@
 /**
- * outcomeService.js — Job de backtesting que rellena `analysis_outcome`.
+ * outcomeService.js — Job que rellena `analysis_outcome` con la grabación PURA de mercado
+ * tras cada análisis: precios a 1h/4h/24h/7d y métricas de recorrido (excursiones, primer
+ * cruce de cada múltiplo de ATR). Idempotente: reprocesa solo lo que falta hasta cerrar el
+ * horizonte de 7d.
  *
- * Para cada análisis suficientemente antiguo y con outcome incompleto, obtiene el
- * precio a 1h/4h/24h/7d (progresivamente, según venza cada horizonte), clasifica el
- * resultado direccional y evalúa si el setup tocó TP/stop (barrier method sobre velas
- * 1h). Idempotente: reprocesa solo lo que falta hasta cerrar el horizonte de 7d.
+ * Pivot a ayudante de riesgo (§REORIENTACIÓN, ver CLAUDE.md): el barrier del `setup`
+ * ejecutable y el shadow trade del `conditional_setup` se retiraron — ninguno de los dos
+ * conceptos se vuelve a producir desde que el LLM dejó de decidir. Las filas viejas
+ * conservan sus columnas `setup_*`/`cond_*` tal cual quedaron (no se re-evalúan); las
+ * nuevas las dejan en NULL. Lo que sigue corriendo es la base de grabación SIMÉTRICA que
+ * algún día permitiría comprobar si `TARGET_REACHABILITY` (la curva que usa
+ * `utils/riskGeometry.js`) se sostiene con datos nuevos — construir esa validación no es
+ * parte de este pivot, solo la grabación que la haría posible.
  *
  * Se arranca en index.js (no en app.js) → no corre en los tests. También expuesto
  * como `runOutcomeJob()` para disparo manual (endpoint / on-demand).
@@ -12,10 +19,7 @@
 
 import { fetchHistoricalClose, fetchHistoricalKlines } from './coingeckoService.js';
 import { getAnalysesNeedingOutcome, upsertOutcome } from './dbService.js';
-import {
-  classifyOutcome, evaluateSetupBarrier, setupExpiryMs, candlesWithinValidity,
-} from '../utils/outcome.js';
-import { evaluateShadowTrade, SHADOW_MAX_WINDOW_MS } from '../utils/shadowTrade.js';
+import { classifyOutcome } from '../utils/outcome.js';
 import { computePathMetrics, computeAtrPct } from '../utils/pathMetrics.js';
 import { calculateATR } from '../utils/indicators.js';
 import env from '../config/env.js';
@@ -28,6 +32,9 @@ const HORIZONS = [
   ['24h', 24 * HOUR_MS],
   ['7d',  7 * 24 * HOUR_MS],
 ];
+// Ventana del recorrido (excursiones, primer cruce de ATR): 7 días, igual que el horizonte
+// largo de arriba — es "hasta dónde ha podido mirar el job", no un dato del setup.
+const PATH_WINDOW_MS = 7 * 24 * HOUR_MS;
 
 // TF primario del análisis → intervalo de Binance y su duración.
 const TF_SPEC = {
@@ -122,13 +129,8 @@ async function processAnalysis(a, now) {
     ? parseFloat((out.pnl_pct_24h * dir).toFixed(2))
     : null;
 
-  // ── Velas del recorrido (compartidas: métricas de path + barrier del setup) ──
-  // Antes solo se pedían cuando había setup ejecutable. Ahora se piden SIEMPRE porque el
-  // recorrido posterior a un `Esperar` es justo lo que faltaba para poder refutarlo.
-  // La ventana la fija `SHADOW_MAX_WINDOW_MS` (7d) y no un 7 suelto aquí: el evaluador del
-  // shadow trade y la agregación de stats deciden "hasta dónde se ha podido mirar" con esa
-  // misma constante, y si el fetch dijera otra cosa marcarían `truncated` donde no toca.
-  const toMs = Math.min(now, tMs + SHADOW_MAX_WINDOW_MS);
+  // ── Velas del recorrido (grabación pura de mercado, ver cabecera del módulo) ──
+  const toMs = Math.min(now, tMs + PATH_WINDOW_MS);
   let pathCandles = null;
   try {
     pathCandles = await fetchHistoricalKlines(a.coin, '1h', tMs, toMs, 1000);
@@ -163,122 +165,21 @@ async function processAnalysis(a, now) {
     }));
   }
 
-  // Barrier del setup (solo si hay setup ejecutable y aún no está resuelto).
-  // Terminal = outcome no nulo y distinto de 'open' (tp1/tp2/stop/expired/not_triggered/invalid).
-  const preserveSetup = () => {
-    out.setup_hit_tp1  = a.setup_hit_tp1 ?? null;
-    out.setup_hit_tp2  = a.setup_hit_tp2 ?? null;
-    out.setup_hit_stop = a.setup_hit_stop ?? null;
-    out.setup_outcome  = a.setup_outcome ?? null;
-  };
-  const markInvalidSetup = () => {
-    out.setup_hit_tp1 = 0; out.setup_hit_tp2 = 0; out.setup_hit_stop = 0;
-    out.setup_outcome = 'invalid';
-  };
-  const setupResolved = a.setup_outcome && a.setup_outcome !== 'open';
-  const horizonElapsed = now >= tMs + 7 * 24 * HOUR_MS;
-  // Vigencia declarada por el propio análisis (`validity_candles` × TF de ejecución).
-  // El barrier se evalúa SOLO dentro de ella; el recorrido (path metrics) sigue usando la
-  // ventana completa de 7d, que mide el mercado y no la decisión. Si la vigencia no es
-  // determinable, `expiryMs` es null y no se recorta nada (fail-open, ver utils/outcome.js).
-  const expiryMs = setupExpiryMs({
-    tMs,
-    validityCandles: a.setup_validity_candles,
-    tfExecution:     a.setup_tf_execution,
-    primaryTf:       a.primary_tf,
-  });
-  const setupCandles = candlesWithinValidity(pathCandles, expiryMs);
-  // Un setup caduca cuando vence SU vigencia, no cuando vence el horizonte de 7d: si no,
-  // uno declarado válido 24h se quedaría 'open' seis días más sin poder resolverse.
-  const setupHorizonElapsed = expiryMs != null ? now >= expiryMs : horizonElapsed;
-  if (a.has_executable_setup && !setupResolved) {
-    if (a.setup_entry_price == null) {
-      // has_executable_setup=1 pero sin entry_price: geometría irreconstruible y PERMANENTE
-      // (la columna se fija en el análisis y nunca se rellena a posteriori). Marcar 'invalid'
-      // terminal DE INMEDIATO — esperar al horizonte de 7d no cambiaba el resultado y
-      // re-evaluaba el barrier en cada ciclo en balde. Los precios por horizonte se siguen
-      // rellenando aparte (el análisis puede seguir seleccionándose por price_7d_later NULL,
-      // pero ya sin reintentar el barrier). Cierra el churn del setup en el 1er ciclo.
-      markInvalidSetup();
-    } else if (!pathCandles?.length) {
-      // Fetch vacío o fallido = fallo transitorio (las klines históricas de Binance son
-      // permanentes), NO geometría inválida: preservar y reintentar, no marcar 'invalid'.
-      preserveSetup();
-    } else if (!setupCandles?.length) {
-      // Hay velas del recorrido pero NINGUNA dentro de la vigencia declarada (caso límite:
-      // validity_candles=1 en 1h con la primera kline alineada justo en la caducidad). El
-      // setup nunca tuvo una vela en la que llenarse: 'not_triggered', no 'invalid' — la
-      // geometría era correcta, lo que faltó fue ventana.
-      if (setupHorizonElapsed) {
-        out.setup_hit_tp1 = 0; out.setup_hit_tp2 = 0; out.setup_hit_stop = 0;
-        out.setup_outcome = 'not_triggered';
-      } else {
-        preserveSetup();
-      }
-    } else {
-      const bar = evaluateSetupBarrier({
-        entry_price: a.setup_entry_price,
-        stop_price:  a.setup_stop_price,
-        tp1_price:   a.setup_tp1_price,
-        tp2_price:   a.setup_tp2_price,
-      }, setupCandles);
-      if (bar) {
-        out.setup_hit_tp1  = bar.hit_tp1 ? 1 : 0;
-        out.setup_hit_tp2  = bar.hit_tp2 ? 1 : 0;
-        out.setup_hit_stop = bar.hit_stop ? 1 : 0;
-        // Finalizar estados no terminales cuando ya venció el horizonte de 7d
-        // (evita reprocesar el mismo setup indefinidamente — A4).
-        let oc = bar.outcome;
-        if (!setupHorizonElapsed && (oc === 'open' || oc === 'not_triggered')) {
-          oc = 'open';               // aún dentro de la vigencia: puede llenarse/resolverse
-        } else if (setupHorizonElapsed && oc === 'open') {
-          oc = 'expired';            // llenada pero sin tocar TP/stop DENTRO DE SU VIGENCIA
-        }                            // vencida && 'not_triggered' → terminal (nunca se llenó)
-        out.setup_outcome = oc;
-      } else if (setupHorizonElapsed) {
-        // bar null con velas presentes = geometría inválida (p.ej. entry==stop): terminal.
-        markInvalidSetup();
-      } else {
-        preserveSetup();
-      }
-    }
-  } else {
-    preserveSetup();
-  }
-
-  // ── Shadow trade: el `conditional_setup` evaluado con el MISMO barrier ──────
-  // Es lo que convierte una abstención en un resultado medible sin esperar a que haya
-  // direccionales: el análisis declaró qué trade tomaría y bajo qué condición, así que
-  // se puede comprobar si esa condición llegó a darse y qué habría hecho el trade.
-  // Reutiliza `evaluateSetupBarrier`/`setupExpiryMs` vía utils/shadowTrade.js — misma
-  // definición de "entrada llena" y de "vigencia" que el setup ejecutable, o los dos
-  // números no serían comparables entre sí.
-  const condResolved = a.cond_outcome && a.cond_outcome !== 'open';
-  if (a.conditional_setup && !condResolved) {
-    const shadow = evaluateShadowTrade({
-      conditionalSetup: a.conditional_setup,
-      candles:          pathCandles,
-      tMs,
-      primaryTf:        a.primary_tf,
-      now,
-    });
-    if (shadow && !shadow.preserve) {
-      out.cond_outcome        = shadow.outcome;
-      out.cond_filled         = shadow.filled;
-      out.cond_invalid_reason = shadow.invalid_reason;
-      out.cond_exit_price     = shadow.exit_price;
-    } else {
-      // preserve = fallo transitorio de klines (las históricas de Binance son permanentes,
-      // así que un hueco es de la red): conservar lo que hubiera y reintentar.
-      out.cond_outcome        = a.cond_outcome ?? null;
-      out.cond_filled         = a.cond_filled ?? null;
-      out.cond_invalid_reason = a.cond_invalid_reason ?? null;
-    }
-  } else {
-    out.cond_outcome        = a.cond_outcome ?? null;
-    out.cond_filled         = a.cond_filled ?? null;
-    out.cond_invalid_reason = a.cond_invalid_reason ?? null;
-  }
+  // El barrier del `setup` ejecutable y el shadow trade del `conditional_setup` se
+  // retiraron con el pivot (ver cabecera del módulo): ninguno de los dos conceptos se
+  // vuelve a producir, así que no hay nada que evaluar aquí para filas nuevas (`a.setup_*`/
+  // `a.conditional_setup` ya llegan NULL). ⚠️ PERO estas columnas se sobrescriben SIN
+  // COALESCE en `upsertOutcome` — así que una fila VIEJA que todavía caiga dentro de la
+  // ventana de reselección (8 días) y ya tuviera un resultado real perdería ese dato si
+  // aquí se dejaran `undefined`. Se preservan explícitamente tal cual estaban.
+  out.setup_hit_tp1  = a.setup_hit_tp1 ?? null;
+  out.setup_hit_tp2  = a.setup_hit_tp2 ?? null;
+  out.setup_hit_stop = a.setup_hit_stop ?? null;
+  out.setup_outcome  = a.setup_outcome ?? null;
+  out.cond_outcome        = a.cond_outcome ?? null;
+  out.cond_filled         = a.cond_filled ?? null;
+  out.cond_invalid_reason = a.cond_invalid_reason ?? null;
+  out.cond_exit_price     = a.cond_exit_price ?? null;
 
   upsertOutcome(out);
   return true;

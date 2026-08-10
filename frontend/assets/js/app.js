@@ -97,8 +97,13 @@ function syncTfButtons(tf) {
 function restoreRecommendationPanel(localRec, { serverAnswered = false } = {}) {
   const serverLast = getState().lastAnalysis;
 
-  if (serverLast?.full?.structured) {
-    updateRecommendation(serverLast.full, serverLast.timestamp, serverLast.conditional_plan ?? null, getState().shadowRecord ?? null);
+  // Pivot a ayudante de riesgo (§REORIENTACIÓN): una fila nueva trae `narrative` en el nivel
+  // superior de `full`; una fila anterior al pivot solo tenía `full.structured` (sin
+  // `narrative` propio en este nivel). Comprobar `narrative` es lo que distingue "hay algo
+  // que pintar con el esquema actual" de "hay un fósil pre-pivot" — `updateRecommendation`
+  // ya degrada con seguridad si faltan campos, no hace falta descartar la fila vieja aquí.
+  if (serverLast?.full?.narrative || serverLast?.full?.structured) {
+    updateRecommendation(serverLast.full, serverLast.timestamp, serverLast.risk_geometry ?? null);
     return;
   }
 
@@ -153,7 +158,6 @@ async function loadData() {
       global_market:  data.global_market   ?? null,
       coin_market_data: data.coin_market_data ?? null,
       lastAnalysis:   data.last_analysis   ?? null,
-      shadowRecord:   data.shadow_record   ?? null,
       binanceWalls:   data.binance_walls   ?? null,
       binanceTicker:  data.binance_ticker  ?? null,
       history:        data.history         ?? null,
@@ -270,14 +274,19 @@ async function runAnalysis() {
   try {
     const model = document.getElementById('model-select')?.value;
     const data = await postAnalyze(coin, tf, model);
-    // Schema nuevo: el endpoint devuelve { structured, narrative, ai_metadata }.
-    const rec = data.structured
-      ? { structured: data.structured, narrative: data.narrative ?? null }
+    // Pivot a ayudante de riesgo (§REORIENTACIÓN): el endpoint devuelve
+    // { narrative, executive_summary, ai_metadata, risk_geometry } — sin `structured`, el
+    // LLM ya no decide ni puntúa nada. ⚠️ Antes este objeto se construía sin `risk_geometry`
+    // (ni su predecesor `conditional_plan`), así que el panel SIEMPRE leía un campo
+    // `undefined` justo tras pulsar "Analizar" y solo mostraba el plan en el siguiente
+    // refresco de estado — bug real, corregido aquí explícitamente.
+    const rec = data.narrative
+      ? { narrative: data.narrative, executive_summary: data.executive_summary ?? null, risk_geometry: data.risk_geometry ?? null }
       : null;
     setState({ recommendation: rec });
 
     if (rec) {
-      updateRecommendation(rec, null, rec?.conditional_plan ?? null);  // el dato también queda en la barra lateral
+      updateRecommendation(rec, null, rec.risk_geometry);  // el dato también queda en la barra lateral
       saveCoinState(coin, { recommendation: rec });
       // Resultado a la vista en un modal cerrable: reutiliza el Historial, que
       // muestra este análisis (recién guardado) arriba + los previos debajo.

@@ -4,12 +4,7 @@ import { fetchDerivativesData, withDerivedOiUsd, withDerivedLiqUsd } from '../se
 import { fetchOrderBookWalls, fetchBinanceTicker } from '../services/binanceOrderBookService.js';
 import { getHistories, addCVDEntry, addVWAPEntry } from '../services/historyService.js';
 import { computeIndicators } from '../services/indicatorService.js';
-import { getLastAnalysis, getAnalysisHistory } from '../services/dbService.js';
-import { describeConditionalPlan } from '../utils/conditionalPlan.js';
-import { summarizeShadowTrades } from '../utils/stats.js';
-import { SHADOW_FILL_RULE } from '../utils/shadowTrade.js';
-/** Cuántos análisis mira el registro del panel. 30 ≈ dos semanas a 2/día. */
-const SHADOW_RECORD_LIMIT = 30;
+import { getLastAnalysis } from '../services/dbService.js';
 import { COINS, TIMEFRAMES } from '../config/constants.js';
 import { ValidationError } from '../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -17,47 +12,23 @@ import logger from '../middleware/logger.js';
 
 import { COINALYZE_SYMBOLS } from '../config/constants.js';
 
-/** Parsea `ai_response_full` (JSON string) a {structured, narrative}; null si falta o es inválido. */
+/**
+ * Parsea `ai_response_full` (JSON string) a su forma persistida; null si falta o es inválido.
+ * Acepta DOS esquemas — filas anteriores al pivot a narrador (`{structured, narrative}`) y
+ * posteriores (`{narrative, executive_summary}`) — "los escritores dejan de producir, los
+ * lectores siguen entendiendo": un análisis viejo no debe dejar de leerse solo porque cambió
+ * el esquema de los nuevos.
+ */
 function parseAiResponseFull(raw) {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return parsed?.structured ? parsed : null;
+    return (parsed?.structured || parsed?.narrative) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-
-
-/**
- * Registro compacto de los últimos planes condicionales de una moneda.
- *
- * Reutiliza `summarizeShadowTrades` (el MISMO agregador que `/api/outcome/stats`) para que el
- * panel y la auditoría no puedan divergir. Se exponen sólo cuentas y la tasa de disparo con su
- * tasa base — que está MEDIDA. **No se expone `expectancy_r`**: su línea base es una curva sin
- * medir (M10), y un número sin referencia en un panel que se lee para operar engaña.
- */
-function shadowRecordFor(coin) {
-  try {
-    const rows = getAnalysisHistory(coin, SHADOW_RECORD_LIMIT).analyses ?? [];
-    const s = summarizeShadowTrades(rows);
-    if (!s || !s.conclusive_n) return null;
-    return {
-      n: s.conclusive_n,
-      pending_n: s.pending_n ?? 0,
-      tp1: s.tp1, stop: s.stop, expired: s.expired, not_triggered: s.not_triggered,
-      trigger_rate_pct: s.trigger_rate_pct,
-      trigger_base_rate_pct: s.trigger_base_rate_pct,
-      trigger_lift_pct: s.trigger_lift_pct,
-      rr_median: s.rr_median,
-      fill_rule: SHADOW_FILL_RULE,
-    };
-  } catch (err) {
-    logger.debug({ err: err.message, coin }, 'shadow_record no disponible');
-    return null;
-  }
-}
 
 
 export async function getData(req, res, next) {
@@ -183,24 +154,12 @@ export async function getData(req, res, next) {
         // en cualquier dispositivo (el panel rico vivía solo en localStorage del navegador
         // que lo lanzó → no se veía en la Pi). Se parsea aquí; null si falta o no parsea.
         full: parseAiResponseFull(lastAnalysisRow.ai_response_full),
-        // PLAN CONDICIONAL — lo que el panel enseña cuando NO hay operación ahora, que es
-        // la salida dominante del sistema. Se deriva en tiempo de LECTURA (no se persiste)
-        // porque es función pura de datos ya guardados: así aplica retroactivamente a los
-        // análisis previos y las curvas se pueden re-medir sin re-pedir un solo dato.
-        // Mismo principio que la Fase 5: se guardan hechos, no interpretaciones.
-        conditional_plan: describeConditionalPlan({
-          conditionalSetup: lastAnalysisRow.conditional_setup,
-          atrPct__outcome_19: lastAnalysisRow.atr_pct_at_analysis,
-          priceAtAnalysis: lastAnalysisRow.price_current,
-          primaryTf: lastAnalysisRow.primary_tf,
-          timestamp: lastAnalysisRow.timestamp,
-        }),
+        // GEOMETRÍA DE RIESGO — sustituye al viejo `conditional_plan` de una sola dirección.
+        // Ya viene completa y persistida desde el momento del análisis (utils/riskGeometry.js
+        // usa el ATR de decisión, síncrono) — no hace falta recomputar nada aquí.
+        risk_geometry: lastAnalysisRow.risk_geometry
+          ? JSON.parse(lastAnalysisRow.risk_geometry) : null,
       } : null,
-      // REGISTRO DEL SHADOW TRADE — va en la MISMA pantalla que la recomendación, no en un
-      // panel de auditoría aparte. Un sistema que usas a diario genera presión para creértelo;
-      // la única defensa es que el historial de lo que pasó con los planes anteriores esté
-      // donde no puedas no verlo. Son CUENTAS CRUDAS (hechos), no una estimación.
-      shadow_record: shadowRecordFor(coin),
       binance_walls: resolve(binanceWalls),
       binance_ticker: resolve(binanceTicker),
       history: histories,

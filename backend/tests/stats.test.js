@@ -5,7 +5,7 @@
 import { describe, test, expect } from '@jest/globals';
 import {
   wilsonInterval, classifyOpportunity, maxExcursionAtr,
-  classifyPathOutcome, convictionBucket, summarizeOpportunity, OPPORTUNITY_BASE_RATE,
+  summarizeOpportunity, OPPORTUNITY_BASE_RATE,
   normalizedTargetDistance, targetReachabilityFor, TARGET_UNREACHABLE_PCT,
 } from '../src/utils/stats.js';
 
@@ -147,82 +147,11 @@ describe('maxExcursionAtr', () => {
   });
 });
 
-describe('classifyPathOutcome', () => {
-  const fila = (up, down) => ({ timestamp: '2026-01-01T00:00:00.000Z', path_first_passage: { up, down } });
-  // Par explícito por el mismo motivo que arriba: se prueba la lógica, no la calibración.
-  const path = (accion, row) => classifyPathOutcome(accion, row, { targetK: 2, adverseK: 1 });
-
-  test('Comprar que toca objetivo antes que stop → win', () => {
-    expect(path('Comprar', fila({ 2: 5 }, { 1: 20 }))).toBe('win');
-  });
-
-  test('Comprar que toca el stop antes → loss aunque el precio recupere después', () => {
-    // Es justo lo que outcome_24h no ve: mira el destino, no el camino.
-    expect(path('Comprar', fila({ 2: 20 }, { 1: 3 }))).toBe('loss');
-  });
-
-  test('Vender invierte los sentidos', () => {
-    expect(path('Vender', fila({ 1: 20 }, { 2: 5 }))).toBe('win');
-    expect(path('Vender', fila({ 1: 3 }, { 2: 20 }))).toBe('loss');
-  });
-
-  test('sin resolver por ningún lado → flat', () => {
-    expect(path('Comprar', fila({}, {}))).toBe('flat');
-  });
-
-  test('no direccional o sin rejilla → null', () => {
-    expect(path('Esperar', fila({ 2: 5 }, {}))).toBeNull();
-    expect(path('Comprar', { path_first_passage: null })).toBeNull();
-  });
-
-  // La censura aquí SESGA EL SIGNO, no solo el tamaño: `flat` está fuera del denominador
-  // y el stop (adverseK) se toca antes que el objetivo (targetK > adverseK), así que sobre
-  // una muestra en curso los `loss` afloran primero y el win-rate sale bajo.
-  describe('censura por horizonte no vencido', () => {
-    const T0 = Date.parse('2026-08-01T00:00:00.000Z');
-    const H = 3600 * 1000;
-    const joven = (up, down) => ({
-      timestamp: '2026-08-01T00:00:00.000Z', path_first_passage: { up, down },
-    });
-    const p = (accion, row, now) => classifyPathOutcome(accion, row, {
-      targetK: 2, adverseK: 1, horizonH: 24, now,
-    });
-
-    test('sin resolver y con la ventana abierta → pending, no flat', () => {
-      expect(p('Comprar', joven({}, {}), T0 + 6 * H)).toBe('pending');
-      expect(p('Comprar', joven({}, {}), T0 + 25 * H)).toBe('flat');
-    });
-
-    test('win y loss son terminales aunque la ventana siga abierta', () => {
-      // El trade se habría cerrado ahí: más mercado no lo reabre.
-      expect(p('Comprar', joven({ 2: 3 }, {}), T0 + 4 * H)).toBe('win');
-      expect(p('Comprar', joven({}, { 1: 2 }), T0 + 4 * H)).toBe('loss');
-    });
-
-    test('`now: null` desactiva la censura (modo scripts de auditoría)', () => {
-      // Los scripts replican historia ya cerrada con filas sin `timestamp` y llevan su
-      // propio gate de cobertura. Sin este modo, todas saldrían `pending` en silencio.
-      const sinFecha = { path_first_passage: { up: {}, down: {} } };
-      expect(classifyPathOutcome('Comprar', sinFecha, { horizonH: 24 })).toBe('pending');
-      expect(classifyPathOutcome('Comprar', sinFecha, { horizonH: 24, now: null })).toBe('flat');
-      expect(classifyOpportunity(sinFecha, { horizonH: 24 }).pending).toBe(true);
-      expect(classifyOpportunity(sinFecha, { horizonH: 24, now: null }).evaluable).toBe(true);
-    });
-  });
-});
-
-describe('convictionBucket', () => {
-  test('reparte en baja/media/alta', () => {
-    expect(convictionBucket(0.3)).toBe('baja');
-    expect(convictionBucket(0.4)).toBe('media');
-    expect(convictionBucket(0.69)).toBe('media');
-    expect(convictionBucket(0.7)).toBe('alta');
-  });
-  test('valor ausente → null', () => {
-    expect(convictionBucket(null)).toBeNull();
-    expect(convictionBucket(undefined)).toBeNull();
-  });
-});
+// `classifyPathOutcome` y `convictionBucket` se retiraron de utils/stats.js con el pivot a
+// ayudante de riesgo (§REORIENTACIÓN): sin dictamen direccional no hay win-rate path-aware
+// que calcular ni convicción que bucketizar. El `now: null` desactiva-censura de
+// `horizonMatured` (la función compartida) sigue cubierto por las pruebas de
+// `classifyOpportunity` de más abajo.
 
 describe('summarizeOpportunity — comparación contra la tasa base', () => {
   const fila = (up, down) => ({

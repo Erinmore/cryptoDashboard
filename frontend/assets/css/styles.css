@@ -592,37 +592,6 @@ html, body {
 
 .recommendation-content.hidden { display: none; }
 
-.rec-action-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.rec-action {
-  font-size: var(--fs-3xl);
-  font-weight: 400;
-  letter-spacing: 0.5px;
-}
-.rec-action.BUY  { color: var(--bullish); }
-.rec-action.SELL { color: var(--bearish); }
-.rec-action.HOLD { color: var(--neutral); }
-/* Acciones del schema (español) */
-.rec-action.Comprar  { color: var(--bullish); }
-.rec-action.Vender   { color: var(--bearish); }
-.rec-action.Esperar  { color: var(--neutral); }
-/* `Preparar` retirado como salida el 2026-08-03 (P5). La regla SE QUEDA: las filas
-   históricas con ese valor tienen que seguir renderizándose con su color. */
-.rec-action.Preparar { color: var(--accent); }
-
-.rec-confidence {
-  font-size: var(--fs-md);
-  color: var(--text-secondary);
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
-}
-
 .rec-rationale {
   font-size: var(--fs-base);
   color: var(--text-muted);
@@ -630,43 +599,27 @@ html, body {
   margin-bottom: 8px;
 }
 
-.rec-levels {
+/* Lectura completa en prosa (pivot a ayudante de riesgo, §REORIENTACIÓN) — seis secciones,
+   cada una solo si trae texto. Sustituye a los bloques de acción/scores/setup retirados. */
+.rec-narrative {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-bottom: 8px;
+  gap: var(--sp-lg);
+  margin-bottom: var(--sp-lg);
 }
-.rec-level-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.rec-narrative-block { }
+.rec-narrative-label {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--sp-xs);
+}
+.rec-narrative-text {
   font-size: var(--fs-base);
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
-.rec-level-row:last-child { border-bottom: none; }
-.rec-level-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-.rec-level-value { font-weight: 400; color: var(--text-primary); }
-.rec-level-value.rec-sl { color: var(--bearish); }
-.rec-level-value.rec-tp { color: var(--bullish); }
-
-.rec-alerts {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-.rec-alert {
-  font-size: var(--fs-sm);
-  padding: var(--sp-xs) var(--sp-md);
-  border-radius: var(--radius-sm);
-  border-left: 2px solid;
-  line-height: 1.4;
-}
-.rec-alert.warning { background: var(--alert-danger-bg); border-color: var(--bearish); color: var(--alert-danger-text); }
-.rec-alert.watch   { background: var(--alert-warning-bg); border-color: var(--neutral); color: var(--alert-warning-text); }
-.rec-alert.info    { background: var(--alert-info-bg); border-color: var(--accent); color: var(--alert-info-text); }
 
 .rec-timestamp {
   font-size: var(--fs-sm);
@@ -999,20 +952,6 @@ html, body {
   gap: var(--sp-lg);
   margin-bottom: var(--sp-md);
 }
-.hist-action {
-  font-size: var(--fs-xl);
-  font-weight: 500;
-}
-.hist-action.buy  { color: var(--bullish); }
-.hist-action.sell { color: var(--bearish); }
-.hist-action.wait { color: var(--neutral); }
-.hist-action.prep { color: var(--accent); }
-.hist-confidence {
-  font-size: var(--fs-md);
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
 .hist-model {
   font-size: var(--fs-xs);
   color: var(--text-secondary);
@@ -1026,171 +965,11 @@ html, body {
   font-size: var(--fs-sm);
   color: var(--text-muted);
 }
-.hist-scores {
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  margin-bottom: var(--sp-sm);
-}
 .hist-meta {
   font-size: var(--fs-sm);
   color: var(--text-muted);
   margin-bottom: var(--sp-sm);
 }
-.hist-setup {
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  margin-bottom: var(--sp-sm);
-}
-.hist-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-sm);
-  margin-bottom: var(--sp-sm);
-}
-
-/* "Falta para operar" — en un sistema que casi siempre dice Esperar, es la única salida
-   accionable que produce. Se destaca con la barra lateral de aviso para que no se lea
-   como un dato más de la tarjeta. */
-.hist-missing {
-  background: var(--alert-info-bg);
-  border-left: 2px solid var(--accent-dim);
-  border-radius: var(--radius-sm);
-  padding: var(--sp-md) var(--sp-lg);
-  margin-bottom: var(--sp-sm);
-}
-.hist-missing-label {
-  display: block;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin-bottom: var(--sp-xs);
-}
-.hist-missing-list {
-  margin: 0;
-  padding-left: var(--sp-2xl);
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-/* Contradicciones por EJE. Se pintan los tres siempre —no solo los que fallan— porque el
-   conteo solo se entiende viendo la escala completa: "2 de 3" no dice nada si no ves cuáles
-   son los 3 ni cuáles están en contra. */
-.hist-contra {
-  background: var(--bg-hover);
-  border-radius: var(--radius-sm);
-  padding: var(--sp-md) var(--sp-lg);
-  margin-bottom: var(--sp-sm);
-}
-.hist-contra-label {
-  display: block;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin-bottom: var(--sp-md);
-}
-.hist-contra-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-md);
-}
-.hist-contra-chip {
-  font-size: var(--fs-sm);
-  padding: var(--sp-xs) var(--sp-lg);
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  cursor: help;
-}
-.hist-contra-chip.on {
-  background: var(--alert-danger-bg);
-  color: var(--alert-danger-text);
-  border-color: var(--bearish);
-}
-.hist-contra-chip.off {
-  background: var(--bg-surface);
-  color: var(--text-muted);
-}
-.hist-contra-note {
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  margin-top: var(--sp-md);
-  line-height: 1.4;
-}
-
-/* Setup CONDICIONAL — el trade que se tomaría si apareciera lo que falta. Se distingue del
-   setup real (`.hist-setup`) con borde punteado: no es ejecutable, es la hipótesis que
-   justifica la espera y permite evaluarla a posteriori. */
-.hist-conditional {
-  background: var(--bg-hover);
-  border-left: 2px dashed var(--neutral);
-  border-radius: var(--radius-sm);
-  padding: var(--sp-md) var(--sp-lg);
-  margin-bottom: var(--sp-sm);
-}
-.hist-conditional-label {
-  display: block;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin-bottom: var(--sp-xs);
-}
-.hist-conditional-geo {
-  font-size: var(--fs-sm);
-  color: var(--text-primary);
-}
-.hist-conditional-trigger {
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  margin-top: var(--sp-xs);
-  line-height: 1.4;
-}
-.hist-conditional-rr {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  margin-top: var(--sp-xs);
-}
-/* Cifras medidas del plan (R:R/equilibrio, P(gatillo), P(objetivo)) — mismo trío que el
-   panel en vivo (`#rec-plan-stats`), en formato de lista compacta para la tarjeta del historial. */
-.hist-conditional-stats {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-xs);
-  margin-top: var(--sp-md);
-}
-.hist-conditional-stat {
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  cursor: help;
-}
-.hist-conditional-stat.warn { color: var(--alert-warning-text); }
-/* Resultado del shadow trade (evaluación a posteriori del conditional_setup). */
-.hist-conditional-result {
-  display: inline-block;
-  font-size: var(--fs-xs);
-  margin-top: var(--sp-md);
-  padding: var(--sp-xs) var(--sp-md);
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  cursor: help;
-}
-.hist-conditional-result.win   { background: var(--bullish-dim); color: var(--bullish); border-color: var(--bullish); }
-.hist-conditional-result.loss  { background: var(--bearish-dim); color: var(--bearish); border-color: var(--bearish); }
-.hist-conditional-result.muted { background: var(--bg-surface);  color: var(--text-secondary); }
-
-.hist-badge {
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: var(--sp-xs) var(--sp-md);
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-}
-.hist-badge.warn  { background: var(--alert-danger-bg);  color: var(--alert-danger-text);  border-color: var(--bearish); }
-.hist-badge.watch { background: var(--alert-warning-bg); color: var(--alert-warning-text); border-color: var(--neutral); }
 .hist-summary {
   font-size: var(--fs-md);
   color: var(--text-secondary);
@@ -1285,30 +1064,10 @@ html, body {
    hasta ahora sólo se veía en el modal de historial. Estos bloques lo suben al panel
    principal junto a las tres cifras medidas que dicen si el plan es realista. */
 
-.rec-block-title {
-  font-size: var(--fs-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: var(--sp-md);
-}
-
-.rec-missing {
-  margin-top: var(--sp-xl);
-  padding: var(--sp-lg);
-  background: var(--bg-card);
-  border-radius: var(--radius-md);
-}
-.rec-missing ul { margin: 0; padding-left: var(--sp-2xl); }
-.rec-missing li {
-  font-size: var(--fs-md);
-  color: var(--text-secondary);
-  margin-bottom: var(--sp-xs);
-  line-height: 1.45;
-}
-
-/* Borde punteado: distingue el plan HIPOTÉTICO de un setup ejecutable real, que va con
-   borde sólido. Misma convención que ya usa el modal de historial. */
+/* Contenedor de la geometría de riesgo — el contenido interno lo pone
+   riskGeometryCard.js (dueño único, compartido con el modal de historial). Borde
+   punteado: es una geometría CALCULADA para dos escenarios hipotéticos, nunca un
+   setup ejecutable ni una recomendación. */
 .rec-plan {
   margin-top: var(--sp-xl);
   padding: var(--sp-lg);
@@ -1316,69 +1075,63 @@ html, body {
   border-radius: var(--radius-md);
   background: var(--bg-card);
 }
-.rec-plan-dir {
+
+/* ── Geometría de riesgo simétrica (largo+corto) — riskGeometryCard.js ────────────── */
+/* Usada dentro de `.rec-plan` (panel en vivo, ya con borde/padding) y también SOLA,
+   directamente en `.hist-card` (tarjetas del historial) — de ahí el margen propio. */
+.risk-geometry {
+  margin-top: var(--sp-lg);
+  margin-bottom: var(--sp-sm);
+}
+.risk-geometry-title {
   font-size: var(--fs-sm);
-  padding: 0 var(--sp-md);
-  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: var(--sp-md);
 }
-.rec-plan-dir.bullish { color: var(--bullish); background: var(--bullish-dim); }
-.rec-plan-dir.bearish { color: var(--bearish); background: var(--bearish-dim); }
-
-.rec-plan-trigger {
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  line-height: 1.45;
-  margin: 0 0 var(--sp-lg);
+.risk-geometry-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-bottom: var(--sp-lg);
 }
-.rec-plan-levels { margin-bottom: var(--sp-lg); }
-.rec-expired { color: var(--bearish); }
-
-/* Las cifras medidas. Van PEGADAS al plan a propósito: una tesis bien escrita se lee como
-   evidencia, y lo único que lo contrarresta es el dato medido al lado, no en otra pestaña. */
-.rec-plan-stats {
+.risk-geometry-cols {
   display: flex;
-  flex-direction: column;
-  gap: var(--sp-sm);
-  padding-top: var(--sp-lg);
-  border-top: 1px solid var(--bg-hover);
+  flex-wrap: wrap;
+  gap: var(--sp-lg);
 }
-.rec-plan-stat {
+.risk-side {
+  flex: 1 1 160px;
+  padding: var(--sp-lg);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+.risk-side.bullish { border-color: var(--bullish-dim); }
+.risk-side.bearish { border-color: var(--bearish-dim); }
+.risk-side-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--sp-md);
+}
+.risk-side.bullish .risk-side-label { color: var(--bullish); }
+.risk-side.bearish .risk-side-label { color: var(--bearish); }
+.risk-row {
   display: flex;
+  justify-content: space-between;
   align-items: baseline;
   gap: var(--sp-md);
   font-size: var(--fs-base);
-  color: var(--text-secondary);
+  padding: var(--sp-xs) 0;
+  border-bottom: 1px solid var(--bg-hover);
 }
-.rec-plan-stat-v {
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-  min-width: 3.5em;
-}
-.rec-plan-stat.warn .rec-plan-stat-v { color: var(--alert-warning-text); }
-.rec-plan-stat.warn { color: var(--alert-warning-text); }
-
-.rec-plan-caveat {
-  margin: var(--sp-lg) 0 0;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-.rec-record {
-  margin-top: var(--sp-xl);
-  padding: var(--sp-lg);
-  background: var(--bg-surface);
-  border-radius: var(--radius-md);
-}
-.rec-record-line {
-  margin: 0;
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  line-height: 1.45;
-}
-.rec-record-trigger {
-  margin: var(--sp-md) 0 0;
+.risk-row:last-child { border-bottom: none; }
+.risk-row-label { color: var(--text-muted); }
+.risk-row-value { color: var(--text-primary); font-weight: 500; text-align: right; }
+.risk-row.warn .risk-row-value { color: var(--alert-warning-text); }
+.risk-geometry-note {
+  margin-top: var(--sp-lg);
   font-size: var(--fs-sm);
   color: var(--text-muted);
   line-height: 1.4;

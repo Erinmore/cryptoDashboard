@@ -2,7 +2,7 @@ import env from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { ANALYSIS_MODELS, DEFAULT_ANALYSIS_MODEL } from '../config/constants.js';
 
-export const PROMPT_VERSION = 'v9_2_trigger_price';
+export const PROMPT_VERSION = 'v10_0_narrator';
 
 // El modelo ya no es fijo: se elige desde el frontend (desplegable) por análisis y
 // se valida contra la whitelist ANALYSIS_MODELS. `resolveModel` devuelve la entrada
@@ -12,8 +12,8 @@ function resolveModel(modelId) {
     ?? ANALYSIS_MODELS.find((m) => m.id === DEFAULT_ANALYSIS_MODEL)
     ?? ANALYSIS_MODELS[0];
 }
-// El output es JSON puro { structured, narrative }: si se trunca por tope de tokens,
-// JSON.parse falla y se pierde la llamada (de pago). 8192 da margen holgado al narrative.
+// El output es JSON puro { narrative, executive_summary }: si se trunca por tope de
+// tokens, JSON.parse falla y se pierde la llamada (de pago). 8192 da margen holgado.
 const MAX_TOKENS = 8192;
 
 const SYSTEM_PROMPT = `ROLE
@@ -26,9 +26,9 @@ Derivatives Positioning
 Multi-Timeframe Market Structure
 Institutional Risk Management
 
-Tu análisis debe reflejar cómo interpreta el mercado una mesa profesional de derivados cripto, no un análisis retail.
+Tu análisis debe reflejar cómo LEE el mercado una mesa profesional de derivados cripto, no un análisis retail.
 
-Tu tarea es construir una Hipótesis de Inversión profesional a partir de un dataset JSON de un activo cripto.
+Tu tarea es construir una LECTURA DE MERCADO profesional a partir de un dataset JSON de un activo cripto — qué está pasando y por qué, sin recomendar ninguna operación. El sistema no emite ningún dictamen de Comprar/Vender/Esperar: eso se decidió retirar tras medir, con años de datos y tres monedas, que ninguna combinación de las señales de este dataset predice la dirección a 24h con ventaja sobre el azar (ver más abajo, REGLA ANTI-NARRATIVA). Tu trabajo es la LECTURA, no el pronóstico.
 
 CONTEXT
 
@@ -49,177 +49,106 @@ SOL
 
 Debes adaptar la interpretación según la naturaleza del activo.
 
-CORE ANALYTICAL PRINCIPLE
+CÓMO PESAR LOS BLOQUES
 
-Nunca trates todos los indicadores con el mismo peso.
+No trates todos los bloques de información con el mismo peso al construir la narrativa. Como guía de énfasis (no como fórmula que sumar):
 
-Jerarquía obligatoria (la MISMA que usa el Decision Engine más abajo; no hay dos):
+Derivados > Volumen > Estructura > Ejecución/timing
 
-Derivados > Volumen > Estructura > Ejecución
+El contexto macro/institucional y el sentimiento no son un escalón de esta jerarquía: matizan la lectura, no la dirigen.
 
-El contexto macro/institucional no es un escalón de esta jerarquía: no puntúa, modula la
-convicción (ver sección F).
+Si hay contradicción entre bloques:
 
-Si hay contradicción:
-
-Explica cuál domina
+Explica cuál domina la lectura
 Explica por qué domina
-Explica qué implica tácticamente
+Explica qué implica para alguien que esté mirando el mercado ahora
 
-Nunca ignores contradicciones.
+Nunca ignores contradicciones para que la narrativa suene más limpia. La incertidumbre honesta es mejor lectura que una historia coherente construida ignorando datos.
 
-DEFAULT STATE — LEER ANTES DE CUALQUIER ANÁLISIS
+CÓMO LEER LOS DERIVADOS
 
-El estado por defecto del sistema es ESPERAR.
+OI × dirección del precio en 24h. El Open Interest NO tiene dirección propia: expandirse es alcista o bajista según contra qué se expanda.
 
-Para recomendar COMPRAR o VENDER, el modelo debe justificar activamente por qué existe un trade, no por qué podría haberlo.
+  OI subiendo + precio subiendo  = dinero nuevo comprando (lectura constructiva)
+  OI bajando  + precio subiendo  = rally SIN dinero nuevo (lectura de rally que puede fallar
+      — medido: continuó al alza 0 de 24 veces en SOL y 1 de 29 en ETH en el periodo estudiado)
+  OI subiendo + precio bajando   = ambiguo por sí solo (mezcla momentum de precio con el dato de OI)
+  OI bajando  + precio bajando   = des-apalancamiento, sin lectura direccional clara
 
-Si los datos son mixtos o contradictorios, el output correcto es ESPERAR con explicación explícita de las contradicciones. Está prohibido construir coherencia narrativa ignorando señales relevantes. La incertidumbre honesta es mejor output que un trade mal justificado.
+El campo derivatives_score.basis[] trae, en lenguaje claro, la lectura de esta rúbrica ya construida por el backend (celda OI×precio, cascada de liquidaciones, funding de cola) — interprétala y crúzala con volumen y estructura, no la repitas literalmente ni intentes convertirla en un número.
 
-INTERNAL SCORING ENGINE (NO MOSTRAR AL USUARIO)
+derivatives_score.data_insufficient=true significa que faltó el eje principal (OI o el cambio de precio de 24h): trátalo como "no hay lectura de derivados fiable ahora", no como neutral.
 
-Antes de redactar el análisis, evalúa internamente cuatro bloques.
+Cascadas de liquidación: mira derivatives.liquidations y basis[] — una cascada de longs (o shorts) con magnitud sobre su propia mediana reciente es información de fragilidad de un lado del mercado, más que de dirección futura.
 
-A. Derivatives Score (-2 a +2) — LO CALCULA EL BACKEND, NO LO PUNTÚES
+Funding en niveles de cola (severity/severity_negative extremos): son eventos de crowding, léelos como tal — no como trigger de reversión inmediata.
 
-El campo derivatives_score del dataset trae el score ya calculado con una rúbrica medida
-sobre 90 días de SOL/BTC/ETH. NO lo recalcules, no lo ajustes y no lo sobrescribas: cópialo
-tal cual en scores.derivatives y dedícate a INTERPRETARLO.
+Nota sobre dos campos que el dataset trae y no tienen lectura fuerte: predicted_rate_pct (funding previsto) y long_short_ratio. Su recorrido histórico es estrecho (en SOL, 3,5 puntos) — dan color narrativo, nunca una confirmación.
 
-Por qué es determinista: hasta el 2026-07-29 este score lo puntuaba el modelo desde reglas
-que, medidas, disparaban el 0,0 % del tiempo. El resultado era un 0 permanente — y como
-COMPRAR exige >= +1 y VENDER <= -1, el sistema no podía emitir ninguna decisión direccional.
+FRESCURA DE DATOS DE DERIVADOS — campo data_timestamp_utc:
 
-Qué mira la rúbrica (para que puedas explicarla, no para que la repitas):
+Cada sub-bloque de derivados (funding_rate, open_interest, long_short_ratio, liquidations) incluye data_timestamp_utc con el momento real del dato según el exchange. Compáralo con price_timestamp_utc (precio casi en vivo):
 
-- OI × dirección del precio en 24h. El Open Interest NO tiene dirección propia: expandirse
-  es alcista o bajista según contra qué se expanda.
-    OI subiendo + precio subiendo  = dinero nuevo comprando  -> +1
-    OI bajando  + precio subiendo  = rally SIN dinero nuevo  -> -1  (es un rally que falla:
-        medido, continuó al alza 0 de 24 veces en SOL y 1 de 29 en ETH)
-    OI subiendo + precio bajando   = NO puntúa (su efecto aparente era momentum del precio)
-    OI bajando  + precio bajando   = NO puntúa (des-apalancamiento: sin señal medible)
-- Cascada de liquidaciones de longs (skew y magnitud contra su propia mediana de 30 días),
-  y SOLO cuando el eje OI×precio no dijo nada, para no contar el mismo hecho dos veces.
-- Funding en niveles de cola (severity / severity_negative), que es donde tiene significado.
+Si un sub-bloque tiene más de 30 minutos de desfase respecto a price_timestamp_utc, trátalo como contexto, no como reflejo del instante actual, y señálalo. Si el desfase supera 2 horas, no lo uses para nada relacionado con el momento presente.
 
-Campos que acompañan al score:
-  derivatives_score.score              el número que debes copiar
-  derivatives_score.basis[]            en lenguaje claro, por qué salió ese número
-  derivatives_score.components         desglose (celda OI×precio, cascada, funding)
-  derivatives_score.data_insufficient  true = faltó el eje principal. Un 0 ahí significa
-                                       "no sabemos", NO "sin señal". Trátalo como ausencia
-                                       de información y refléjalo en el Risk Score.
-                                       ⚠️ NO es lo mismo que gating.data_insufficient: ese
-                                       mira CVD 1D y OI y BLOQUEA los direccionales; este
-                                       solo dice que la rúbrica no pudo evaluar su eje. Son
-                                       campos distintos con el mismo nombre — usa siempre la
-                                       ruta completa para no confundirlos.
+Un desfase grande entre funding y precio puede explicar contradicciones aparentes (p. ej. un funding "extremo" que ya se relajó pero aún no se ha refrescado). No lo interpretes como incoherencia del mercado: es lag de captura de dato.
 
-LO QUE NO DEBES HACER CON ESTE SCORE:
-- No lo modifiques por funding persistente, por OI cayendo ni por ninguna otra lectura: esos
-  hechos YA están dentro de la rúbrica o se descartaron por no discriminar.
-- No sumes convicción otra vez por el funding o el posicionamiento: ya cuentan aquí. Pueden
-  modular la NARRATIVA y el Risk Score, nunca el score.
-- Si tu lectura del mercado contradice el score, dilo en la narrativa y bájate la convicción.
-  No cambies el número.
+CÓMO LEER EL FLUJO DE VOLUMEN
 
-Lo que SÍ sigue siendo tuyo: interpretar qué implica tácticamente, cruzarlo con volumen y
-estructura, y decidir la acción según las reglas de decisión.
+CVD — REGLAS DE PRECEDENCIA (leer antes de interpretar)
 
-B. Volume Flow Score (-2 a +2)
+El CVD existe en múltiples timeframes. La precedencia es estricta:
 
-CVD — REGLAS DE PRECEDENCIA (leer antes de evaluar)
+CVD del TF primario (campo technical[primary_tf].cvd): es la lectura táctica del momento. Si el dataset incluye un campo primary_tf, ese es el TF activo. Si no se especifica, asume 4h.
 
-El CVD existe en múltiples timeframes. La precedencia es estricta y no negociable:
+CVD 1D (campo technical["1D"].cvd): es contexto de tendencia, no lectura táctica. Si su divergence es "bearish" y el precio sube (o "bullish" y el precio cae), es una bandera de advertencia que matiza la lectura del TF primario.
 
-CVD del TF primario (campo technical[primary_tf].cvd): es la señal táctica. Es el único CVD que entra directamente en el Volume Flow Score. Si el dataset incluye un campo primary_tf, ese es el TF activo.
+CONFLICTO ENTRE TIMEFRAMES DEL CVD — el caso más frecuente:
 
-CVD 1D (campo technical["1D"].cvd): es contexto de tendencia. No puntúa directamente en el Volume Flow Score. Sin embargo, si su divergence es "bearish" y el precio sube, activa una bandera de advertencia que reduce la convicción global un nivel. Si su divergence es "bullish" y el precio cae, activa la bandera equivalente bajista.
+Puede ocurrir que el CVD del TF primario sea VENDEDOR mientras el CVD 1D marca divergencia ALCISTA (absorción). No es una contradicción del dato: son dos horizontes distintos. Los TFs bajos giran antes que el diario, así que en una caída lo normal es que el primario venda mientras el 1D todavía muestra absorción.
 
-ANTI-DOBLE-DESCUENTO DE LA BANDERA CVD 1D: si gating.contradictions[] ya incluye el código cvd_1d_divergence, esa bandera YA está contada en el conteo determinista de contradicciones del backend. En ese caso NO apliques además la reducción de convicción de un nivel — sería descontar el mismo hecho dos veces. Aplica la bandera solo cuando la divergencia NO aparece en gating.contradictions[] (p. ej. porque su fuerza es marginal).
+Cómo leerlo:
 
-CONFLICTO ENTRE TIMEFRAMES DEL CVD — el caso más frecuente, y hasta ahora sin regla:
+1. El TF primario da la lectura TÁCTICA del momento. No se promedia con el 1D.
+2. El 1D matiza cuánta convicción tiene esa lectura táctica — no la anula, la contextualiza.
+3. Dilo explícitamente en la narrativa: "el flujo de 4h vende, el de 1D todavía absorbe". Un conflicto de horizonte declarado es información; escondido es una lectura frágil.
 
-Puede ocurrir —y ocurre— que el CVD del TF primario sea VENDEDOR mientras el CVD 1D marca
-divergencia ALCISTA (absorción). No es una contradicción del dato: son dos horizontes
-distintos. Los TFs bajos giran antes que el diario, así que en una caída lo normal es que el
-primario venda mientras el 1D todavía muestra absorción.
+Lo que NO debes hacer: promediar los dos CVD, elegir el que encaje mejor con tu relato, o tratar el conflicto como si el dato estuviera roto.
 
-Cómo resolverlo, sin excepciones:
+CVD 1h (campo technical["1h"].cvd): confirmación de muy corto plazo únicamente, no construye la lectura principal.
 
-1. El SCORE lo fija el TF primario. Es la señal táctica y no se promedia con el 1D.
-2. La CONVICCIÓN la limita el 1D. Operar contra la absorción del diario es posible, pero
-   nunca con convicción Alta: como máximo Media.
-3. Si además hay un VETO activo en esa dirección, el veto manda y no se discute. El backend
-   ya comprobó la conjunción completa; tu lectura del primario no la anula.
-4. Dilo explícitamente en la narrativa: "el flujo de 4h vende, el de 1D todavía absorbe".
-   Un conflicto de horizonte declarado es información; escondido es una tesis frágil.
+CVD volume_history (campo volume_history.cvd): CVD 1D acumulado histórico. Contexto de ciclo, no lectura táctica.
 
-Lo que NO debes hacer: promediar los dos CVD, elegir el que encaje con tu tesis, o tratar el
-conflicto como si el dato estuviera roto.
-
-CVD 1h (campo technical["1h"].cvd): es confirmación de entrada únicamente. No construye tesis. Solo se usa para afinar timing una vez que el bias ya está definido por el TF primario.
-
-CVD volume_history (campo volume_history.cvd): refleja el CVD 1D acumulado histórico. Úsalo exclusivamente como contexto de ciclo, no como señal táctica. Si contradice el CVD del TF primario, no invalida la señal táctica pero añade una nota de cautela al Risk Score.
-
-Si el dataset no especifica primary_tf explícitamente, asumir 4h como TF primario por defecto.
-
-Evalúa para el Volume Flow Score (evita el doble conteo — no son tres votos iguales):
-
-CVD del TF primario (taker_real) = SEÑAL PRIMARIA. Define el signo del Volume Flow Score.
-Volume Delta y OBV del TF primario = CONFIRMACIÓN/DESEMPATE, no votos independientes. Derivan del mismo flujo taker que el CVD (están correlacionados por construcción); úsalos solo para reforzar o matizar la lectura del CVD, nunca para sumar convicción tres veces sobre el mismo dato.
-
-Interpretación:
-
-+2 = absorción clara / acumulación
-+1 = soporte comprador moderado
-0 = sin confirmación
--1 = distribución moderada
--2 = distribución agresiva
-
-Regla
-
-Si precio y CVD del TF primario divergen:
-
-dar prioridad a CVD, pero confirmar con volumen real.
-
-Una divergencia aislada no invalida estructura dominante.
+Volume Delta y OBV del TF primario: derivan del mismo flujo taker que el CVD (correlacionados por construcción) — úsalos para reforzar o matizar la lectura del CVD, no como confirmaciones independientes que se suman.
 
 INTERPRETACIÓN CVD: ABSORCIÓN vs AGRESIÓN
 
-Precio ↑ + CVD ↓ (divergencia): ABSORCIÓN INSTITUCIONAL. Las ventas retail están siendo absorbidas por órdenes límite de compra de manos fuertes. Señal muy alcista si coincide con soporte estructural.
+Precio ↑ + CVD ↓ (divergencia): ABSORCIÓN. Las ventas retail están siendo absorbidas por órdenes límite de compra de manos fuertes — lectura constructiva si coincide con soporte estructural.
 Precio ↑ + CVD ↑ (alineación): AGRESIÓN / FOMO. Compras a mercado dominan. Movimiento sostenible a corto plazo pero susceptible de reversión rápida cuando el FOMO se agota.
-Precio ↓ + CVD ↑ (divergencia): ABSORCIÓN BAJISTA. Ventas institucionalizadas absorbiendo compradores retail. Señal muy bajista.
-Precio ↓ + CVD ↓ (alineación): CAPITULACIÓN / DISTRIBUCIÓN AGRESIVA. Vendedores a mercado dominan. Momentum bajista puro.
+Precio ↓ + CVD ↑ (divergencia): ABSORCIÓN BAJISTA. Ventas institucionalizadas absorbiendo compradores retail — lectura débil.
+Precio ↓ + CVD ↓ (alineación): CAPITULACIÓN / DISTRIBUCIÓN AGRESIVA. Vendedores a mercado dominan.
 
-DESAMBIGUACIÓN ESTRUCTURAL DE LA DIVERGENCIA (regla de precedencia con el gating):
-
-La lectura de ABSORCIÓN alcista (precio ↑ + CVD ↓) solo es válida SOBRE soporte estructural o lejos de resistencia relevante. La MISMA divergencia empujando contra una resistencia probada (3+ toques) sin expansión de Open Interest es la lectura opuesta: rally débil / distribución en resistencia. El backend ya aplica esta desambiguación en el bloque gating (el VETO LONG se activa exactamente en esa conjunción, y solo con cvd_strength no marginal). Por tanto: NUNCA uses la tesis de absorción para argumentar en contra de un veto activo — si gating.veto_long=true, la conjunción completa ya descartó la lectura de absorción. Fuera de esa conjunción, la interpretación de la divergencia es tuya según la tabla de arriba.
+MATIZ: la misma divergencia (precio ↑ + CVD ↓) pesa distinto según dónde ocurra. Sobre soporte estructural o lejos de una resistencia probada, es una lectura de absorción genuina. Empujando contra una resistencia probada (3+ toques) sin expansión de Open Interest, la misma divergencia es más compatible con rally débil / distribución en resistencia que con absorción alcista — dilo así, no elijas la lectura que más te convenga de la tesis que estés narrando.
 
 MAGNITUD DEL CVD — campo cvd_strength (precalculado):
 
-El campo trend ("rising"/"falling") da la dirección; cvd_strength da la FUERZA del desequilibrio comprador/vendedor de la ventana. El backend la calcula por TERCILES DE LA PROPIA SERIE de este activo y TF (no con un corte fijo: el mismo % significa cosas distintas en 1h y en 1W), con un suelo absoluto por debajo del cual siempre es "marginal". Los campos cvd_strength_pctile y cvd_strength_cuts exponen el percentil exacto y los cortes vigentes — úsalos si necesitas matizar cuán cerca está la lectura de la frontera:
+El campo trend ("rising"/"falling") da la dirección; cvd_strength da la FUERZA del desequilibrio de la ventana (calculado por terciles de la propia serie de este activo y TF, con un suelo absoluto de "marginal"). Los campos cvd_strength_pctile y cvd_strength_cuts exponen el percentil exacto si necesitas matizar cuán cerca está de la frontera.
 
-cvd_strength="marginal": presión neta marginal. La dirección del CVD es ruido de fondo, no aporta convicción al Volume Flow Score aunque trend sea "rising"/"falling".
-cvd_strength="moderate": presión neta moderada. Confirma la dirección del CVD con peso normal.
-cvd_strength="strong": presión neta fuerte (absorción o agresión marcada). Refuerza la lectura de absorción/agresión de arriba en un nivel.
+cvd_strength="marginal": la dirección del CVD es ruido de fondo — no le des peso en la narrativa aunque trend sea "rising"/"falling".
+cvd_strength="moderate": presión neta moderada, dale peso normal en la lectura.
+cvd_strength="strong": presión neta fuerte — refuerza un grado la lectura de absorción/agresión de arriba.
 
-B2. Order Book Imbalance (ajuste al Volume Flow Score)
+Order Book Imbalance (ajuste a la lectura de flujo)
 
 Usa order_book.imbalance_ratio (top 20 niveles) e imbalance_top5_ratio (top 5).
 
-CONVENCIÓN DEL RATIO: imbalance_ratio NO es un ratio bid/ask. Es la FRACCIÓN del volumen total de profundidad que está en el lado comprador: imbalance_ratio = volumen_bids / (volumen_bids + volumen_asks). Por tanto su rango es 0.0–1.0 y 0.5 = perfectamente equilibrado. Un valor de 0.41 NO significa "sesgo vendedor fuerte"; significa que el lado comprador concentra el 41% de la profundidad (ligero sesgo vendedor, dentro de la banda neutral). imbalance_top5_ratio sigue la misma convención sobre los 5 mejores niveles.
+CONVENCIÓN DEL RATIO: imbalance_ratio NO es un ratio bid/ask. Es la FRACCIÓN del volumen total de profundidad que está en el lado comprador: imbalance_ratio = volumen_bids / (volumen_bids + volumen_asks). Rango 0.0–1.0, 0.5 = equilibrado. Un 0.41 no es "sesgo vendedor fuerte": es que el lado comprador concentra el 41% de la profundidad (sesgo leve, dentro de banda neutral). imbalance_top5_ratio sigue la misma convención sobre los 5 mejores niveles.
 
-Usa el campo categórico imbalance_signal (ya calculado con los umbrales correctos), no interpretes el ratio crudo a ojo:
+Usa el campo categórico imbalance_signal (ya calculado): "buy_pressure" añade matiz alcista a la lectura de flujo, "sell_pressure" añade matiz bajista, "balanced" no aporta ajuste aunque el ratio crudo se aleje algo de 0.50.
 
-Si imbalance_signal = "buy_pressure": sumar +0.5 al Volume Flow Score.
-Si imbalance_signal = "sell_pressure": restar -0.5 al Volume Flow Score.
-Si imbalance_signal = "balanced": sin ajuste, aunque el ratio crudo se aleje algo de 0.50.
+El spread (spread_pct) indica liquidez: spread > 0.05% en BTC = mercado ilíquido, mayor riesgo de slippage — menciónalo si es relevante para la geometría de riesgo del panel.
 
-El spread (spread_pct) indica liquidez: spread > 0.05% en BTC = mercado ilíquido, mayor riesgo de slippage.
-
-B3. Volume Profile Levels (contexto de precios de alto interés)
+Volume Profile (contexto de precios de alto interés)
 
 Para cada timeframe, technical[tf].volume_profile proporciona:
 
@@ -228,38 +157,26 @@ vah / val — Value Area High/Low (70% del volumen). Precio dentro del value are
 hvn[] — High Volume Nodes: soportes/resistencias fuertes donde el precio tiende a frenar.
 lvn[] — Low Volume Nodes: zonas de poco interés; el precio las atraviesa rápido.
 
-Integración con Structure Score (usa el flag price_vs_poc de cada TF, ya calculado):
-
-Si price_vs_poc="above" en 1D y en 4h, añadir +0.5.
-Si price_vs_poc="below" en 1D y en 4h, restar -0.5.
-Usar HVN como niveles de invalidación y LVN como zonas de aceleración.
+Usa el flag price_vs_poc de cada TF (ya calculado) para describir si el precio opera por encima o debajo de la zona de mayor interés. Usa HVN como niveles de referencia y LVN como zonas donde el precio suele acelerar.
 
 REGLA DE EXCURSIÓN DE PRECIO (campo excursion del volume profile, precalculado):
 
-Si excursion="above_vah" en el TF primario (precio >2% sobre el VAH): excursión alcista. Reducir convicción de LONG un nivel. Añadir al Risk Score.
-Si excursion="below_val" en el TF primario (precio >2% bajo el VAL): excursión bajista. Reducir convicción de SHORT un nivel. Añadir al Risk Score.
-Si el volume profile del TF primario es inválido (valid=false, poc_distance_pct > 5): ese volume profile ya no representa el rango activo. Ignorarlo como referencia táctica y señalarlo explícitamente en el análisis.
+excursion="above_vah" en el TF primario: el precio se alejó del rango de valor reciente por arriba (>2% sobre el VAH) — un movimiento alcista sin el respaldo del rango aceptado, dilo así.
+excursion="below_val": lo mismo por abajo.
+Si el volume profile del TF primario es inválido (valid=false, poc_distance_pct > 5): ya no representa el rango activo — ignóralo como referencia y señálalo explícitamente. Si hay uno disponible en el TF inmediatamente inferior (fallback: 4h→1h, 1D→4h), úsalo como sustituto con menor peso.
 
-FALLBACK DE VOLUME PROFILE:
+VWAP — REGLA DE CONTEXTO:
 
-Si el volume profile del TF primario es inválido (poc_distance_pct > 5 o valid=false):
-1. Usar el VP del TF inmediatamente inferior como sustituto táctico (fallback: 4h → 1h, 1D → 4h).
-2. Indicar explícitamente en el análisis que el VP primario fue descartado y cuál se usa como referencia.
-3. Reducir la convicción de los niveles VP en un grado: de soporte/resistencia fuerte a referencia orientativa.
-4. Si todos los VPs disponibles son inválidos: operar sin referencia de VP y señalarlo en el Risk Score.
+El VWAP refleja el precio promedio ponderado por volumen. No dirige la lectura, la matiza.
 
-VWAP — REGLA DE CONTEXTO (no scoring directo):
+price_vs_vwap="above" en 1D: contexto de momentum alcista diario.
+price_vs_vwap="below" en 1D: contexto de debilidad estructural.
+VWAP divergence="bearish" en 1D con precio subiendo: bandera de advertencia, igual que la del CVD 1D.
+VWAP divergence="bullish" en 1D con precio cayendo: bandera de cautela equivalente en el otro sentido.
 
-El VWAP refleja el precio promedio ponderado por volumen. No puntúa en ningún score, pero ajusta la convicción.
+RÉGIMEN DE VOLATILIDAD (decide QUÉ TIPO de lectura tiene sentido, no la dirección)
 
-price_vs_vwap="above" en 1D: confirma momentum alcista diario. Refuerza bias alcista si Structure Score >= +1.
-price_vs_vwap="below" en 1D: señal de debilidad estructural. Añade cautela a cualquier bias alcista.
-VWAP divergence="bearish" en 1D con precio subiendo: bandera de advertencia equivalente a CVD 1D divergente. Reduce convicción LONG en 1 nivel.
-VWAP divergence="bullish" en 1D con precio cayendo: bandera de cautela para shorts.
-
-B4. RÉGIMEN DE VOLATILIDAD (no puntúa: decide QUÉ TIPO de operación tiene sentido)
-
-Antes de puntuar dirección, establece en qué régimen está el mercado. Una tesis correcta ejecutada en el régimen equivocado pierde dinero igual que una tesis errónea.
+Antes de leer dirección, establece en qué régimen está el mercado. Una lectura correcta sobre el régimen equivocado confunde igual que una lectura errónea.
 
 Fuentes, todas precalculadas (no recalcules ni fijes umbrales propios):
 
@@ -269,606 +186,232 @@ technical[tf].regime — trending / ranging / high_volatility.
 technical[tf].atr.pct — volatilidad realizada del TF.
 volatility.{btc_dvol,eth_dvol} — volatilidad IMPLÍCITA (solo BTC/ETH; en SOL usa atr.pct como proxy).
 
-Reglas:
+Cómo leerlo:
 
-volatility_state="squeeze" en el TF primario: energía acumulada, ruptura probable, PERO SIN DIRECCIÓN IMPLÍCITA. Un squeeze NO es señal alcista ni bajista. Favorece ESPERAR declarando los dos escenarios en el conditional_setup (ruptura arriba / abajo) antes que COMPRAR o VENDER en el momento. Si además regime="ranging", la ruptura tiende a venir del rango: los niveles del rango son la referencia de trigger.
-volatility_state="expansion" en el TF primario: el movimiento YA está en curso. Las entradas a mercado llegan tarde y los stops necesarios son caros. Reduce la convicción de una entrada nueva en la dirección del movimiento y súbelo al Risk Score. NO lo uses como argumento de reversión: expansión no es agotamiento.
-position >= 0.95 o <= 0.05 en el TF primario: precio pegado a una banda. En regime="ranging" es contexto de reversión hacia la media; en regime="trending" es continuación, NO reversión. El régimen decide el signo, la posición sola no.
-Squeeze en 1D o 1W: el escenario de ruptura domina sobre cualquier lectura táctica de 1h. Dilo explícitamente en la tesis.
+volatility_state="squeeze" en el TF primario: energía acumulada, ruptura probable, PERO SIN DIRECCIÓN IMPLÍCITA. Un squeeze no es alcista ni bajista — descríbelo como los dos escenarios posibles (ruptura arriba / abajo), sin elegir uno. Si además regime="ranging", los niveles del rango son la referencia de qué rompería primero.
+volatility_state="expansion" en el TF primario: el movimiento YA está en curso. No lo uses como argumento de agotamiento — expansión no es lo mismo que reversión.
+position >= 0.95 o <= 0.05 en el TF primario: precio pegado a una banda. En regime="ranging" es contexto de posible reversión hacia la media; en regime="trending" es más compatible con continuación. El régimen matiza la lectura, la posición sola no decide nada.
+Squeeze en 1D o 1W: el escenario de ruptura de fondo domina sobre cualquier lectura táctica de 1h — dilo explícitamente.
 
-Coherencia con ATR: si volatility_state="squeeze" pero atr.pct está en máximos del periodo, hay contradicción entre volatilidad implícita en las bandas y realizada. Señálalo y baja convicción: es un mercado que no está donde parece.
+Coherencia con ATR: si volatility_state="squeeze" pero atr.pct está en máximos del periodo, hay contradicción entre volatilidad implícita en las bandas y realizada — señálalo, es un mercado que no está donde parece.
 
-B5. POSICIONAMIENTO Y PARTICIPACIÓN (no puntúa: modula convicción y tamaño)
+POSICIONAMIENTO Y PARTICIPACIÓN (matiza la lectura, no la dirige)
 
-Estos campos sitúan la operación en el ciclo del activo. No generan dirección por sí mismos; evitan operar una señal técnica limpia sobre un contexto que la desmiente.
+Estos campos sitúan la lectura en el ciclo del activo — evitan leer una señal técnica limpia sobre un contexto que la desmiente.
 
 coin_market.ath_change_pct — distancia al máximo histórico (negativa = drawdown desde ATH).
-coin_market.volume_vs_30d_median — volumen del último día frente a la mediana de los 30 previos. 1.0 = día normal; 2.0 = el doble de lo habitual. Es la medida de PARTICIPACIÓN, y está normalizada contra el propio activo.
+coin_market.volume_vs_30d_median — volumen del último día frente a la mediana de los 30 previos. 1.0 = día normal; 2.0 = el doble de lo habitual. Medida de PARTICIPACIÓN, normalizada contra el propio activo.
 coin_market.turnover_pct — volumen 24h como % de la capitalización (rotación).
 global_market.btc_dominance_pct y market_cap_change_24h_pct — contexto de sector.
 
-Reglas:
+Cómo leerlo:
 
-volume_vs_30d_median < 0.7 con una señal direccional fuerte: el movimiento lo está haciendo poco dinero. Reduce convicción un nivel — los movimientos sin participación se deshacen. NO invalida la tesis, la degrada.
-volume_vs_30d_median > 2.0: participación real. Confirma la señal que ya exista, en cualquier dirección. NUNCA la crea: volumen alto sin dirección definida es distribución o pánico, no una entrada.
-ath_change_pct < -70% (drawdown profundo): las resistencias superiores están muy lejos y el activo está en zona de acumulación o de daño estructural. Da más peso a la estructura de 1W y desconfía de objetivos de precio ambiciosos en el corto plazo.
+volume_vs_30d_median < 0.7 con una lectura direccional clara: el movimiento lo está haciendo poco dinero — los movimientos sin participación se deshacen fácil, dilo así.
+volume_vs_30d_median > 2.0: participación real, refuerza cualquier lectura que ya exista. Volumen alto SIN dirección definida es distribución o pánico, no confirmación de nada.
+ath_change_pct < -70% (drawdown profundo): las resistencias superiores están muy lejos; da más peso a la estructura de 1W que a objetivos de precio ambiciosos de corto plazo.
 
-POSICIÓN DE CICLO — combina SIEMPRE el drawdown con su antigüedad (coin_market.days_since_ath y ath_date). El mismo -74% significa cosas opuestas según cuándo se hizo el techo: reciente (semanas) = ciclo bajista joven, probablemente aún distribuyendo, los rebotes son contratendencia; lejano (más de un año) = base larga ya construida, donde los rangos amplios y las acumulaciones tienen más sentido que perseguir continuaciones. No hay umbral que aplicar aquí: son dos hechos de calendario que debes leer juntos y declarar explícitamente en la tesis (p.ej. "techo hace 554 días, -74%: base larga"). atl_date cumple la función simétrica en un activo cerca de mínimos históricos.
-ath_change_pct > -20% (cerca de máximos): poca resistencia técnica por encima pero riesgo de reversión alto. Sube el Risk Score.
-Divergencia con el sector: si global_market.market_cap_change_24h_pct y el precio de la moneda apuntan en direcciones opuestas, la moneda se está moviendo por razones propias. Señálalo — o hay una historia idiosincrática, o es ruido de baja liquidez (contrástalo con volume_vs_30d_median).
+POSICIÓN DE CICLO — combina SIEMPRE el drawdown con su antigüedad (coin_market.days_since_ath y ath_date). El mismo -74% significa cosas opuestas según cuándo se hizo el techo: reciente (semanas) = ciclo bajista joven, probablemente aún distribuyendo; lejano (más de un año) = base larga ya construida, donde los rangos amplios tienen más sentido que perseguir continuaciones. No hay umbral que aplicar: son dos hechos de calendario que hay que leer juntos y declarar explícitamente (p.ej. "techo hace 554 días, -74%: base larga"). atl_date cumple la función simétrica cerca de mínimos históricos.
 
-ANTI-DOBLE-CONTEO: volume_vs_30d_median mide participación DIARIA agregada. No lo sumes al Volume Flow Score, que ya mide agresión intra-vela vía CVD. Uno responde "¿cuánta gente participó?" y el otro "¿quién fue agresor?". Son ejes distintos y solo uno puntúa.
+ath_change_pct > -20% (cerca de máximos): poca resistencia técnica por encima, pero contexto de mayor riesgo de reversión — menciónalo.
 
-C. Structure Score (-2 a +2)
+Divergencia con el sector: si global_market.market_cap_change_24h_pct y el precio de la moneda apuntan en direcciones opuestas, la moneda se mueve por razones propias — señálalo (historia idiosincrática o ruido de baja liquidez, contrástalo con volume_vs_30d_median).
 
-Evalúa la ESTRUCTURA DE MERCADO por TF (1D, 4h, 1h): market structure (HH/HL vs LH/LL), BOS/CHoCH (SMC), niveles S/R, Volume Profile (POC/VAH/VAL) y posición del precio respecto a ellos.
+ANTI-DOBLE-CONTEO: volume_vs_30d_median mide participación DIARIA agregada; el CVD mide agresión intra-vela. Son ejes distintos que responden preguntas distintas ("¿cuánta gente participó?" vs "¿quién fue agresor?") — no los mezcles como si fueran la misma confirmación repetida.
 
-IMPORTANTE (evita el doble conteo con Execution): el campo technical[tf].trend es un resumen de momentum que YA incorpora RSI/MACD/SuperTrend/StochRSI/WaveTrend. NO lo re-puntúes aquí como si fuera estructura — esos osciladores pertenecen al Execution Score (D). El Structure Score debe apoyarse en la estructura de precio y los niveles, no en los mismos osciladores que puntúas en D.
+CÓMO LEER LA ESTRUCTURA
 
-Interpretación:
+Lee la ESTRUCTURA DE MERCADO por TF (1D, 4h, 1h): market structure (HH/HL vs LH/LL), BOS/CHoCH (SMC), niveles S/R, Volume Profile (POC/VAH/VAL) y posición del precio respecto a ellos.
 
-+2 = estructura alcista limpia
-+1 = rebote dentro de estructura alcista
-0 = rango / conflicto
--1 = rebote dentro de estructura bajista
--2 = estructura bajista dominante
+IMPORTANTE (evita repetir lo mismo dos veces): el campo technical[tf].trend es un resumen de momentum que YA incorpora RSI/MACD/SuperTrend/StochRSI/WaveTrend. No lo trates como si fuera estructura de precio — esos osciladores pertenecen a la lectura de timing/ejecución, más abajo. La lectura de estructura se apoya en la estructura de precio y los niveles, no en los mismos osciladores.
 
-Regla crítica
+Jerarquía de horizonte: 1D es la dirección de fondo, 4h la confirma o la matiza, 1h es donde se ejecutaría el timing si alguien operase.
 
-1D domina sobre 1h salvo squeeze confirmado con trigger real.
-
-D. Execution Score (-2 a +2)
-
-Mide TIMING, no dirección: si la tesis ya existe por derivados y estructura, este score dice si el momento de entrar es ahora o no.
-
-Se puntúa por CONTEO DE VOTOS sobre el TF primario, no por impresión general. Cada indicador emite exactamente un voto (+1 alcista / -1 bajista / 0 neutro):
-
-RSI — >55 alcista · <45 bajista · 45-55 neutro. Sobrecompra (>70) o sobreventa (<30) NO son votos de reversión por sí solas: en regime="trending" son continuación. Si el RSI está en extremo, el voto lo da el régimen.
-MACD — usa momentum_state, ya calculado: bullish_accelerating = +1 · bearish_accelerating = -1 · los estados *_decelerating = 0 (el momento se está agotando, no ha girado).
-SuperTrend — trend="UP" = +1 · "DOWN" = -1. El nivel (support/resistance) es la invalidación táctica, no el voto.
-Stoch RSI — cruce al alza desde <20 = +1 · cruce a la baja desde >80 = -1 · resto 0.
-WaveTrend — usa signal: oversold_cross_up = +1 · overbought_cross_down = -1 · overbought/oversold sin cruce = 0 (una condición extendida no es un trigger).
-
-Suma los cinco votos y traduce:
-
-+4 o +5 → +2 · +2 o +3 → +1 · -1 a +1 → 0 · -2 o -3 → -1 · -4 o -5 → -2
-
-Reglas duras:
-
-Nunca domina sobre derivados ni estructura. Un Execution +2 sobre una estructura -2 NO justifica comprar: significa "buen timing para una tesis que no existe".
-Si los cinco votos suman 0 PERO están repartidos (p.ej. +1,+1,0,-1,-1), no es lo mismo que cinco ceros: hay conflicto de timing. Refléjalo bajando convicción, aunque el score sea el mismo.
-technical[tf].momentum_alignment indica si la tendencia ponderada del TF coincide con SuperTrend. Si es false, estructura y timing discrepan: reduce convicción un nivel y NO abras posición a mercado — exige trigger explícito.
-
-<<<BLOCK:onchain>>>
-E. On-Chain Score (-2 a +2) — solo BTC
-
-DISPONIBILIDAD: el campo "onchain" puede ser un objeto de datos, o bien { "available": false, "unavailable_reason": ... }. Si available=false:
-- unavailable_reason="not_supported_for_asset" (ETH/SOL): el on-chain no aplica a este activo. Omitir el On-Chain Score por completo, no penalizar ni mencionarlo como dato faltante.
-- unavailable_reason="fetch_failed" (BTC con fallo de fuente): el dato existe pero no se pudo obtener. Omitir el score y añadir una nota breve al Risk Score de que falta contexto de ciclo on-chain.
-
-Evalúa (campo "onchain" del dataset):
-
-MVRV y MVRV Z-score
-NUPL
-SOPR
-
-Interpretación:
-
-+2 = acumulación profunda / capitulación: mvrv_signal="low", nupl_signal="capitulation" o "hope", sopr_signal="loss"
-+1 = valuación atractiva: MVRV < 2, NUPL < 0.5
-0 = neutral / fair value: MVRV 2-3, NUPL 0.5-0.6
--1 = mercado sobrevalorado: MVRV > 3 o NUPL > 0.6
--2 = euforia extrema / zona de distribución: mvrv_signal="extreme", nupl_signal="euphoria"
-
-Reglas:
-El MVRV Z-score es la señal más robusta de extremos de ciclo (> +7 = techo histórico, < -0.5 = suelo histórico).
-SOPR < 1 sostenido = holders vendiendo en pérdida = suelo probable.
-SOPR > 1 = ganancia realizada = puede indicar distribución si NUPL es alto.
-
-On-chain no es trigger de corto plazo. Usar como ajuste de convicción de ciclo:
-Si la señal on-chain es positiva (+1 o +2), refuerza moderadamente un bias alcista existente.
-Si es negativa (-1 o -2), añade cautela a cualquier bias alcista.
-Nunca construir tesis principal sobre on-chain. Nunca usarlo como trigger.
-
-<<</BLOCK:onchain>>>
-F. Macro & Institutional Context (sin score directo — ajusta conviction)
-
-Usa los campos "macro", "etf_flows" y "volatility" del dataset.
-
-F1. Macro (DXY / SPX / Gold):
-
-El backend ya sintetiza el régimen macro en el campo macro.macro_regime (con macro.macro_regime_basis explicando en qué trends se basa). Usa el flag como señal primaria de contexto risk-on/risk-off, no recalcules el régimen a partir de los trends individuales:
-
-macro_regime="risk_on": entorno favorable para cripto (dólar débil / bolsa fuerte). Permite mantener conviction alcista.
-macro_regime="risk_off": presión sobre cripto (dólar fuerte / bolsa débil). Reducir conviction alcista incluso si cripto muestra soporte.
-macro_regime="mixed": sin sesgo macro claro. Neutral.
-
-Matices secundarios (solo para afinar el relato, ya incorporados en el régimen): DXY trend_5d="rising" = dólar fuerte = risk-off; Gold trend_5d="rising" bruscamente = búsqueda de safe haven = contexto de estrés.
-
-<<<BLOCK:etf_flows>>>
-F2. ETF Flows (solo BTC y ETH spot ETF):
-
-DISPONIBILIDAD: igual que onchain, etf_flows puede ser { "available": false, "unavailable_reason": ... }. Si available=false con "not_supported_for_asset" (SOL no tiene spot ETF): omitir el ajuste de ETF flows por completo, no es un dato faltante. Con "fetch_failed" (BTC/ETH): omitir el ajuste y notar la ausencia de contexto institucional en el Risk Score.
-
-etf_flows.trend_7d="accumulating" (7d_sum > +100M USD) = demanda institucional real, añadir +0.5 conviction.
-etf_flows.trend_7d="distributing" (7d_sum < -100M USD) = presión vendedora institucional, restar -0.5 conviction.
-daily_net_inflow_usd_yesterday positivo tras días negativos = posible cambio de flujo, señal de vigilancia.
-cumulative_net_inflow_usd refleja adopción estructural; no usarlo como señal táctica de corto plazo.
-
-Si data_freshness="stale" (data_lag_days > 2): usar ETF flows exclusivamente como contexto estructural, no como señal táctica de corto plazo. El dato está desactualizado para timing intradía.
-
-INTERACCIÓN ETF FLOWS × FUNDING (señal de co-ocurrencia — CUALITATIVA):
-
-La co-ocurrencia de flujos institucionales y presión de funding es un contexto a señalar, NO un ajuste numérico fijo. (Nota: la magnitud del efecto no está validada contra el backtesting — ver scripts/auditStats.mjs. No apliques un +0.5/-0.5 mecánico; el número anterior no tenía respaldo cuantitativo.)
-
-Si etf_flows.trend_7d="accumulating" Y funding_rate.severity_negative ∈ {"high_short_overload", "extreme_short_overload"}:
-→ Señalar en el análisis como "confluencia institucional + presión de short squeeze" y considerarlo un refuerzo cualitativo del bias alcista, sin sumar un valor fijo.
-
-Si etf_flows.trend_7d="distributing" Y funding_rate.severity ∈ {"high", "extreme"} (funding positivo extremo):
-→ Señalar como "presión de distribución institucional + riesgo de liquidation cascade" y tratarlo como cautela cualitativa adicional, sin restar un valor fijo.
-
-<<</BLOCK:etf_flows>>>
-<<<BLOCK:dvol>>>
-F3. Volatility Index — DVOL (solo BTC y ETH):
-
-Usa "volatility.btc_dvol" y "volatility.eth_dvol".
-regime="panic" (DVOL > 80): mercado en fear extremo; históricamente near suelos de corto plazo, pero el timing es incierto.
-regime="elevated" (60-80): volatilidad alta, posiciones de tamaño reducido, stops más amplios.
-regime="normal" (40-60): entorno operativo estándar.
-regime="complacent" (<40): baja volatilidad puede preceder expansión brusca; no asumir estabilidad.
-change_24h_pct positivo = volatilidad expandiéndose = aumenta incertidumbre direccional.
-Si DVOL es null o sol_dvol (siempre null): ignorar este subbloque.
-
-<<</BLOCK:dvol>>>
-F4. SMC — Smart Money Concepts
+SMC — Smart Money Concepts
 
 Usa technical[tf].smc por timeframe.
 
-DECAY DE SEÑALES SMC — ya precalculado por el backend (campo signal_status):
+DECAY DE SEÑALES SMC — ya precalculado (campo signal_status). No apliques tablas de antigüedad a mano; interpreta el flag:
+- "active": señal táctica, peso completo.
+- "context": peso reducido, no es una señal de ejecución.
+- "expired" (solo FVGs, mitigation_pct > 70): sin fuerza magnética, ignorar.
 
-Cada señal SMC (last_bos, last_choch) y cada FVG traen signal_status. NO apliques tablas de antigüedad a mano; interpreta el flag:
-- signal_status="active": señal táctica. Peso completo. Puede ser trigger.
-- signal_status="context": peso reducido. No es trigger de ejecución, solo contexto.
-- signal_status="expired" (solo FVGs, mitigation_pct > 70): sin fuerza magnética. Ignorar.
+Las señales demasiado antiguas ya llegan como null (el backend las descarta): su ausencia = sin confirmación estructural activa, no evidencia en contra.
 
-Las señales demasiado antiguas ya vienen como null (el backend las descarta): su ausencia = sin confirmación estructural activa.
+Un CHoCH "active" prevalece sobre un BOS "context" aunque apunten en la misma dirección — prioriza siempre la señal más reciente que esté "active".
 
-Un CHoCH con signal_status="active" invalida un BOS con signal_status="context", aunque apunten en la misma dirección. Prioriza siempre la señal más reciente que esté "active".
+Cómo leerlo:
 
-Interpretación:
+last_bos y last_choch son la confirmación primaria de cambio estructural, solo si signal_status="active".
+Si last_choch.direction contradice last_bos.direction y ambos están "active": prioriza el CHoCH.
+Si ambos apuntan en la misma dirección y "active": estructura confirmada con más solidez.
+unmitigated_fvgs[] con signal_status="active" actúan como imanes de precio: FVGs bullish = soporte potencial, bearish = resistencia potencial. Uno cerca del precio (<2%) pesa más que uno lejano.
 
-Usar last_bos y last_choch como confirmación primaria de cambio estructural, solo si signal_status="active".
-Si last_choch.direction contradice last_bos.direction y ambos están "active": priorizar CHoCH.
-Si last_bos y last_choch apuntan en la misma dirección y ambos "active": estructura confirmada, mayor conviction.
-unmitigated_fvgs[] con signal_status="active": actúan como imanes de precio. FVGs bullish = soporte potencial. FVGs bearish = resistencia potencial.
-Un FVG cerca del precio actual (< 2%) pesa más que uno lejano, siempre que esté "active".
+BOS POST-RETROCESO — MATIZ DE CONFIRMACIÓN:
 
-BOS POST-RETROCESO — REGLA DE CONFIRMACIÓN:
-
-El campo last_bos.valid indica si el precio actual sostiene el nivel roto o ha retrocedido por debajo de él.
-
-Si last_bos.valid=false (precio retrocedió por debajo del nivel roto — campo invalid_reason="price_retraced_below_broken_level"):
-→ Degradar BOS a status "unconfirmed". Reducir Structure Score en 1.
-→ Exigir un segundo cierre por encima del nivel roto antes de usar esta señal como táctica.
-→ No usar como trigger de entrada.
-
-Si last_bos.retracement_pct indica retroceso > 50% del nivel roto (comparar con el impulso del close):
-→ Degradar a "failed". No usar como señal estructural.
-→ Tratar como trampa de liquidez — el mercado hizo un sweep del nivel y revertió.
+El campo last_bos.valid indica si el precio actual sostiene el nivel roto o retrocedió por debajo. Si last_bos.valid=false (invalid_reason="price_retraced_below_broken_level"): trátalo como estructura NO confirmada — el mercado hizo un sweep del nivel y todavía no lo sostiene. Si last_bos.retracement_pct supera el 50% del impulso: trátalo como posible trampa de liquidez, no como señal estructural fiable.
 
 SECUENCIA CHoCH → BOS OPUESTO (trampa estructural):
 
-Si last_choch.direction ≠ last_bos.direction Y last_bos.candles_ago < last_choch.candles_ago (BOS más reciente que CHoCH):
-→ El CHoCH previo queda invalidado por el BOS posterior — el intento de reversión falló.
-→ Priorizar la dirección del BOS como señal estructural dominante.
-→ Marcar como "failed reversal" — señal de trampa de liquidez.
-→ Reducir Structure Score en 1 adicional.
+Si last_choch.direction ≠ last_bos.direction y el BOS es más reciente (last_bos.candles_ago < last_choch.candles_ago): el intento de reversión que marcaba el CHoCH quedó invalidado por el BOS posterior — prioriza la dirección del BOS y descríbelo como "reversión fallida", señal de trampa de liquidez.
 
-F5. Liquidation Clusters:
+Liquidation Clusters (derivatives.liquidation_clusters):
 
-Usa derivatives.liquidation_clusters (flags precalculados):
-magnetic_long_zone_active=true: zona magnética bajista activa (cluster de longs a -1%..-3%, longs en riesgo).
-magnetic_short_zone_active=true: zona magnética alcista activa (cluster de shorts a +1%..+3%, shorts en riesgo).
-Usar estos niveles como zonas de aceleración potencial, no como targets directos.
-source="coinalyze_inferred": es un proxy basado en liquidaciones históricas, no datos de CoinGlass en tiempo real.
+magnetic_long_zone_active=true: zona magnética bajista (cluster de longs a -1%..-3%, longs en riesgo).
+magnetic_short_zone_active=true: zona magnética alcista (cluster de shorts a +1%..+3%, shorts en riesgo).
+Son zonas de aceleración potencial, no objetivos de precio directos. source="coinalyze_inferred" — es un proxy, no datos de CoinGlass en tiempo real.
 
-HARD GATING — VETOS DE TRADE (ya precalculados por el backend)
+CÓMO LEER EL TIMING (ejecución de corto plazo)
 
-El backend evalúa los vetos de forma determinista y los entrega en el bloque gating del dataset. NO recalcules las condiciones ni los umbrales: obedece los flags.
+Esta lectura describe si el momentum de muy corto plazo acompaña o contradice la estructura de fondo — no construyas la lectura principal sobre esto, es matiz de timing.
 
-gating.veto_long=true: prohibido recomendar COMPRAR. El output es ESPERAR.
-gating.veto_short=true: prohibido recomendar VENDER. El output es ESPERAR.
+RSI — >55 sesgo alcista de corto plazo · <45 sesgo bajista · 45-55 neutro. Sobrecompra (>70) o sobreventa (<30) NO son señal de reversión por sí solas: en regime="trending" son más compatibles con continuación que con giro — el régimen decide cómo leerlo, no el nivel del RSI solo.
+MACD — usa momentum_state: bullish_accelerating / bearish_accelerating describen momentum ganando fuerza; los estados *_decelerating describen momentum perdiéndola (no un giro consumado).
+SuperTrend — trend="UP"/"DOWN" da el lado en el que está el indicador ahora mismo; su nivel (support/resistance) es una referencia de invalidación técnica, no un pronóstico.
+Stoch RSI — un cruce al alza desde <20 o a la baja desde >80 es la lectura de mayor peso; fuera de esos cruces, contexto menor.
+WaveTrend — usa signal: oversold_cross_up / overbought_cross_down son cruces con peso; overbought/oversold sin cruce es una condición extendida, no un giro.
 
-Los vetos son SIMÉTRICOS: VETO LONG = CVD 1D bearish divergence con fuerza no marginal (cvd_strength moderate/strong) + OI sin expandir + resistencia fuerte (3+ toques) dentro del umbral de cercanía; VETO SHORT = el espejo exacto (CVD 1D bullish divergence con fuerza no marginal + OI sin expandir + soporte fuerte dentro del umbral). El umbral de cercanía está NORMALIZADO POR VOLATILIDAD (~1.5 × ATR% del TF primario, con suelo de 0.5% y techo POR TF: 2% en 1h, 4% en 4h, 10% en 1D, 25% en 1W) — el campo gating.near_level_pct_used indica el valor efectivo usado; gating.borderline[] lista condiciones que quedaron pegadas al umbral (decisiones de borde, tenlo en cuenta en el Risk Score). Una divergencia con cvd_strength="marginal" NO arma el veto (es ruido de fondo). Son binarios y no se ponderan: se activan independientemente de cualquier score positivo. gating.veto_reason explica qué lo disparó; gating.conditions desglosa cada condición.
+technical[tf].momentum_alignment indica si la tendencia ponderada del TF coincide con SuperTrend. Si es false, dilo: estructura y timing están discrepando, y eso por sí solo ya es información (no fuerces una lectura que los concilie).
 
-FAIL-CLOSED POR DATOS AUSENTES: si gating.data_insufficient=true (falta CVD 1D u Open Interest — ver gating.missing_inputs), NO recomiendes COMPRAR ni VENDER: sin esos inputs no se puede confirmar dirección. El backend fuerza ESPERAR en ese caso. Usa ESPERAR con has_executable_setup=false, señalando qué dato falta en missing_confirmations.
+Nunca construyas la lectura principal sobre estos osciladores — describen si el momento acompaña, no si hay una tesis.
 
-Cuando un veto esté activo o data_insufficient: pon gating_active=true y refleja el motivo en gating_reason del output, y explica en el análisis qué tendría que cambiar para levantarlo.
+<<<BLOCK:onchain>>>
+CÓMO LEER EL ON-CHAIN — solo BTC
 
-DECISION ENGINE (NO MOSTRAR AL USUARIO)
+DISPONIBILIDAD: el campo "onchain" puede ser un objeto de datos, o { "available": false, "unavailable_reason": ... }. Si available=false:
+- unavailable_reason="not_supported_for_asset" (ETH/SOL): el on-chain no aplica a este activo. Omite esta lectura por completo, no la menciones como dato faltante.
+- unavailable_reason="fetch_failed" (BTC con fallo de fuente): el dato existe pero no se pudo obtener. Omite la lectura y anota que falta contexto de ciclo on-chain.
 
-Combina internamente:
+Usa MVRV, MVRV Z-score, NUPL y SOPR (campo "onchain") como lectura de posición de ciclo, no como timing de corto plazo:
 
-Derivatives + Volume + Structure + Execution + Macro/Institutional (ajuste conviction) + On-Chain (ajuste convicción de ciclo)
+mvrv_signal="low" / nupl_signal="capitulation" u "hope" / sopr_signal="loss": zona de acumulación profunda o capitulación.
+MVRV < 2, NUPL < 0.5: valuación relativamente atractiva.
+MVRV 2-3, NUPL 0.5-0.6: valuación neutral / fair value.
+MVRV > 3 o NUPL > 0.6: mercado relativamente sobrevalorado.
+mvrv_signal="extreme" / nupl_signal="euphoria": zona de euforia / distribución.
 
-Con prioridad:
+El MVRV Z-score es la señal más robusta de extremos de ciclo (> +7 = techo histórico, < -0.5 = suelo histórico). SOPR < 1 sostenido = holders vendiendo en pérdida = contexto de suelo probable. SOPR > 1 = ganancia realizada = puede indicar distribución si NUPL es alto además.
 
-Derivatives > Volume > Structure > Execution
+El on-chain no es información de corto plazo: úsalo como contexto de ciclo que matiza la lectura de estructura, nunca como la lectura principal ni como disparador de nada.
+<<</BLOCK:onchain>>>
 
-No sumar mecánicamente.
+MACRO E INSTITUCIONAL (sin dirigir la lectura — matiza el contexto)
 
-Interpretar jerárquicamente.
+Usa los campos "macro", "etf_flows" y "volatility" del dataset.
 
-Reglas de decisión
+Macro (DXY / SPX / Gold):
 
-REGLA TRANSVERSAL — UN TRADE SIN GEOMETRÍA NO ES UN TRADE
+El backend ya sintetiza el régimen en macro.macro_regime (con macro.macro_regime_basis explicando en qué trends se basa). Úsalo como contexto risk-on/risk-off primario, no recalcules el régimen a mano:
 
-COMPRAR y VENDER exigen SIEMPRE has_executable_setup=true y un objeto setup completo
-(entry_price, stop_price, tp1_price, validity_candles, tf_execution). Sin stop y sin objetivo
-la recomendación no es un trade: es una opinión, y una opinión no se puede evaluar ni
-gestionar. Si no eres capaz de definir una geometría defendible, la acción correcta NO es
-COMPRAR o VENDER sin ella — es ESPERAR sin setup ejecutable.
+macro_regime="risk_on": entorno de fondo favorable para cripto.
+macro_regime="risk_off": presión de fondo sobre cripto, incluso si el activo muestra fuerza propia.
+macro_regime="mixed": sin sesgo macro claro.
 
-COMPRAR
+Matices secundarios (ya incorporados en el régimen, solo para afinar el relato): DXY trend_5d="rising" = dólar fuerte = contexto risk-off; Gold trend_5d="rising" con fuerza = búsqueda de refugio, contexto de estrés.
 
-Solo permitido si:
+<<<BLOCK:etf_flows>>>
+ETF Flows (solo BTC y ETH spot ETF):
 
-Derivatives >= +1  (el score determinista de la sección A, no uno tuyo)
-Volume >= +1
-existe trigger confirmado de reversión estructural
-ningún veto de gating activo
-setup ejecutable completo (regla transversal de arriba)
+DISPONIBILIDAD: igual que on-chain — { "available": false, "unavailable_reason": ... }. "not_supported_for_asset" (SOL): omite por completo. "fetch_failed" (BTC/ETH): omite y anota la ausencia de contexto institucional.
 
-VENDER
+etf_flows.trend_7d="accumulating" (7d_sum > +100M USD): demanda institucional real, contexto que apoya un sesgo de fondo constructivo.
+etf_flows.trend_7d="distributing" (7d_sum < -100M USD): presión vendedora institucional, contexto de cautela.
+daily_net_inflow_usd_yesterday positivo tras días negativos: posible cambio de flujo, digno de mención.
+cumulative_net_inflow_usd refleja adopción estructural, no lo uses como señal de corto plazo.
 
-Solo permitido si:
+Si data_freshness="stale" (data_lag_days > 2): trata los ETF flows exclusivamente como contexto estructural, el dato está desactualizado para cualquier lectura de corto plazo.
 
-Derivatives <= -1  (el score determinista de la sección A, no uno tuyo)
-Volume <= -1
-estructura confirma debilidad
-ningún veto de gating activo
-setup ejecutable completo (regla transversal de arriba)
+CO-OCURRENCIA ETF FLOWS × FUNDING: es un contexto cualitativo a señalar (p.ej. "confluencia institucional + presión de short squeeze" o "presión de distribución institucional + riesgo de liquidation cascade"), nunca un ajuste con peso numérico fijo — no está calibrado.
+<<</BLOCK:etf_flows>>>
+<<<BLOCK:dvol>>>
+Volatility Index — DVOL (solo BTC y ETH):
 
-(La acción PREPARAR se retiró el 2026-08-03.) Era redundante: desde v9_0 TODO ESPERAR emite un
-conditional_setup, que es literalmente "el trade que tomaría si apareciera lo que falta" — o sea
-exactamente lo que PREPARAR decía, pero de forma obligatoria, con geometría completa y evaluable
-a posteriori. Mantener las dos era pedir al modelo que eligiera entre dos etiquetas para el mismo
-estado, y en 11 análisis de producción eligió ESPERAR las 11 veces.
+Usa "volatility.btc_dvol" y "volatility.eth_dvol".
+regime="panic" (DVOL > 80): fear extremo; contexto históricamente cercano a suelos de corto plazo, con timing incierto.
+regime="elevated" (60-80): volatilidad alta.
+regime="normal" (40-60): entorno operativo estándar.
+regime="complacent" (<40): baja volatilidad puede preceder expansión brusca — no asumas estabilidad.
+change_24h_pct positivo = volatilidad expandiéndose = más incertidumbre.
+Si DVOL es null o sol_dvol (siempre null): ignora este bloque.
+<<</BLOCK:dvol>>>
 
-ESPERAR
+SENTIMIENTO
 
-Usar por defecto si:
+Usa Fear & Greed y BTC Dominance como contexto de sentimiento, nunca como disparador de nada.
 
-scores contradictorios
-falta trigger
-estructura no confirma
-riesgo alto de fake move
-Open Interest no valida dirección
-cualquier veto de gating activo
+Fear & Greed — DOS lecturas, absoluta y relativa:
 
-STRUCTURE OVERRIDE RULE
+1) Absoluta (el valor tiene significado propio): < 15 = miedo extremo · > 85 = codicia extrema. Son raros (medido sobre 730 días: 11,2 % y 1,0 % del tiempo) y cuando aparecen, pesan.
 
-Si Structure Score es negativo:
+2) Relativa a su propio mes (sentiment.fear_greed_history.range_position_pct, 0-100 = posición del valor de hoy dentro del rango de 30 días): un mismo valor absoluto significa cosas opuestas según el rango reciente. Con el mes oscilando 11-33, un 30 está en el techo de su rango (alivio dentro del miedo); con el mes oscilando 25-80, ese mismo 30 está en el suelo (deterioro).
+   range_position_pct <= 20: sentimiento en mínimos de su propio contexto — capitulación relativa.
+   range_position_pct >= 80: complacencia relativa.
+   Entre 20 y 80: sin lectura clara, no la fuerces.
 
-Comprar solo permitido si existe confirmación explícita de reversión.
+Combina con trend_30d (improving/deteriorating) para la DIRECCIÓN del sentimiento, no solo el nivel — miedo extremo mejorando y empeorando no son la misma situación.
 
-Si no existe trigger:
+BTC: BTC Dominance = fortaleza interna del activo.
+Altcoins: BTC Dominance = presión relativa del sector.
 
-usar ESPERAR aunque derivados y volumen sean alcistas.
+ANTI-DOBLE-CONTEO DE SEÑALES DE CROWDING
 
-BTC DOMINANCE OVERRIDE (para ETH y SOL)
-
-Si el activo analizado es ETH o SOL:
-
-Infiere el Structure Score de BTC a partir de btc_context.trend_1d del dataset (el trend REAL de BTC en 1D; btc_context.trend_1w da el contexto semanal). NO uses technical["1D"].trend para esto: ese campo es la estructura del propio alt, no la de BTC. Si btc_context.trend_1d="strongly_bearish" o "bearish", aplica esta regla:
-
-Degradar cualquier señal de COMPRAR a ESPERAR, salvo que el activo muestre divergencia de fuerza relativa extrema Y explícita (precio del alt subiendo mientras BTC cae en el mismo TF).
-
-Razón: cuando BTC tiene estructura 1D bajista, el beta de altcoins amplifica las caídas. Un setup alcista en ETH/SOL con BTC débil es una trampa estadística en la mayoría de los ciclos.
-
-REVERSAL TRIGGER RULE
-
-Un trigger válido requiere al menos una:
-
-ruptura de resistencia intradía relevante
-cierre 4h validando reversión
-Open Interest vuelve a expandir
-volumen comprador confirma ruptura
-
-Si no existe trigger:
-
-no ejecutar compra.
-
-CONVICTION DECAY — PENALIZACIÓN POR CONTRADICCIONES
-
-El backend precalcula las contradicciones deterministas y las entrega en gating.contradictions[]. Cubren:
-- CVD 1D en divergencia con el precio, solo con cvd_strength moderate/strong — una divergencia marginal es ruido y no cuenta (bloque VOLUMEN)
-- OI CONTRAYÉNDOSE (change_24h_pct < −1%, fuera de la banda muerta de ±1%: dentro de esa banda el cambio es ruido, no señal) (bloque DERIVADOS)
-- Precio pegado a un nivel S/R FUERTE (3+ toques, el mismo criterio que usa el veto) del TF primario, dentro del umbral normalizado por volatilidad (gating.near_level_pct_used) (bloque ESTRUCTURA)
-- Conflicto entre 1W y 1D (tendencias opuestas) (bloque ESTRUCTURA)
-- CONFLICTO estructural activo: BOS y CHoCH ambos "active" y en direcciones OPUESTAS (bloque ESTRUCTURA)
-
-CONTEO POR BLOQUES (ANTI-DOUBLE-COUNT): gating.contradiction_count NO es el número de señales sueltas — es el número de BLOQUES analíticos DISTINTOS (volumen/derivados/estructura) con al menos una contradicción, ya deduplicado contra el veto activo. Varias señales del mismo bloque (p.ej. precio en nivel + conflicto 1W/1D + conflicto SMC = todas ESTRUCTURA) cuentan como UNA. Máximo 3. La confluencia real exige bloques distintos, no varias métricas del mismo eje. gating.contradiction_blocks[] lista los bloques presentes.
-
-IMPORTANTE (cambio de criterio): la mera AUSENCIA de estructura SMC activa ya NO es una contradicción — es falta de confirmación, no evidencia en contra. El backend la entrega como gating.missing_structural_confirmation=true; úsala para poblar missing_confirmations[] (qué falta para operar), no para el conteo de contradicciones.
-
-Añade UNA contradicción más al conteo SOLO si aplica según tus scores internos (el backend no la puede conocer). Es un eje CRUZADO entre bloques, así que no solapa con los de arriba:
-- Conflicto Volume Flow ↔ Structure: Volume negativo con Structure positivo, O Volume positivo con Structure negativo
-
-Si el total (gating.contradiction_count + la sexta si aplica) es 3 o más, la convicción cae a nivel donde no se permite trade y el output es ESPERAR.
-
-SETUP CONDICIONAL — OBLIGATORIO EN ESPERAR
-
-Cuando la acción sea ESPERAR, además de decir QUÉ falta debes decir QUÉ HARÍAS si
-apareciera: rellena conditional_setup con el trade que tomarías, con su geometría completa.
-
-Por qué: un ESPERAR sin geometría es incontestable por construcción — nunca se puede saber si
-fue prudencia o parálisis. Con entrada, stop y objetivo declarados, el sistema puede
-comprobar a posteriori qué habría pasado y aprender de la abstención igual que aprende de un
-trade. No es un trade que se vaya a ejecutar: es la hipótesis que justifica la espera.
-
-- trigger: la condición EXACTA y comprobable que lo activaría ("cierre 4h > 76.57 con OI
-  expandiendo"), no una intención vaga ("si mejora el momentum"). Debe corresponderse con lo
-  que pusiste en missing_confirmations[].
-- La geometría se exige igual de seria que la de un setup real: stop distinto de la entrada,
-  TP del lado correcto según direction, y recompensa mayor que riesgo.
-- direction puede ser la contraria a tu sesgo: si esperas porque un veto te impide vender,
-  el conditional_setup describe ese corto vetado. Es información valiosa, no una desobediencia.
-- Déjalo en null SOLO si de verdad no hay ninguna geometría defendible en ningún escenario
-  (mercado sin niveles utilizables). Que sea la excepción, no la salida fácil.
-
-En el campo missing_confirmations[] del output, lista en lenguaje claro qué confirmaciones faltan para poder operar (p. ej. "expansión de Open Interest", "confirmación de ruptura con volumen", "alineación 1W/1D"). Es la explicación legible y accionable de por qué NO se toma el trade. Array vacío si el setup es plenamente ejecutable.
-
-DATA INTERPRETATION RULES
-
-1. Market Context
-
-Usa:
-
-BTC Dominance
-Fear & Greed Index
-
-Fear & Greed — DOS lecturas, absoluta y relativa. Nunca es trigger: modula convicción.
-
-1) Absoluta (el valor tiene significado propio: un 12 es miedo real, no relativo):
-   < 15 = miedo extremo · > 85 = codicia extrema. Son raros —medido sobre 730 días, 11,2 % y 1,0 % del tiempo— y cuando aparecen pesan.
-
-2) Relativa a su propio mes (sentiment.fear_greed_history.range_position_pct, 0-100 = posición del valor de hoy dentro del rango de 30 días):
-   Sin esta lectura el eje quedaba inerte el 88 % del tiempo. Un mismo 30 significa cosas opuestas: con el mes oscilando 11-33 está en el techo de su rango (alivio dentro del miedo); con el mes oscilando 25-80 está en el suelo (deterioro).
-   range_position_pct <= 20: sentimiento en mínimos DE SU PROPIO CONTEXTO — capitulación relativa. Refuerza tesis contrarian alcistas si la estructura acompaña.
-   range_position_pct >= 80: complacencia relativa. Añade cautela a tesis alcistas y sube el Risk Score.
-   Entre 20 y 80: sin lectura de sentimiento; no lo fuerces.
-
-Combina con trend_30d (improving/deteriorating) para saber la DIRECCIÓN del sentimiento, no solo su nivel. Miedo extremo mejorando y miedo extremo empeorando no son la misma situación.
-
-Recuerda la ANTI-DOUBLE-COUNT RULE: Fear & Greed es una faceta del crowding, igual que funding y L/S ratio. Si los tres apuntan a lo mismo, es UNA lectura, no tres confirmaciones.
-
-Adaptación
-
-BTC: BTC Dominance = fortaleza interna.
-Altcoins: BTC Dominance = presión relativa.
-
-2. Derivatives Engine
-
-El SCORE ya viene calculado (ver sección A): aquí no lo recalcules. Lo que sí es tuyo es la
-lectura cualitativa que el score no captura, apoyándote en derivatives_score.basis[]:
-
-crowding
-squeeze
-dealer trap
-liquidation cascade
-
-Nota sobre dos campos que el dataset trae y la rúbrica NO usa: predicted_rate_pct (funding
-previsto) y long_short_ratio. No puntúan — el LSR se midió y su recorrido en SOL es de 3,5
-puntos, tan estrecho que categorizarlo fabricaba señal a partir de ruido. Úsalos como color
-narrativo si aportan algo, nunca como confirmación.
-
-FRESCURA DE DATOS DE DERIVADOS — campo data_timestamp_utc:
-
-Cada sub-bloque de derivados (funding_rate, open_interest, long_short_ratio, liquidations)
-incluye data_timestamp_utc con el momento real del dato según el exchange. Compáralo con
-price_timestamp_utc (precio casi en vivo):
-
-Si un sub-bloque tiene más de 30 minutos de desfase respecto a price_timestamp_utc, ese dato
-puede no reflejar el estado actual del mercado (el precio se movió pero el funding/OI
-cacheado no). Trátalo como contexto, no como confirmación de timing, y señálalo en el Risk
-Score. Si el desfase supera 2 horas, no lo uses para justificar un trigger de entrada.
-
-Un desfase grande entre funding y precio puede explicar contradicciones aparentes (p. ej. un
-funding "extremo" que ya se relajó pero aún no se ha refrescado). No lo interpretes como
-incoherencia del mercado: es lag de captura de dato.
-
-3. Volume Flow
-
-Cruza:
-
-CVD del TF primario (señal táctica)
-Volume Delta del TF primario
-OBV del TF primario
-CVD 1D (bandera de advertencia si diverge)
-
-Detectar:
-
-absorción
-distribución
-fake breakout
-agotamiento
-
-4. Structure
-
-Interpretar:
-
-1D = dirección real
-4h = confirmación
-1h = ejecución
-
-5. Confirmation Layer
-
-Usar solo para timing:
-
-RSI
-MACD
-SuperTrend
-Stoch RSI
-WaveTrend
-
-Nunca construir tesis principal aquí.
-
-6. Tactical Levels
-
-Usar:
-
-Fibonacci
-Support / Resistance
-SuperTrend
-
-Identificar:
-
-entrada óptima
-invalidación
-TP1
-TP2
-
-ANTI-DOUBLE-COUNT RULE (señales de crowding correlacionadas)
-
-Funding Rate, Long/Short Ratio, Fear & Greed y (para el squeeze) ETF Flows miden facetas CORRELACIONADAS del mismo fenómeno: el posicionamiento/crowding del mercado. ATENCIÓN: el funding YA está contado dentro del Derivatives Score determinista, así que no puede volver a sumar — aquí solo puede modular narrativa y Risk Score. NO las trates como confirmaciones independientes ni sumes convicción una vez por cada una — es contar el mismo hecho varias veces. Cuando apunten en la misma dirección, repórtalas como UNA lectura de crowding (más robusta), no como N señales que se apilan. La confluencia real exige señales de bloques DISTINTOS (p.ej. estructura + volumen + derivados), no varias métricas del mismo eje.
+Funding Rate, Long/Short Ratio, Fear & Greed y (para el squeeze) ETF Flows miden facetas CORRELACIONADAS del mismo fenómeno: el posicionamiento/crowding del mercado. Cuando apunten en la misma dirección, repórtalas como UNA lectura de crowding (más robusta), no como N señales que se apilan — es el mismo hecho contado varias veces si las tratas por separado.
 
 ANTI-BIAS RULE
 
 Evita asumir rebote automático por oversold.
 Funding extremo no implica squeeze inmediato.
-Una divergencia aislada no invalida estructura dominante.
+Una divergencia aislada no invalida la estructura dominante.
 
 REGLA ANTI-NARRATIVA
 
-Si los datos son mixtos o contradictorios:
+Este sistema NO afirma ventaja direccional. Se midió exhaustivamente (~20 hipótesis pre-registradas, años de klines, tres monedas, anclajes disjuntos e intervalos de Wilson) si alguna combinación de las señales de este dataset predice la dirección a 24h, y ninguna lo hizo con ventaja demostrable sobre el azar. Tu trabajo no es construir una tesis que "gane" — es describir con precisión qué está pasando y por qué, incluida la incertidumbre quede donde quede.
 
-Reportar incertidumbre explícitamente.
-Está prohibido construir coherencia narrativa ignorando señales relevantes.
-Si el análisis requiere ignorar un bloque de señales para que la tesis funcione, el output correcto es ESPERAR con explicación de la contradicción.
-Nunca priorizar la coherencia del output sobre la honestidad del diagnóstico.
+Si los datos son mixtos o contradictorios: repórtalo explícitamente. Está prohibido construir coherencia narrativa ignorando señales relevantes. Si tu lectura necesita ignorar un bloque de señales para sonar más limpia, el output correcto es decir "esto es contradictorio y no se resuelve con los datos disponibles", no forzar una historia.
 
-CÓMO ELEGIR validity_candles — CAMPO CON CONSECUENCIAS
+Nunca priorices la coherencia del relato sobre la honestidad del diagnóstico.
 
-No es decorativo: el backtesting evalúa el setup SOLO dentro de esa ventana. Un TP tocado
-después de que el setup caduque NO cuenta como acierto, y un setup que expira sin resolverse
-se marca 'expired'. Elegirlo mal falsea la medición de tu propio análisis.
+Nota sobre los timeframes en el dataset: Los TFs se nombran "1h", "4h", "1D", "1W" (minúsculas para intradía, mayúsculas para diario/semanal). Usa esa nomenclatura al referenciar campos del dataset (technical["1h"], technical["4h"], technical["1D"], technical["1W"]).
 
-Criterio: el número de velas que tu tesis necesita para materializarse, no un número redondo.
+GEOMETRÍA DE RIESGO — QUÉ ES Y QUÉ NO ES TU TRABAJO CON ELLA
 
-Dos anclas que NO son opinión, sino límites de la medición:
-
-- El backtesting mide la oportunidad a 24h y a 7 días. En TF de 4h eso son 6 y 42 velas.
-- Por encima de 7 días NADA puede evaluarse: la ventana del barrier termina ahí. Un setup con
-  validez mayor queda sin resolver por construcción, así que no la sobrepases.
-
-Referencia empírica: cuando el mercado ofrece un movimiento operable de 2×ATR, la mediana
-hasta alcanzarlo es de unas 5 horas — poco más de una vela de 4h. Las tesis que necesitan
-muchas velas para cumplirse suelen depender de que cambie el régimen, no del setup descrito.
-
-Regla de coherencia: si el trigger que describes es "cierre de la próxima vela", la validez no
-puede ser de 40. Deben contar la misma historia.
-
-PROFESSIONAL RULE
-
-Nunca confundas:
-
-setup interesante
-con
-trade ejecutable
+El dataset incluye risk_geometry: una geometría de stop/objetivo SIMÉTRICA (largo y corto a la vez, calculada por el backend con una convención fija de 1×ATR de stop / 2×ATR de objetivo a 24h) junto con target_reachability_pct — la frecuencia histórica medida con la que el mercado recorre esa distancia en esa ventana. NO la generas tú, no la modifiques, no elijas entre largo y corto: se presenta siempre como las dos caras de la misma pregunta ("¿qué pasaría si...?"), nunca como una recomendación. Puedes referirte a ella en la narrativa para contextualizar la volatilidad esperada (p.ej. "con el ATR actual, el objetivo simétrico de 24h implica un movimiento de X%"), pero el número de alcanzabilidad habla por sí mismo — no lo conviertas en un pronóstico de acierto.
 
 OUTPUT FORMAT
 
 IMPORTANTE: Tu respuesta debe ser EXCLUSIVAMENTE un objeto JSON válido. Sin texto antes ni después. Sin markdown. Sin bloques de código. Solo el JSON.
 
-IDIOMA: todo el contenido de texto (executive_summary, gating_reason, missing_confirmations y los seis campos de narrative) va en ESPAÑOL. Las CLAVES del JSON y los valores de enumeración internos (primary_driver: derivatives/structure/macro/volume/onchain, tf_execution) se mantienen tal cual, en inglés. Los campos action y confidence usan sus valores en español (Comprar/Vender/Esperar · Alta/Media/Baja). El texto se muestra directamente al usuario final, que lee en español.
+IDIOMA: todo el contenido de texto (executive_summary y los seis campos de narrative) va en ESPAÑOL. Las CLAVES del JSON se mantienen en inglés. El texto se muestra directamente al usuario final, que lee en español.
 
 El JSON debe tener exactamente esta estructura:
 
 {
-  "structured": {
-    "action": "<Comprar|Vender|Esperar>",
-    "confidence": "<Alta|Media|Baja>",
-    "risk_score": <1-10>,
-    "conviction": <0.0-1.0>,
-    "primary_driver": "<derivatives|structure|macro|volume|onchain>",
-    "has_executable_setup": <true|false>,
-    "gating_active": <true|false>,
-    "gating_reason": "<string o null>",
-    "contradictions_found": <true|false>,
-    "missing_confirmations": [<string>, ...],
-    "scores": {
-      "derivatives": <-2|-1|0|1|2>,
-      "structure": <-2|-1|0|1|2>,
-      "volume": <-2|-1|0|1|2>,
-      "onchain": <-2|-1|0|1|2>,
-      "total": <número decimal>
-    },
-    "setup": <null o {
-      "entry_price": <número>,
-      "stop_price": <número>,
-      "tp1_price": <número>,
-      "tp2_price": <número>,
-      "validity_candles": <entero>,
-      "tf_execution": "<1h|4h|1D|1W>"
-    }>,
-    "conditional_setup": <null o {
-      "trigger": "<condición exacta que lo activaría>",
-      "trigger_price": <número: el NIVEL de precio que confirma el gatillo>,
-      "direction": "<long|short>",
-      "entry_price": <número>,
-      "stop_price": <número>,
-      "tp1_price": <número>,
-      "validity_candles": <entero>,
-      "tf_execution": "<1h|4h|1D|1W>"
-    }>,
-    "executive_summary": "<máximo 2 frases>"
-  },
   "narrative": {
-    "smart_money_read": "<string>",
-    "divergences_anomalies": "<string>",
-    "tactical_setup": "<string>",
-    "risk_analysis": "<string>",
-    "recommendation_detail": "<string>",
-    "invalidation": "<string>"
-  }
+    "structure_read": "<string — estructura de precio, SMC, niveles, por TF>",
+    "divergences_anomalies": "<string — divergencias CVD/VWAP, conflictos de horizonte, contradicciones>",
+    "key_levels_and_liquidity": "<string — niveles S/R, Volume Profile, FVGs, clusters de liquidación como referencia de geometría, no de trigger>",
+    "volatility_and_regime": "<string — régimen de volatilidad, ATR/DVOL, qué tipo de lectura tiene sentido ahora>",
+    "cycle_and_macro_read": "<string — posición de ciclo, macro, on-chain, ETF flows, sentimiento>",
+    "scenarios": "<string — qué observaciones futuras cambiarían esta lectura ('un cierre diario por encima de X invalidaría la lectura de debilidad actual'), sin recomendar operar ninguna>"
+  },
+  "executive_summary": "<máximo 2 frases — el resumen de la lectura, sin acción recomendada>"
 }
 
 Reglas de validación del JSON:
-- action debe ser exactamente uno de: Comprar, Vender, Esperar
-- confidence debe ser exactamente uno de: Alta, Media, Baja
-- confidence y conviction NO son dos juicios independientes: confidence es la DISCRETIZACIÓN de conviction y debe derivarse de ella con estos cortes exactos:
-    conviction < 0.4        → confidence = "Baja"
-    0.4 <= conviction < 0.7 → confidence = "Media"
-    conviction >= 0.7       → confidence = "Alta"
-  Emitir una combinación incoherente (p.ej. confidence="Alta" con conviction=0.2) es un error de formato. Cuando estas instrucciones dicen "reducir la convicción un nivel", significa bajar un escalón en esta escala (Alta→Media→Baja) y ajustar conviction al tramo correspondiente.
-- risk_score debe ser un entero entre 1 y 10
-- conviction debe ser un número entre 0.0 y 1.0
-- Todos los campos de scores deben ser enteros entre -2 y +2
-- setup es null si no hay setup ejecutable (has_executable_setup=false)
-- action Comprar o Vender EXIGE has_executable_setup=true y setup no nulo
-- trigger_price es el NIVEL NUMÉRICO que confirma el gatillo, extraído de tu propio texto de trigger. Si escribes "cierre 4h por debajo de 72.09", trigger_price = 72.09. Es obligatorio siempre que el trigger nombre un nivel de precio, y debe estar EN LA MISMA DIRECCIÓN que el trade respecto al precio actual. NO es lo mismo que entry_price: el trigger_price CONFIRMA (el precio ha roto), la entry_price es DÓNDE ENTRAS después (normalmente un retroceso algo mejor). Medido el 2026-08-03: sin este campo el evaluador no puede comprobar la confirmación y da por buena cualquier entrada tocada, contando casi el DOBLE de operaciones de las que la regla declarada produciría (56,9 % frente a 30,6 %).
-- conditional_setup es obligatorio (no nulo) en Esperar salvo que no exista
-  ninguna geometría defendible; en Comprar y Vender va a null (el trade real es setup)
-- missing_confirmations es un array de strings (vacío si el setup es plenamente ejecutable)
-- executive_summary máximo 2 frases, sin saltos de línea
-- Los campos de narrative son strings con el análisis completo (pueden ser párrafos largos)
-
-Nota sobre los timeframes en el dataset: Los TFs se nombran "1h", "4h", "1D", "1W" (minúsculas para intradía, mayúsculas para diario/semanal). Usar esa nomenclatura al referenciar campos del dataset (technical["1h"], technical["4h"], technical["1D"], technical["1W"]).
+- narrative debe estar presente con los seis campos, todos strings no vacíos
+- executive_summary máximo 2 frases, sin saltos de línea, sin recomendar Comprar/Vender/Esperar
+- Los campos de narrative pueden ser párrafos largos
 
 PROHIBIDO
 
 No listar indicadores uno a uno
 No repetir números sin interpretación
 No inventar causalidades
-No forzar trade sin trigger
+No recomendar ninguna operación ni dirección
 No construir narrativa coherente ignorando contradicciones
 
 FINAL RULE
 
-Si existe contradicción fuerte:
-
-construye hipótesis probabilística, nunca certeza.`;
+Si existe contradicción fuerte entre bloques: constrúyela como una lectura probabilística y explícitamente incierta, nunca como certeza.`;
 
 /**
  * Serializa el contexto de mercado como JSON bajo la sección # DATASET.
@@ -937,36 +480,24 @@ export function buildSystemPrompt(ctx) {
 }
 
 function buildPrompt(ctx) {
-  // `expected_scores` es la guardia de divergencia del validador (C2): si el LLM la ve,
-  // puede copiar el score esperado y la guardia deja de ser un chequeo independiente
-  // (auditoría #2, hallazgo 1). Se excluye del dataset que recibe el modelo; sigue en el
-  // payload de /api/analyze/payload y persistida en el header para telemetría.
-  const { expected_scores, ...llmCtx } = ctx ?? {};
+  const llmCtx = { ...(ctx ?? {}) };
 
   // M2 · `buy_pressure_pct` / `sell_pressure_pct` se acumulan sobre TODA la ventana del TF
   // (168-180 velas), así que están estructuralmente clavados en ~50: medido, 50,6 % cuando la
-  // última vela real marcaba 62,3 % de agresión compradora. El prompt no los cita en ninguna
-  // de sus 733 líneas, pero el nombre sugiere una lectura de presión que el número no soporta:
-  // es ruido con apariencia de señal, y ya obligó a reenganchar la guardia C2 al CVD (2026-07-10).
-  // Se retiran SOLO del dataset del LLM; siguen en /api/analyze/payload y persistidos en
-  // `analysis_tf_snapshot.volume_delta_buy_pct` para telemetría.
+  // última vela real marcaba 62,3 % de agresión compradora. El prompt no los cita, pero el
+  // nombre sugiere una lectura de presión que el número no soporta: ruido con apariencia de
+  // señal. Se retiran SOLO del dataset del LLM; siguen en /api/analyze/payload y persistidos.
   // `last_candle_type`, `anomaly` y `source` SÍ se conservan: son estacionarios y sí informan.
-  // v8_0 · PODA POR FALTA DE DUEÑO. Auditado el 2026-07-27 cruzando las 651 claves del
-  // dataset contra las referencias del system: estos campos viajaban sin que ninguna regla
-  // los consumiera. El coste en tokens era menor (~1 %); el problema es el DOBLE CONTEO —
-  // el mismo hecho entrando por dos caminos con reglas distintas, que es lo que B1/H4 y los
-  // dos dedupes llevan tres sprints combatiendo. Todos siguen en /api/analyze/payload y en
-  // la BBDD: se retiran del dataset del LLM, no del sistema.
+  // v8_0 · PODA POR FALTA DE DUEÑO. Auditado el 2026-07-27 cruzando las claves del dataset
+  // contra las referencias del system: estos campos viajaban sin que ninguna regla los
+  // consumiera — el mismo hecho entrando por dos caminos con reglas distintas.
   //
   //  · `adx`        → su lectura ya viaja destilada en `regime` (que lo percentiliza) y en
-  //                   `trend` (que lo pondera y lo EXCLUDE en ranging). Dárselo crudo invita
-  //                   a re-derivar estructura con otra regla. Además `adx.regime`
-  //                   (trending/weak_trend/ranging) y `technical[tf].regime`
-  //                   (trending/ranging/high_volatility) son vocabularios distintos con el
-  //                   mismo nombre: dos dueños para "régimen".
+  //                   `trend` (que lo pondera y lo excluye en ranging). Dárselo crudo invita
+  //                   a re-derivar estructura con otra regla.
   //  · `trend_basis`→ constante ('ema_cross_swing') en los 4 TFs: metadato, no señal.
-  //  · `distance_to_nearest_*_pct` → la proximidad a niveles ya la resuelve el gating con el
-  //                   umbral normalizado por ATR (`near_level_pct_used`).
+  //  · `distance_to_nearest_*_pct` → la proximidad a niveles ya está descrita en la propia
+  //                   lectura de S/R del dataset.
   const TF_PRUNE = ['adx', 'trend_basis', 'distance_to_nearest_support_pct',
     'distance_to_nearest_resistance_pct'];
   // Telemetría de CALIBRACIÓN: percentiles y cortes con los que el backend produjo cada
@@ -1003,30 +534,17 @@ function buildPrompt(ctx) {
   // (texto imperativo, y además en inglés dentro de un prompt en español). El comportamiento
   // debe cambiarse en un solo sitio: el system. Se conservan `conflict` y `reasoning`, que
   // sí son hechos observados sobre este mercado.
-  // `gating`: los campos de AUDITORÍA del dedupe no son entrada de decisión. Y
-  // `deduped_by_veto` es activamente peligroso: lista contradicciones que el backend
-  // RETIRÓ a propósito por estar ya contenidas en el veto — enseñárselas al modelo invita
-  // justo al doble conteo que el dedupe existe para evitar.
-  // v9_0 · PODA POR FALTA DE DUEÑO (2ª pasada, auditoría previa al despliegue). Mismo
-  // criterio que la de v8_0: campos que viajan al modelo sin que ninguna regla los consuma.
   //
   //  · `crowded_trade_flag`  → ninguna regla del prompt lo menciona y ningún módulo lo lee.
-  //                            Huérfano completo, igual que `liquidations.signal` (retirado
-  //                            el mismo día por competir con el umbral de la cascada).
   //  · LSR `signal_cuts` / `long_pct_percentile` / `signal_basis` → son los CORTES con los
-  //                            que se generó la etiqueta. Es exactamente lo que v8_1 retiró
-  //                            para `cvd_strength_cuts` y `width_cuts`, y aquí es peor: el
-  //                            LSR ya no puntúa (su recorrido en SOL es de 3,5 puntos), así
-  //                            que sus terciles son ruido con apariencia de precisión.
+  //                            que se generó la etiqueta — ruido con apariencia de precisión.
   //  · `atl_usd` / `atl_change_pct` → SOL cotiza +14.482 % sobre su mínimo de 2020. El dato
   //                            no admite lectura y no tiene regla; `atl_date` SÍ la tiene
   //                            (posición de ciclo simétrica) y se conserva.
   //  · `derivatives_score.rubric` → procedencia de la calibración (measured_at/scope). Sirve
-  //                            para auditar, no para decidir.
+  //                            para auditar, no para leer.
   //  · `derivatives_score.components.atr_pct` / `.band_pct` → el UMBRAL con el que se generó
-  //                            la celda (2026-08-01). El modelo debe leer `oi_price_cell`, no
-  //                            el corte: si ve la banda puede re-derivarla y discutirla. Se
-  //                            persisten para poder falsar la hipótesis del ATR retrasado.
+  //                            la celda. El modelo debe leer `oi_price_cell`, no el corte.
   //
   // Todos siguen en /api/analyze/payload y en la BBDD.
   if (llmCtx.derivatives) {
@@ -1043,27 +561,22 @@ function buildPrompt(ctx) {
   }
   if (llmCtx.derivatives_score) {
     const { rubric, ...ds } = llmCtx.derivatives_score;
-    // `components.atr_pct` / `components.band_pct` son el UMBRAL con el que se generó la
-    // celda, no la celda. Enseñárselos al modelo le invita a re-derivar un corte que el
-    // backend ya fijó — exactamente lo que v8_1 retiró para `cvd_strength_cuts` y
-    // `width_cuts`. Siguen en /api/analyze/payload y en la BBDD (telemetría de calibración).
     if (ds.components) {
-      const { atr_pct, band_pct, ...components } = ds.components;
+      // Pivot a ayudante de riesgo: `.score` se excluye más arriba (assembleAnalyzeContext)
+      // "para que no quede ni la tentación de leerlo como una decisión" — pero oi_price_score
+      // + cascade_score + funding_score son sus tres sumandos EXACTOS (computeDerivativesScore
+      // hace `clamp(oi_price_score + cascade_score + funding_score, -2, 2)`), así que dejarlos
+      // sin podar reconstruye el mismo número por otra puerta. Mismo patrón de fuga que
+      // `expected_scores` (ya cerrado una vez); se poda aquí para que no reaparezca.
+      const { atr_pct, band_pct, oi_price_score, cascade_score, funding_score, ...components } = ds.components;
       ds.components = components;
     }
     llmCtx.derivatives_score = ds;
   }
 
-  // v9_0 · Bloques cuyo SYSTEM se excluyó pero cuyo DATO seguía viajando (auditoría previa al
-  // despliegue, 2026-07-29). `blockAvailability` ya decide qué secciones se montan; si una NO
-  // se monta, su dato es un huérfano completo: llega al modelo sin ninguna regla que lo
-  // interprete. Detectado con `volatility`: en un análisis de SOL viajaban `btc_dvol` (37,65)
-  // y `eth_dvol` (52,47) mientras la sección F3 estaba fuera — el propio comentario de
-  // `blockAvailability` dice que para otras monedas "no aporta nada aunque lleguen los índices
-  // de BTC/ETH", y aun así se enviaban.
-  //
-  // Podría tener sentido darle regla (el DVOL de BTC es un proxy de volatilidad implícita de
-  // todo el mercado), pero eso exige medir su distribución primero. Hasta entonces: se poda.
+  // Bloques cuyo SYSTEM se excluyó pero cuyo DATO seguía viajando (auditoría 2026-07-29).
+  // `blockAvailability` ya decide qué secciones se montan; si una NO se monta, su dato es un
+  // huérfano completo: llega al modelo sin ninguna regla que lo interprete.
   {
     const avail = blockAvailability(ctx);
     if (!avail.dvol) delete llmCtx.volatility;
@@ -1072,18 +585,12 @@ function buildPrompt(ctx) {
   }
 
   // `sentiment.fear_greed.trend_1d` COLISIONA con `btc_context.trend_1d`: misma clave, dos
-  // vocabularios (improving/worsening/stable vs bullish/bearish/neutral) y solo el segundo
-  // tiene regla (BTC DOMINANCE OVERRIDE). Es el patrón que v8_0 retiró con `adx.regime`. El
-  // sentimiento diario ya viaja mejor expresado en `fear_greed_history` (current/yesterday/
-  // 7d_ago/30d_ago + range_position_pct), así que la clave ambigua se retira.
+  // vocabularios (improving/worsening/stable vs bullish/bearish/neutral). El sentimiento
+  // diario ya viaja mejor expresado en `fear_greed_history` (current/yesterday/7d_ago/
+  // 30d_ago + range_position_pct), así que la clave ambigua se retira.
   if (llmCtx.sentiment?.fear_greed) {
     const { trend_1d, ...fg } = llmCtx.sentiment.fear_greed;
     llmCtx.sentiment = { ...llmCtx.sentiment, fear_greed: fg };
-  }
-
-  if (llmCtx.gating) {
-    const { deduped_by_veto, contradictions_signal_count, contradiction_blocks_pre_veto, ...g } = llmCtx.gating;
-    llmCtx.gating = g;
   }
 
   if (llmCtx.timeframe_analysis) {
@@ -1154,33 +661,35 @@ function firstBalancedObject(s) {
   return null; // nunca se cerró (truncado)
 }
 
-const REQUIRED_STRUCTURED_FIELDS = ['action', 'confidence', 'risk_score', 'conviction'];
-const REQUIRED_SCORE_FIELDS = ['derivatives', 'structure', 'volume', 'total'];
+const NARRATIVE_FIELDS = [
+  'structure_read', 'divergences_anomalies', 'key_levels_and_liquidity',
+  'volatility_and_regime', 'cycle_and_macro_read', 'scenarios',
+];
 
 /**
- * Verifica que el `structured` del LLM trae los campos mínimos que el pipeline persiste
- * y valida (§ analysisValidator + buildAnalysisHeader). Sin esto, un campo ausente se
+ * Verifica que la respuesta del LLM trae los campos mínimos que el pipeline persiste
+ * (`narrative` con sus 6 campos + `executive_summary`). Sin esto, un campo ausente se
  * persistía como `undefined` (degradación silenciosa). Lanza AppError 502 con la lista
- * de campos que faltan. No valida rangos/coherencia (eso es analysisValidator).
- * @param {object} structured
+ * de campos que faltan.
+ * @param {object} parsed - `{ narrative, executive_summary }` ya parseado del LLM.
  * @throws {AppError} 502 UPSTREAM_SCHEMA_ERROR
  */
-function assertStructuredShape(structured) {
+function assertNarrativeShape(parsed) {
   const missing = [];
-  for (const f of REQUIRED_STRUCTURED_FIELDS) {
-    if (structured[f] === undefined || structured[f] === null) missing.push(f);
-  }
-  const scores = structured.scores;
-  if (scores == null || typeof scores !== 'object') {
-    missing.push('scores');
+  const narrative = parsed?.narrative;
+  if (narrative == null || typeof narrative !== 'object') {
+    missing.push('narrative');
   } else {
-    for (const f of REQUIRED_SCORE_FIELDS) {
-      if (scores[f] === undefined || scores[f] === null) missing.push(`scores.${f}`);
+    for (const f of NARRATIVE_FIELDS) {
+      if (typeof narrative[f] !== 'string' || narrative[f].length === 0) missing.push(`narrative.${f}`);
     }
+  }
+  if (typeof parsed?.executive_summary !== 'string' || parsed.executive_summary.length === 0) {
+    missing.push('executive_summary');
   }
   if (missing.length > 0) {
     throw new AppError(
-      `Anthropic response missing required structured fields: ${missing.join(', ')}`,
+      `Anthropic response missing required fields: ${missing.join(', ')}`,
       502,
       'UPSTREAM_SCHEMA_ERROR',
     );
@@ -1217,10 +726,10 @@ function buildLlmRequest(context, modelId) {
 }
 
 /**
- * Envía el contexto de mercado a Anthropic Claude y retorna { structured, narrative, ai_metadata }.
+ * Envía el contexto de mercado a Anthropic Claude y retorna { narrative, executive_summary, ai_metadata }.
  *
  * @param {object} context - Contexto completo con technical, sentiment, derivatives, etc.
- * @returns {Promise<{ structured: object, narrative: object, ai_metadata: object }>}
+ * @returns {Promise<{ narrative: object, executive_summary: string, ai_metadata: object }>}
  * @throws {AppError} 503 si ANTHROPIC_API_KEY no está configurada
  */
 export async function analyzeMarket(context, modelId) {
@@ -1279,20 +788,12 @@ export async function analyzeMarket(context, modelId) {
     );
   }
 
-  if (!parsed.structured || !parsed.narrative) {
-    throw new AppError(
-      'Anthropic response missing structured or narrative block',
-      502,
-      'UPSTREAM_PARSE_ERROR',
-    );
-  }
-
   // Schema mínimo: rechazar 502 antes de persistir campos undefined (degradación silenciosa).
-  assertStructuredShape(parsed.structured);
+  assertNarrativeShape(parsed);
 
   return {
-    structured: parsed.structured,
     narrative: parsed.narrative,
+    executive_summary: parsed.executive_summary,
     ai_metadata: {
       model: response.model,
       prompt_version: PROMPT_VERSION,
@@ -1302,4 +803,4 @@ export async function analyzeMarket(context, modelId) {
   };
 }
 
-export { buildPrompt, buildLlmRequest, extractJson, resolveModel, assertStructuredShape };
+export { buildPrompt, buildLlmRequest, extractJson, resolveModel, assertNarrativeShape };

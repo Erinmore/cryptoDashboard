@@ -203,7 +203,7 @@ export const SAMPLE_REASONS = ['fixed', 'opportunistic', 'ui', 'manual', 'adhoc'
 //
 // REGLA DE MANTENIMIENTO: se sube la versión del componente que cambia, no todas a la vez.
 // Un lote que toque los tres sube los tres; uno que sólo mueva un corte sube `FEATURE`.
-export const GATE_VERSION    = 'g2_no_prepare_gate';   // puertas direccionales + fail-safe
+export const GATE_VERSION    = 'g3_no_gates_narrator_pivot'; // pivot a narrador: sin puertas ni fail-safe
 export const RUBRIC_VERSION  = 'r1_oi_price_2026_07_29'; // rúbrica de derivados (measured_at)
 // f2 (2026-08-09, Punto Cero 6 fase 1): B1 unifica los dos ATR% (180 de decisión, ya no 19
 // reconstruidos) + F2 normaliza SR_TOLERANCE por ATR (k=0.30) + B4 banda muerta en el voto

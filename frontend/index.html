@@ -81,59 +81,24 @@
         <h3 class="section-title">Análisis IA</h3>
         <div class="section-body">
           <div id="recommendation-empty">
-            <p class="rec-empty-text">Sin análisis. Pulsa <strong>Analizar</strong> para obtener una recomendación.</p>
+            <p class="rec-empty-text">Sin análisis. Pulsa <strong>Analizar</strong> para obtener una lectura del mercado.</p>
           </div>
           <div id="recommendation-loading" style="display:none">
             <div class="spinner"></div>
             <p class="rec-loading-text">Analizando mercado…</p>
           </div>
           <div id="recommendation-content" style="display:none">
-            <div class="rec-header">
-              <span id="rec-action" class="rec-action">—</span>
-              <span id="rec-confidence" class="rec-confidence">—</span>
-            </div>
+            <!-- Resumen ejecutivo de la lectura — nunca una acción recomendada. -->
             <p id="rec-rationale" class="rec-rationale"></p>
-            <div id="rec-levels" class="rec-levels">
-              <div class="rec-level-row"><span class="rec-level-label">Entrada</span><span id="rec-entry" class="rec-level-value">—</span></div>
-              <div class="rec-level-row"><span class="rec-level-label">Stop Loss</span><span id="rec-sl" class="rec-level-value rec-sl">—</span></div>
-              <div class="rec-level-row"><span class="rec-level-label">TP1</span><span id="rec-tp1" class="rec-level-value rec-tp">—</span></div>
-              <div class="rec-level-row"><span class="rec-level-label">TP2</span><span id="rec-tp2" class="rec-level-value rec-tp">—</span></div>
-            </div>
-            <!-- Qué falta para operar: lo emite el LLM (`missing_confirmations`) y hasta
-                 el 2026-08-03 no lo pintaba nadie. Es el bloque que explica POR QUÉ no hay
-                 operación, que es la salida dominante del sistema. -->
-            <div id="rec-missing" class="rec-missing" style="display:none">
-              <div class="rec-block-title">Qué falta para operar</div>
-              <ul id="rec-missing-list"></ul>
-            </div>
 
-            <!-- Plan condicional: el trade que se tomaría si aparece lo que falta. La
-                 geometría la elige el LLM; las tres cifras de al lado las mide el backend
-                 (curvas de `TRIGGER_BASE_RATE` y `TARGET_REACHABILITY`). -->
-            <div id="rec-plan" class="rec-plan" style="display:none">
-              <div class="rec-block-title">Si pasa esto, esto haría <span id="rec-plan-dir" class="rec-plan-dir"></span></div>
-              <p id="rec-plan-trigger" class="rec-plan-trigger"></p>
-              <div class="rec-plan-levels">
-                <div class="rec-level-row"><span class="rec-level-label">Entrada</span><span id="rec-plan-entry" class="rec-level-value">—</span></div>
-                <div class="rec-level-row"><span class="rec-level-label">Invalida en</span><span id="rec-plan-stop" class="rec-level-value rec-sl">—</span></div>
-                <div class="rec-level-row"><span class="rec-level-label">Objetivo</span><span id="rec-plan-tp1" class="rec-level-value rec-tp">—</span></div>
-                <div class="rec-level-row"><span class="rec-level-label">Caduca</span><span id="rec-plan-expiry" class="rec-level-value">—</span></div>
-              </div>
-              <div id="rec-plan-stats" class="rec-plan-stats"></div>
-              <p id="rec-plan-caveat" class="rec-plan-caveat"></p>
-            </div>
+            <!-- Lectura completa en prosa (6 secciones, ver OUTPUT FORMAT en
+                 anthropicService.js). Solo se pintan las secciones con texto. -->
+            <div id="rec-narrative" class="rec-narrative"></div>
 
-            <!-- Registro de lo que pasó con los planes anteriores. Va AQUÍ, en la misma
-                 pantalla que la recomendación, y no en un panel de auditoría aparte: un
-                 sistema que se usa a diario genera presión para creérselo, y la única
-                 defensa es que el historial esté donde no se pueda no ver. -->
-            <div id="rec-record" class="rec-record" style="display:none">
-              <div class="rec-block-title">Qué pasó con los planes anteriores</div>
-              <p id="rec-record-line" class="rec-record-line"></p>
-              <p id="rec-record-trigger" class="rec-record-trigger"></p>
-            </div>
+            <!-- Geometría de riesgo SIMÉTRICA (largo+corto a la vez, nunca una dirección
+                 elegida) — poblado por riskGeometryCard.js, dueño único con el historial. -->
+            <div id="rec-plan" class="rec-plan" style="display:none"></div>
 
-            <div id="rec-alerts"></div>
             <p id="rec-timestamp" class="rec-timestamp"></p>
           </div>
         </div>
@@ -144,7 +109,7 @@
         <h3 class="section-title">Análisis Previo</h3>
         <div class="section-body">
           <div class="sentiment-row">
-            <span class="sent-label">Acción</span>
+            <span class="sent-label">Lectura</span>
             <span class="sent-value" id="last-analysis-action">—</span>
             <span class="sent-signal" id="last-analysis-timestamp">—</span>
           </div>
@@ -445,7 +410,7 @@
         <button id="confirm-close" class="history-close" title="Cerrar" aria-label="Cerrar">&times;</button>
       </div>
       <div class="history-modal-body">
-        <p class="confirm-text">Se enviará el mercado actual al modelo para obtener una recomendación. Tarda unos 40 segundos y tiene coste por análisis.</p>
+        <p class="confirm-text">Se enviará el mercado actual al modelo para obtener una lectura narrativa y la geometría de riesgo simétrica. Tarda unos 40 segundos y tiene coste por análisis.</p>
         <div class="confirm-details">
           <div class="confirm-row"><span class="confirm-label">Moneda</span><span class="confirm-value" id="confirm-coin">—</span></div>
           <div class="confirm-row"><span class="confirm-label">Timeframe</span><span class="confirm-value" id="confirm-tf">—</span></div>

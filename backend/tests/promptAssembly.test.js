@@ -35,17 +35,17 @@ describe('H4 · bloques condicionales del SYSTEM_PROMPT', () => {
   test('SOL: caen on-chain, ETF y DVOL', () => {
     const { system, blocks } = buildSystemPrompt(solCtx);
     expect(blocks).toEqual([]);
-    expect(system).not.toContain('E. On-Chain Score');
-    expect(system).not.toContain('F2. ETF Flows');
-    expect(system).not.toContain('F3. Volatility Index');
+    expect(system).not.toContain('CÓMO LEER EL ON-CHAIN');
+    expect(system).not.toContain('ETF Flows (solo BTC y ETH spot ETF)');
+    expect(system).not.toContain('Volatility Index — DVOL');
   });
 
   test('BTC: los tres bloques se conservan', () => {
     const { system, blocks } = buildSystemPrompt(btcCtx);
     expect(blocks).toEqual(expect.arrayContaining(['onchain', 'etf_flows', 'dvol']));
-    expect(system).toContain('E. On-Chain Score');
-    expect(system).toContain('F2. ETF Flows');
-    expect(system).toContain('F3. Volatility Index');
+    expect(system).toContain('CÓMO LEER EL ON-CHAIN');
+    expect(system).toContain('ETF Flows (solo BTC y ETH spot ETF)');
+    expect(system).toContain('Volatility Index — DVOL');
   });
 
   test('el prompt de SOL es sensiblemente más corto', () => {
@@ -65,11 +65,11 @@ describe('H4 · bloques condicionales del SYSTEM_PROMPT', () => {
   test('las secciones NO opcionales sobreviven en ambos casos', () => {
     for (const ctx of [solCtx, btcCtx]) {
       const { system } = buildSystemPrompt(ctx);
-      expect(system).toContain('A. Derivatives Score');
-      expect(system).toContain('B. Volume Flow Score');
-      expect(system).toContain('F4. SMC');
+      expect(system).toContain('CÓMO LEER LOS DERIVADOS');
+      expect(system).toContain('CÓMO LEER EL FLUJO DE VOLUMEN');
+      expect(system).toContain('SMC — Smart Money Concepts');
       expect(system).toContain('OUTPUT FORMAT');
-      expect(system).toContain('DECISION ENGINE');
+      expect(system).toContain('REGLA ANTI-NARRATIVA');
     }
   });
 
@@ -81,8 +81,8 @@ describe('H4 · bloques condicionales del SYSTEM_PROMPT', () => {
     });
     expect(blocks).not.toContain('onchain');
     expect(blocks).toEqual(expect.arrayContaining(['etf_flows', 'dvol']));
-    expect(system).not.toContain('E. On-Chain Score');
-    expect(system).toContain('F2. ETF Flows');
+    expect(system).not.toContain('CÓMO LEER EL ON-CHAIN');
+    expect(system).toContain('ETF Flows (solo BTC y ETH spot ETF)');
   });
 
   test('DVOL solo cuenta para la moneda analizada, no por recibir el de BTC', () => {
@@ -128,11 +128,6 @@ describe('M2 · poda del dataset que ve el LLM', () => {
   test('no muta el contexto original (sigue sirviendo al payload y a la BD)', () => {
     buildPrompt(ctxConVolumen);
     expect(ctxConVolumen.technical['4h'].volume_delta.buy_pressure_pct).toBe(50.6);
-  });
-
-  test('expected_scores sigue excluido (guardia C2)', () => {
-    const out = buildPrompt({ ...ctxConVolumen, expected_scores: { volume: { score: -1 } } });
-    expect(out).not.toContain('expected_scores');
   });
 
   test('technical ausente o volume_delta nulo no rompen', () => {
@@ -235,9 +230,9 @@ describe('buildSystemPrompt — las reglas nuevas consumen flags precalculados (
     expect(s).not.toMatch(/width_pct\s*[<>]/);
   });
 
-  test('la rúbrica de Execution es contable, no impresionista', () => {
+  test('la lectura de timing usa los flags ya calculados, no recalcula un score', () => {
     const s = sys();
-    expect(s).toContain('CONTEO DE VOTOS');
+    expect(s).toContain('CÓMO LEER EL TIMING');
     expect(s).toContain('momentum_state');   // usa el flag ya calculado del MACD
     expect(s).toContain('momentum_alignment');
   });
@@ -267,7 +262,7 @@ describe('v8_1 — sentimiento auto-normalizado, idioma y telemetría fuera del 
     expect(s).toMatch(/ESPAÑOL/);
   });
 
-  test('la telemetría de calibración y los campos de auditoría no llegan al LLM', () => {
+  test('la telemetría de calibración no llega al LLM', () => {
     const ctx = {
       technical: {
         '4h': {
@@ -275,14 +270,6 @@ describe('v8_1 — sentimiento auto-normalizado, idioma y telemetría fuera del 
           cvd: { trend: 'rising', cvd_strength: 'moderate', cvd_strength_pctile: 61, cvd_strength_cuts: [1, 2] },
           super_trend: { trend: 'UP', support: 74.6, adaptive_multiplier: 2.687 },
         },
-      },
-      gating: {
-        veto_short: true,
-        contradictions: [{ code: 'htf_conflict_1w_1d' }],
-        contradiction_count: 1,
-        deduped_by_veto: ['cvd_1d_divergence', 'oi_flat_or_falling'],
-        contradictions_signal_count: 4,
-        contradiction_blocks_pre_veto: 3,
       },
     };
     const d = JSON.parse(buildPrompt(ctx).match(/\{[\s\S]*\}/)[0]);
@@ -296,14 +283,6 @@ describe('v8_1 — sentimiento auto-normalizado, idioma y telemetría fuera del 
     expect(t.cvd.cvd_strength).toBe('moderate');
     expect(t.cvd.cvd_strength_pctile).toBeUndefined();
     expect(t.super_trend.adaptive_multiplier).toBeUndefined();
-
-    // deduped_by_veto lista contradicciones RETIRADAS a propósito: enseñárselas al modelo
-    // invita al doble conteo que el dedupe existe para evitar.
-    expect(d.gating.deduped_by_veto).toBeUndefined();
-    expect(d.gating.contradictions_signal_count).toBeUndefined();
-    expect(d.gating.contradiction_blocks_pre_veto).toBeUndefined();
-    expect(d.gating.veto_short).toBe(true);          // la decisión sí viaja
-    expect(d.gating.contradiction_count).toBe(1);
   });
 });
 
@@ -435,7 +414,19 @@ describe('poda de la telemetría de calibración del Derivatives Score', () => {
     expect(out).not.toContain('1.445');
   });
 
-  test('el resto del desglose SÍ se conserva (el modelo lo necesita para la sección A)', () => {
+  // Pivot a ayudante de riesgo: `.score` se excluye antes de llegar aquí (assembleAnalyzeContext),
+  // pero oi_price_score + cascade_score + funding_score son sus tres sumandos EXACTOS
+  // (computeDerivativesScore: score = clamp(oi_price_score + cascade_score + funding_score, -2, 2)).
+  // Sin podarlos, el modelo reconstruye el mismo número sumándolos — la misma fuga que
+  // `expected_scores` ya cerró una vez, reabierta por otra puerta.
+  test('oi_price_score, cascade_score y funding_score no llegan al modelo', () => {
+    const out = buildPrompt(ctx());
+    expect(out).not.toContain('oi_price_score');
+    expect(out).not.toContain('cascade_score');
+    expect(out).not.toContain('funding_score');
+  });
+
+  test('el resto del desglose SÍ se conserva (color de lectura, no un número que sumar)', () => {
     const out = buildPrompt(ctx());
     expect(out).toContain('oi_price_cell');
     expect(out).toContain('no_signal');

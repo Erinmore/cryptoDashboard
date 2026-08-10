@@ -57,24 +57,7 @@ describe('buildLlmRequest — temperature deprecado en modelos actuales (default
   });
 });
 
-describe('buildLlmRequest — expected_scores NO llega al LLM (auditoría #2, hallazgo 1)', () => {
-  // expected_scores es la guardia de divergencia del validador: si el modelo la viera en
-  // el dataset podría copiar el score esperado y anular el chequeo independiente (C2).
-  const ctx = {
-    coin: 'BTC',
-    gating: { veto_long: false, contradictions: [], contradiction_count: 0 },
-    expected_scores: { derivatives: { score: -1, basis: ['x'] }, volume: { score: 2, basis: ['y'] } },
-  };
-
-  test('el mensaje de usuario no contiene expected_scores pero sí el resto del contexto', () => {
-    const content = buildLlmRequest(ctx, 'claude-opus-4-8').messages[0].content;
-    expect(content).not.toContain('expected_scores');
-    expect(content).toContain('"gating"');
-    expect(content).toContain('"coin": "BTC"');
-  });
-
-  test('no muta el contexto original (expected_scores sigue disponible para el validador)', () => {
-    buildLlmRequest(ctx, 'claude-opus-4-8');
-    expect(ctx.expected_scores.volume.score).toBe(2);
-  });
-});
+// `expected_scores`/`gating` (guardia de divergencia C2, vetos deterministas) se retiraron
+// con el pivot a ayudante de riesgo (§REORIENTACIÓN): sin puerta direccional que gatear, no
+// hay score que copiar ni veto que obedecer — `computeExpectedScores`/`gating.js` ya no
+// existen en el código.

@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { TF_DURATION_MS, TF_DURATION_HOURS, TIMEFRAME_MINUTES } from '../src/config/constants.js';
 import { setupExpiryMs } from '../src/utils/outcome.js';
-import { describeConditionalPlan } from '../src/utils/conditionalPlan.js';
+import { computeRiskGeometry } from '../src/utils/riskGeometry.js';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '../src');
 
@@ -46,24 +46,23 @@ describe('B3 · dueño único de la duración de vela', () => {
   });
 
   /**
-   * LA PROPIEDAD QUE DE VERDAD IMPORTA. El panel enseña "válido hasta X" y el evaluador cierra
-   * el shadow trade en su propia caducidad. Si divergieran, el usuario leería una promesa que
-   * el sistema no cumple — y nada avisaría. Con un solo dueño no pueden discrepar.
+   * LA PROPIEDAD QUE DE VERDAD IMPORTA. El panel enseña "válido hasta X" para la geometría de
+   * riesgo (utils/riskGeometry.js) usando la MISMA `setupExpiryMs` que el resto del sistema
+   * aplicaría para cerrar cualquier evaluación de vigencia. Si divergieran, el usuario leería
+   * una promesa que el sistema no cumple — y nada avisaría. Con un solo dueño no pueden
+   * discrepar. `computeRiskGeometry` fija la vigencia a 6 velas del TF primario (decisión de
+   * producto, ver riskGeometry.js), así que se prueba en los 4 TFs con ese valor fijo.
    */
-  test('la caducidad que se PINTA es la misma que el evaluador APLICA', () => {
+  test('la caducidad que se PINTA es la misma que setupExpiryMs calcularía', () => {
     const t0 = '2026-08-03T08:05:55.077Z';
-    for (const [tf, candles] of [['4h', 12], ['1h', 6], ['1D', 3], ['4h', 42]]) {
-      const plan = describeConditionalPlan({
-        conditionalSetup: {
-          direction: 'short', entry_price: 71.9, stop_price: 73.6, tp1_price: 68.32,
-          validity_candles: candles, tf_execution: tf,
-        },
-        primaryTf: '4h', timestamp: t0,
+    for (const primaryTf of ['1h', '4h', '1D', '1W']) {
+      const g = computeRiskGeometry({
+        currentPrice: 100, atrPct: 1.5, primaryTf, tMs: Date.parse(t0),
       });
       const evaluador = setupExpiryMs({
-        tMs: Date.parse(t0), validityCandles: candles, tfExecution: tf, primaryTf: '4h',
+        tMs: Date.parse(t0), validityCandles: g.validity_candles, tfExecution: primaryTf, primaryTf,
       });
-      expect(Date.parse(plan.expires_at)).toBe(evaluador);
+      expect(Date.parse(g.expires_at)).toBe(evaluador);
     }
   });
 });

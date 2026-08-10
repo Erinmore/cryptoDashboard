@@ -510,6 +510,17 @@ function runMigrations(db) {
   // de 19 velas (`fetchAtrPctAt`), que queda solo como fallback para filas anteriores a este
   // cambio (NULL aquí). Ver outcomeService.js.
   ensureColumn(db, 'analyses', 'atr_pct_decision', 'REAL');
+
+  // Pivot a ayudante de riesgo (2026-08-1X) — ver CLAUDE.md §REORIENTACIÓN. `risk_geometry`:
+  // JSON de `utils/riskGeometry.js` — geometría SIMÉTRICA long+short desde el precio del
+  // análisis. Sustituye a `conditional_setup` (UNA dirección declarada por el LLM). Columna
+  // JSON única, mismo patrón que `conditional_setup` — evita una migración por cada cifra
+  // nueva. Filas anteriores a este cambio: NULL, no re-derivable (dependía del ATR/precio
+  // del instante). Las columnas direccionales viejas (action/scores/setup_*/
+  // conditional_setup/gating_*/contradiction_*) NO se borran ni se renombran — "los
+  // escritores dejan de producir, los lectores siguen entendiendo" (misma disciplina que la
+  // retirada de `Preparar`): siguen ahí, NULL en filas nuevas, legibles en las viejas.
+  ensureColumn(db, 'analyses', 'risk_geometry', 'TEXT');
 }
 
 export function closeDb() {

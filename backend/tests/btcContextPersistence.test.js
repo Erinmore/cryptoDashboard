@@ -48,23 +48,16 @@ describe('analyses — persistencia del contexto BTC (btc_trend_1d / btc_trend_1
     expect(file).not.toMatch(/data[/\\]cryptex\.db$/);
   });
 
-  const minimalStructured = {
-    action: 'Esperar', confidence: 'Media', risk_score: 5, conviction: 0.5,
-    has_executable_setup: false, gating_active: false, setup: null,
-    scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
-    executive_summary: 'test',
-  };
-
   test('buildAnalysisHeader mapea btc_context → btc_trend_1d/1w', () => {
     const context = { btc_context: { trend_1d: 'bearish', trend_1w: 'neutral', source: 'btc_klines' } };
-    const header = buildAnalysisHeader('btc-1', 'SOL', '4h', context, minimalStructured, {}, 100);
+    const header = buildAnalysisHeader('btc-1', 'SOL', '4h', context, 'test', {}, 100);
     expect(header.btc_trend_1d).toBe('bearish');
     expect(header.btc_trend_1w).toBe('neutral');
   });
 
   test('saveAnalysis los persiste (los @params casan con las claves de la fila)', () => {
     const context = { btc_context: { trend_1d: 'strongly_bearish', trend_1w: 'bearish', source: 'btc_klines' } };
-    const header = buildAnalysisHeader('btc-1', 'SOL', '4h', context, minimalStructured, {}, 100);
+    const header = buildAnalysisHeader('btc-1', 'SOL', '4h', context, 'test', {}, 100);
     dbService.saveAnalysis({ header, tfSnapshots: [], clusters: [], fvgs: [] });
 
     const row = dbmod.getDb()
@@ -73,7 +66,7 @@ describe('analyses — persistencia del contexto BTC (btc_trend_1d / btc_trend_1
   });
 
   test('btc_context ausente (fetch fallido) no rompe: se persiste NULL', () => {
-    const header = buildAnalysisHeader('btc-null', 'SOL', '4h', {}, minimalStructured, {}, 100);
+    const header = buildAnalysisHeader('btc-null', 'SOL', '4h', {}, 'test', {}, 100);
     dbService.saveAnalysis({ header, tfSnapshots: [], clusters: [], fvgs: [] });
 
     const row = dbmod.getDb()
@@ -84,7 +77,7 @@ describe('analyses — persistencia del contexto BTC (btc_trend_1d / btc_trend_1
   // El punto de todo el ejercicio: la partición del checkpoint es una consulta SQL.
   test('la partición "override de BTC activo / inactivo" es consultable por SQL', () => {
     const ctxOk = { btc_context: { trend_1d: 'bullish', trend_1w: 'bullish', source: 'btc_klines' } };
-    const header = buildAnalysisHeader('btc-ok', 'SOL', '4h', ctxOk, minimalStructured, {}, 100);
+    const header = buildAnalysisHeader('btc-ok', 'SOL', '4h', ctxOk, 'test', {}, 100);
     dbService.saveAnalysis({ header, tfSnapshots: [], clusters: [], fvgs: [] });
 
     const gate = dbmod.getDb().prepare(`

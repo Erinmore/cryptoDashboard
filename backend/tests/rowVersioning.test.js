@@ -27,13 +27,6 @@ describe('versionado por fila (gate/rubric/feature)', () => {
     ({ buildAnalysisHeader } = await import('../src/controllers/analysisController.js'));
   });
 
-  const minimalStructured = {
-    action: 'Esperar', confidence: 'Media', risk_score: 5, conviction: 0.5,
-    has_executable_setup: false, gating_active: false, setup: null,
-    scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
-    executive_summary: 'test',
-  };
-
   afterAll(() => {
     try { dbmod.closeDb(); } catch { /* noop */ }
     for (const ext of ['', '-wal', '-shm']) {
@@ -63,14 +56,14 @@ describe('versionado por fila (gate/rubric/feature)', () => {
   });
 
   test('buildAnalysisHeader las inyecta — el camino REAL, no un header a mano', () => {
-    const header = buildAnalysisHeader('ver-1', 'SOL', '4h', {}, minimalStructured, {}, 100);
+    const header = buildAnalysisHeader('ver-1', 'SOL', '4h', {}, 'test', {}, 100);
     expect(header.gate_version).toBe(constants.GATE_VERSION);
     expect(header.rubric_version).toBe(constants.RUBRIC_VERSION);
     expect(header.feature_version).toBe(constants.FEATURE_VERSION);
   });
 
   test('saveAnalysis persiste las tres versiones', () => {
-    const header = buildAnalysisHeader('ver-1', 'SOL', '4h', {}, minimalStructured, {}, 100);
+    const header = buildAnalysisHeader('ver-1', 'SOL', '4h', {}, 'test', {}, 100);
     dbsvc.saveAnalysis({ header, tfSnapshots: [], clusters: [], fvgs: [] });
     const row = db.prepare('SELECT * FROM analyses WHERE id = ?').get('ver-1');
     expect(row.gate_version).toBe(constants.GATE_VERSION);
@@ -88,7 +81,7 @@ describe('versionado por fila (gate/rubric/feature)', () => {
   test('una fila anterior al versionado queda NULL y es distinguible por SQL', () => {
     // Las 11 filas ya en producción son exactamente este caso: no se rellenan a mano, porque
     // NULL es la marca correcta de "producida antes de que se versionara".
-    const header = buildAnalysisHeader('ver-old', 'SOL', '4h', {}, minimalStructured, {}, 100);
+    const header = buildAnalysisHeader('ver-old', 'SOL', '4h', {}, 'test', {}, 100);
     delete header.gate_version; delete header.rubric_version; delete header.feature_version;
     header.gate_version = null; header.rubric_version = null; header.feature_version = null;
     dbsvc.saveAnalysis({ header, tfSnapshots: [], clusters: [], fvgs: [] });
@@ -106,12 +99,6 @@ describe('versionado por fila (gate/rubric/feature)', () => {
     ({ normalizeSampleReason } = await import('../src/utils/sampleReason.js'));
   });
 
-  const minimal = {
-    action: 'Esperar', confidence: 'Media', risk_score: 5, conviction: 0.5,
-    has_executable_setup: false, gating_active: false, setup: null,
-    scores: { derivatives: 0, structure: 0, volume: 0, onchain: 0, total: 0 },
-    executive_summary: 'test',
-  };
 
   describe('normalización — es entrada de usuario que acaba en BBDD', () => {
     test.each([
@@ -141,7 +128,7 @@ describe('versionado por fila (gate/rubric/feature)', () => {
   });
 
   test('se persiste y se devuelve por getAnalysisHistory', () => {
-    const h = buildAnalysisHeader('sr-1', 'SOL', '4h', {}, minimal, {}, 100, 'opportunistic:veto_short');
+    const h = buildAnalysisHeader('sr-1', 'SOL', '4h', {}, 'test', {}, 100, 'opportunistic:veto_short');
     dbsvc.saveAnalysis({ header: h, tfSnapshots: [], clusters: [], fvgs: [] });
     expect(db.prepare('SELECT sample_reason s FROM analyses WHERE id=?').get('sr-1').s)
       .toBe('opportunistic:veto_short');
@@ -149,14 +136,14 @@ describe('versionado por fila (gate/rubric/feature)', () => {
   });
 
   test('sin motivo → `unknown`, no un origen inventado', () => {
-    const h = buildAnalysisHeader('sr-2', 'SOL', '4h', {}, minimal, {}, 100);
+    const h = buildAnalysisHeader('sr-2', 'SOL', '4h', {}, 'test', {}, 100);
     dbsvc.saveAnalysis({ header: h, tfSnapshots: [], clusters: [], fvgs: [] });
     expect(db.prepare('SELECT sample_reason s FROM analyses WHERE id=?').get('sr-2').s).toBe('unknown');
   });
 
   test('la muestra PLANIFICADA es separable por SQL — que es el punto entero', () => {
     for (const [id, r] of [['sr-3', 'fixed'], ['sr-4', 'ui'], ['sr-5', 'opportunistic:oi_expandiendo']]) {
-      const h = buildAnalysisHeader(id, 'BTC', '4h', {}, minimal, {}, 100, r);
+      const h = buildAnalysisHeader(id, 'BTC', '4h', {}, 'test', {}, 100, r);
       dbsvc.saveAnalysis({ header: h, tfSnapshots: [], clusters: [], fvgs: [] });
     }
     const planificados = db.prepare(

@@ -1579,38 +1579,59 @@ Implementados más servicios de los planificados originalmente:
 
 ## 📝 NOTAS IMPORTANTES
 
-### Inventario hechos → consumidores del pipeline de decisión (auditoría #2, 2026-07-12)
+### Pipeline de decisión — RETIRADO. Qué queda hoy (post-pivot, 2026-08-1X)
 
-Regla estructural surgida de la 2ª auditoría red-team: **cada hecho de mercado tiene UN dueño
-por capa** y no debe votar dos veces dentro de la misma capa. Esta tabla es el mapa canónico —
-al añadir una regla nueva (prompt, gating, validador), comprobar aquí si el hecho ya vota en
-esa capa. Los dedupes existentes (H4 veto↔contradicciones, B1 por bloques, anti-doble-descuento
-de la bandera CVD 1D) son consecuencias de este principio.
+⚠️ **Esta sección describía el pipeline de decisión anterior al pivot a ayudante de riesgo**
+(gating determinista con vetos LONG/SHORT, scoring del LLM por bloques, contradicciones
+dedupeadas por capa, validador de reglas duras, `conditional_setup` + shadow trade). Ese
+pipeline entero **ya no existe**: se borraron `utils/gating.js`, `utils/expectedScores.js`,
+`utils/conditionalPlan.js`, `utils/shadowTrade.js`, `services/decisionGates.js` y
+`services/analysisValidator.js`. Motivo (con la medición completa): CLAUDE.md
+§REORIENTACIÓN — ~20 hipótesis direccionales pre-registradas, medidas con años de klines,
+anclajes disjuntos e IC de Wilson en 3 monedas, cero supervivientes. El sistema dejó de
+intentar emitir un dictamen direccional.
 
-| Hecho | Score del LLM (prompt) | Gating determinista | Contradicción (bloque) | Otros consumidores |
-|-------|------------------------|--------------------|------------------------|--------------------|
-| Funding severity (+/−) | Derivatives Score (severity rules) + PERSISTENCE FILTER | — | — | `crowded_trade_flag` (contexto, no vota) |
-| OI expansión/contracción | Derivatives (convicción, no signo) | Pata de AMBOS vetos (<+1%) | `oi_flat_or_falling` (derivados, <0%) — **deduplicada si hay veto** | `crowded_trade_flag` (fail-closed) |
-| Long/Short ratio | Derivatives (subordinado a funding) | — | — | `expected_scores.derivatives` (guardia C2) |
-| CVD del TF primario | Volume Flow (señal primaria) | — | — | `expected_scores.volume` (guardia C2, se abstiene en divergencia) |
-| CVD 1D divergencia (fuerza no-marginal) | Bandera de convicción **solo si NO está en gating.contradictions** | Pata de ambos vetos | `cvd_1d_divergence` (volume) — deduplicada si hay veto | — |
-| Precio cerca de nivel S/R fuerte | Structure (niveles tácticos) | Pata de ambos vetos (3+ toques, umbral ~1.5×ATR%) | `price_near_key_level` (estructura, 2+ toques) — deduplicada si hay veto | `borderline[]` (telemetría de borde) |
-| Conflicto 1W vs 1D | Structure (jerarquía TFs) | — | `htf_conflict_1w_1d` (estructura) | `timeframe_analysis.conflict` |
-| Conflicto SMC (BOS vs CHoCH activos) | Structure (reglas SMC) | — | `smc_structural_conflict` (estructura) | — |
-| Volume↔Structure scores en conflicto | — (es la 6ª contradicción, la suma el LLM) | — | 6ª del validador (simétrica M4) | — |
-| Fear & Greed | Contexto (solo extremos <15/>85) | — | — | ANTI-DOUBLE-COUNT: crowding correlacionado con funding/LSR |
-| ETF flows | Ajuste conviction (±cualitativo, B3) | — | — | ANTI-DOUBLE-COUNT con funding (co-ocurrencia cualitativa) |
-| Order book imbalance | Ajuste Volume (±0.5) — **pendiente de validar con backtest (mismo caso que B3)** | — | — | — |
-| **ATR% del TF primario** *(NORMALIZADOR, no vota dirección)* | — (el LLM lee etiquetas, no el ATR crudo) | `dynamicNearLevelPct` (umbral de cercanía) | — | `priceBandPct` (banda del eje OI×precio) · `normalizedTriggerDistance`/`normalizedTargetDistance` · `classifyOpportunity`/`classifyPathOutcome` · `atr.pct_percentile` (telemetría de régimen) |
-| **Geometría del `conditional_setup`** *(output del LLM, no hecho de mercado)* | — | — | — | `analysisValidator` (coherencia: `tp_side`, `stop_eq_entry`, `direction_mismatch`, `target_unreachable`) · `utils/shadowTrade.js` (evaluación a posteriori) |
+La regla de fondo que motivó esta tabla — **cada hecho tiene UN dueño, y no debe votar dos
+veces con el mismo peso** — sigue viva, pero ya no hace falta un mapa de capas: con el gating
+y el scoring retirados, solo queda **una capa de consumo** (el prompt narrador) más un módulo
+determinista que no lee casi ninguno de estos hechos. El «voto múltiple entre capas» que esta
+tabla auditaba es, por construcción, imposible hoy.
 
-Notas:
-- El conteo `contradiction_count` es por BLOQUES (volume/derivatives/structure, máx 3), no por señales.
-- `expected_scores` NO llega al LLM (se excluye en `buildPrompt`) — es la guardia independiente del validador.
-- **El ATR% aparece en muchas casillas y NO es doble conteo (comprobado al añadir `conditional_target_unreachable`, 2026-08-01):** es una ESCALA, nunca una dirección. Un normalizador puede entrar en todas las capas que quiera porque no aporta signo — lo que la regla prohíbe es que un mismo hecho DIRECCIONAL vote dos veces en la misma capa. Si algún día el ATR% pasara a inclinar una decisión por sí mismo (p. ej. un score de volatilidad), habría que revisar esta fila entera.
-- Doble conteo residual conocido: el mismo OI/funding puede influir score del LLM (capa prompt) Y una
-  contradicción (capa gating). Es *inter-capa* y deliberado (el score gradúa, la contradicción cuenta
-  ejes); lo prohibido es votar dos veces en la MISMA capa.
+**Los dos consumidores que quedan:**
+
+| Consumidor | Qué hace | Qué NO hace |
+|---|---|---|
+| `services/anthropicService.js` (SYSTEM_PROMPT, `v10_0_narrator`) | Lee TODOS los hechos de mercado del dataset y escribe una lectura en prosa (`narrative` de 6 secciones + `executive_summary`). El ANTI-DOBLE-CONTEO ahora es una instrucción **cualitativa** dentro del propio prompt (p. ej. "Funding/LSR/F&G/ETF miden la misma faceta de crowding, repórtalos como UNA lectura"), no un dedupe de código entre capas — porque ya no hay capas que dedupear. | No puntúa, no vota, no decide `Comprar/Vender/Esperar`, no genera ningún setup direccional. |
+| `utils/riskGeometry.js` (`computeRiskGeometry`) | Calcula una geometría de stop/objetivo SIMÉTRICA (largo Y corto a la vez) desde `price_current` + `technical[primary_tf].atr.pct`, con la convención fija `OPPORTUNITY_BY_HORIZON['24h']` (1×ATR stop / 2×ATR objetivo) y `target_reachability_pct` de la curva `TARGET_REACHABILITY` ya medida. Es SÍNCRONO, no depende de nada que el LLM declare. | No lee funding, OI, LSR, CVD, estructura, SMC, Fear & Greed, ETF flows ni DVOL — su único input de mercado es precio + ATR%. No elige entre largo y corto. |
+
+**Lo que sobrevive de los hechos de la tabla vieja, y dónde:**
+- `derivatives_score` (`utils/derivativesScore.js`, sin tocar por el pivot) se sigue calculando
+  y viaja al prompt como `basis[]`/`components` — pero **solo como color de lectura**: el campo
+  `.score` agregado se excluye explícitamente antes de llegar al LLM (`assembleAnalyzeContext`,
+  `analysisController.js`), y desde la revisión del prompt (2026-08-1X) también se podan los
+  tres sumandos individuales (`oi_price_score`, `cascade_score`, `funding_score`) para que no
+  se pueda reconstruir el score retirado sumándolos a mano.
+- OI, CVD, S/R, conflicto 1W/1D, SMC, Fear & Greed, ETF flows: todos siguen en el dataset y
+  todos tienen instrucciones de lectura en el prompt (ver `anthropicService.js`, secciones
+  "CÓMO LEER LOS DERIVADOS" / "CÓMO LEER EL FLUJO DE VOLUMEN" / "CÓMO LEER LA ESTRUCTURA" /
+  "SENTIMIENTO" / "MACRO E INSTITUCIONAL") — pero como matices de una lectura en prosa, no
+  como votos que suman a una acción.
+- `borderline[]`, `crowded_trade_flag`, `gating.*`, `contradiction_*`, `expected_scores.*`: no
+  se calculan más. Las columnas de BBDD correspondientes se conservan (no se borran ni
+  renombran — "los escritores dejan de producir, los lectores siguen entendiendo") pero
+  quedan `NULL`/`0` en toda fila posterior al pivot; las filas anteriores son registro
+  histórico legible.
+- `conditional_setup` + su evaluación (`utils/shadowTrade.js`): sustituido por `risk_geometry`
+  (columna nueva, JSON de `computeRiskGeometry`), calculado y persistido en el momento del
+  análisis — no depende de que el LLM declare nada, así que no hace falta esperar al job de
+  outcome para tenerlo completo (a diferencia del `conditional_setup`, que sí dependía del ATR
+  reconstruido a posteriori).
+
+Scripts de auditoría que medían este pipeline viejo (frecuencia del veto, línea base del
+shadow trade, calibración del Derivatives Score con gating, etc.): archivados en
+`backend/scripts/old/`, con nota propia (`backend/scripts/old/README.md`) — importan módulos
+que ya no existen y crashearían si se ejecutan. Sus conclusiones siguen vigentes como
+histórico en CLAUDE.md.
 
 
 ### Costo & Control

@@ -3,9 +3,7 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import {
-  classifyOutcome, evaluateSetupBarrier, setupExpiryMs, candlesWithinValidity,
-} from '../src/utils/outcome.js';
+import { classifyOutcome, setupExpiryMs, candlesWithinValidity } from '../src/utils/outcome.js';
 
 describe('classifyOutcome', () => {
   test('Comprar con subida → win', () => {
@@ -43,125 +41,10 @@ describe('classifyOutcome', () => {
   });
 });
 
-describe('evaluateSetupBarrier — long (stop < entry)', () => {
-  const setup = { entry_price: 100, stop_price: 95, tp1_price: 105, tp2_price: 110 };
-
-  test('toca TP1 y luego TP2 → tp2', () => {
-    const candles = [
-      { high: 103, low: 99 },
-      { high: 106, low: 102 }, // TP1
-      { high: 111, low: 107 }, // TP2
-    ];
-    const r = evaluateSetupBarrier(setup, candles);
-    expect(r.outcome).toBe('tp2');
-    expect(r.hit_tp1).toBe(true);
-    expect(r.hit_tp2).toBe(true);
-    expect(r.hit_stop).toBe(false);
-  });
-
-  test('toca el stop antes que TP → stop', () => {
-    const candles = [
-      { high: 102, low: 99 },
-      { high: 103, low: 94 }, // stop
-      { high: 106, low: 101 },
-    ];
-    const r = evaluateSetupBarrier(setup, candles);
-    expect(r.outcome).toBe('stop');
-    expect(r.hit_stop).toBe(true);
-    expect(r.hit_tp1).toBe(false);
-  });
-
-  test('TP1 y stop en la misma vela → conservador: stop primero', () => {
-    const candles = [{ high: 106, low: 94 }];
-    const r = evaluateSetupBarrier(setup, candles);
-    expect(r.outcome).toBe('stop');
-  });
-
-  test('tras TP1 ignora el stop (break-even) → se queda en tp1', () => {
-    const candles = [
-      { high: 101, low: 99 },  // fill (contiene entry 100)
-      { high: 106, low: 102 }, // TP1
-      { high: 107, low: 93 },  // caería al stop, pero ya se ignora
-    ];
-    const r = evaluateSetupBarrier(setup, candles);
-    expect(r.outcome).toBe('tp1');
-    expect(r.hit_tp1).toBe(true);
-    expect(r.hit_stop).toBe(false);
-  });
-
-  test('entrada llenada pero sin tocar nada → open', () => {
-    const candles = [{ high: 103, low: 98 }, { high: 104, low: 99 }];
-    const r = evaluateSetupBarrier(setup, candles);
-    expect(r.outcome).toBe('open');
-    expect(r.filled).toBe(true);
-  });
-});
-
-describe('evaluateSetupBarrier — gating de entrada (A1)', () => {
-  const longSetup = { entry_price: 100, stop_price: 95, tp1_price: 105, tp2_price: 110 };
-
-  test('long: el precio se aleja al alza sin tocar la entrada y llega a TP → not_triggered (no cuenta como win)', () => {
-    // low siempre > 100: la orden límite en 100 nunca se llena aunque el precio pase por 105/110.
-    const candles = [
-      { high: 108, low: 103 }, // pasa por TP1/TP2 pero sin haber llenado la entrada
-      { high: 112, low: 106 },
-    ];
-    const r = evaluateSetupBarrier(longSetup, candles);
-    expect(r.outcome).toBe('not_triggered');
-    expect(r.filled).toBe(false);
-    expect(r.hit_tp1).toBe(false);
-  });
-
-  test('long: entrada tocada en una vela posterior y luego TP1 → tp1', () => {
-    const candles = [
-      { high: 108, low: 103 }, // aún sin fill (low 103 > entry 100)
-      { high: 101, low: 99 },  // fill (contiene 100)
-      { high: 106, low: 102 }, // TP1
-    ];
-    const r = evaluateSetupBarrier(longSetup, candles);
-    expect(r.outcome).toBe('tp1');
-    expect(r.filled).toBe(true);
-  });
-
-  test('short: el precio se aleja a la baja sin tocar la entrada → not_triggered', () => {
-    const shortSetup = { entry_price: 100, stop_price: 105, tp1_price: 95, tp2_price: 90 };
-    const candles = [
-      { high: 99, low: 94 }, // high 99 < entry 100: nunca se llena
-      { high: 96, low: 89 },
-    ];
-    const r = evaluateSetupBarrier(shortSetup, candles);
-    expect(r.outcome).toBe('not_triggered');
-    expect(r.filled).toBe(false);
-  });
-});
-
-describe('evaluateSetupBarrier — short (stop > entry)', () => {
-  const setup = { entry_price: 100, stop_price: 105, tp1_price: 95, tp2_price: 90 };
-
-  test('precio baja a TP1 y TP2 → tp2', () => {
-    const candles = [
-      { high: 101, low: 97 },
-      { high: 99, low: 94 },  // TP1
-      { high: 96, low: 89 },  // TP2
-    ];
-    const r = evaluateSetupBarrier(setup, candles);
-    expect(r.outcome).toBe('tp2');
-  });
-
-  test('precio sube al stop → stop', () => {
-    const candles = [{ high: 106, low: 99 }];
-    expect(evaluateSetupBarrier(setup, candles).outcome).toBe('stop');
-  });
-});
-
-describe('evaluateSetupBarrier — validación', () => {
-  test('setup inválido (stop == entry) → null', () => {
-    expect(evaluateSetupBarrier({ entry_price: 100, stop_price: 100 }, [{ high: 1, low: 1 }])).toBeNull();
-  });
-  test('sin velas → null', () => {
-    expect(evaluateSetupBarrier({ entry_price: 100, stop_price: 95 }, [])).toBeNull();
-  });
-});
+// El barrier del setup ejecutable (`evaluateSetupBarrier`) se retiró de la ruta de decisión
+// con el pivot a ayudante de riesgo (§REORIENTACIÓN): ningún análisis vuelve a declarar un
+// `setup` que evaluar. La función se conserva en utils/outcome.js (dead-but-available, ver
+// outcomeService.js) pero su cobertura de test se retira con ella.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vigencia del setup (2026-07-28) — `setup_validity_candles` se persistía y no lo
@@ -223,34 +106,3 @@ describe('candlesWithinValidity', () => {
   });
 });
 
-describe('vigencia × barrier — el caso que motivó el arreglo', () => {
-  // Long: entrada 100, stop 95, TP1 110. Se llena en la 1ª vela, no pasa nada durante
-  // la vigencia (6 velas de 4h = 24h) y el TP se toca al 5º día.
-  const setup = { entry_price: 100, stop_price: 95, tp1_price: 110 };
-  const candles = [
-    { t: T0, high: 101, low: 99 },                                                  // llena
-    ...Array.from({ length: 23 }, (_, i) => ({ t: T0 + (i + 1) * H, high: 102, low: 98 })),
-    { t: T0 + 120 * H, high: 115, low: 101 },                                       // TP1 al 5º día
-  ];
-  const expiry = setupExpiryMs({ tMs: T0, validityCandles: 6, tfExecution: '4h' });
-
-  test('sin acotar (comportamiento viejo) el TP tardío contaba como tp1', () => {
-    expect(evaluateSetupBarrier(setup, candles).outcome).toBe('tp1');
-  });
-
-  test('acotado a su vigencia queda open → el caller lo cierra como expired', () => {
-    const r = evaluateSetupBarrier(setup, candlesWithinValidity(candles, expiry));
-    expect(r.filled).toBe(true);
-    expect(r.hit_tp1).toBe(false);
-    expect(r.outcome).toBe('open');
-  });
-
-  test('un stop DENTRO de la vigencia sigue contando (el recorte no favorece al setup)', () => {
-    const conStop = [
-      { t: T0,           high: 101, low: 99 },
-      { t: T0 + 5 * H,   high: 99,  low: 94 },    // stop, dentro de las 24h
-      { t: T0 + 120 * H, high: 115, low: 101 },   // TP posterior, irrelevante
-    ];
-    expect(evaluateSetupBarrier(setup, candlesWithinValidity(conStop, expiry)).outcome).toBe('stop');
-  });
-});

@@ -8,7 +8,6 @@
 import { describe, test, expect } from '@jest/globals';
 import { quantile, percentileRank, rollingSums, bucketByPercentile } from '../src/utils/percentiles.js';
 import { calculateCVD, calculateSupportResistance, detectMarketRegime } from '../src/utils/indicators.js';
-import { dynamicNearLevelPct } from '../src/utils/gating.js';
 
 // Vela sintética con taker_buy controlable (para dirigir el CVD).
 const candle = (close, { high = close + 1, low = close - 1, volume = 100, buyFrac = 0.5 } = {}) => ({
@@ -110,30 +109,9 @@ describe('T3 · cvd_strength auto-normalizado', () => {
   });
 });
 
-describe('T5 · techo del umbral de cercanía escalado por TF', () => {
-  test('el mismo ATR% se recorta distinto según el horizonte', () => {
-    // 1.5 × 8% = 12% en bruto; cada TF lo acota a su techo.
-    expect(dynamicNearLevelPct(8, '1h')).toBe(2);
-    expect(dynamicNearLevelPct(8, '4h')).toBe(4);
-    expect(dynamicNearLevelPct(8, '1D')).toBe(10);
-    expect(dynamicNearLevelPct(8, '1W')).toBe(12); // por debajo del techo de 25 → sin recorte
-  });
-
-  test('dentro de rango devuelve 1.5×ATR% sin tocar', () => {
-    expect(dynamicNearLevelPct(1, '4h')).toBe(1.5);
-    expect(dynamicNearLevelPct(2, '1D')).toBe(3);
-  });
-
-  test('sin ATR cae al fijo histórico; sin TF conserva el techo de 3% de antes', () => {
-    expect(dynamicNearLevelPct(null, '4h')).toBe(1.5);
-    expect(dynamicNearLevelPct(0, '4h')).toBe(1.5);
-    expect(dynamicNearLevelPct(8)).toBe(3);
-  });
-
-  test('respeta el suelo de 0.5% en activos muy tranquilos', () => {
-    expect(dynamicNearLevelPct(0.1, '1h')).toBe(0.5);
-  });
-});
+// T5 (techo del umbral de cercanía, `dynamicNearLevelPct`) se retiró con `utils/gating.js`
+// en el pivot a ayudante de riesgo (§REORIENTACIÓN): sin veto ni contradicciones que gatear,
+// no queda ningún consumidor de "cuán cerca está el precio de un nivel fuerte".
 
 describe('T4 · S/R sobre pivotes con ancla fija', () => {
   // Onda de periodo 6: con lookback=2 los picos y valles son extremos locales ESTRICTOS,

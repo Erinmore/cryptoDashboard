@@ -9,20 +9,13 @@ import { fetchMacroData } from '../services/macroService.js';
 import { fetchVolatilityData } from '../services/deribitService.js';
 import { computeIndicators } from '../services/indicatorService.js';
 import { saveAnalysis } from '../services/dbService.js';
-import { describeConditionalPlan } from '../utils/conditionalPlan.js';
+import { computeRiskGeometry } from '../utils/riskGeometry.js';
 import { normalizeSampleReason } from '../utils/sampleReason.js';
 import { getHistories } from '../services/historyService.js';
 import { analyzeMarket, buildLlmRequest } from '../services/anthropicService.js';
-import { applyDecisionGates } from '../services/decisionGates.js';
-import env from '../config/env.js';
 import { findEntryByDaysAgo, seriesHasGap, daysBetweenDates } from '../utils/timeSeries.js';
-import { computeGating } from '../utils/gating.js';
 import { computeDerivativesScore, priceChange24hFromCandles } from '../utils/derivativesScore.js';
 import { clusterDistancePct } from '../utils/liquidationClusters.js';
-import { computeExpectedScores, backendScoreTotal } from '../utils/expectedScores.js';
-import {
-  normalizedTargetDistance, targetReachabilityFor, TARGET_UNREACHABLE_PCT,
-} from '../utils/stats.js';
 import {
   COINS, TIMEFRAMES, GATE_VERSION, RUBRIC_VERSION, FEATURE_VERSION,
 } from '../config/constants.js';
@@ -33,33 +26,6 @@ const HISTORY_MAX_GAP_DAYS = 3;
 import { ValidationError } from '../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../middleware/logger.js';
-
-/**
- * ¿Es alcanzable el TP1 del `conditional_setup` dentro de la vigencia que él mismo declara?
- *
- * Se calcula AQUÍ y no en el validador porque las piezas son de CONTEXTO (el ATR% del TF
- * primario y el propio TF), no del output del LLM — y porque `analysisValidator` se declara
- * sin dependencias, mientras que la curva medida (`TARGET_REACHABILITY`) tiene un único
- * dueño en `utils/stats.js`. Duplicarla serían dos verdades sobre lo mismo.
- *
- * @returns {{pct:number, min:number, d:number}|null} null si falta cualquier pieza: sin ATR%
- *   la alcanzabilidad no es evaluable, y avisar a ciegas sería peor que no avisar.
- */
-export function computeTargetReachability(conditionalSetup, context, primaryTf) {
-  const cs = conditionalSetup;
-  if (!cs || typeof cs !== 'object') return null;
-  const atrPct = context?.technical?.[primaryTf]?.atr?.pct;
-  const d = normalizedTargetDistance({
-    tp1Price: cs.tp1_price,
-    entryPrice: cs.entry_price,
-    atrPct,
-    validityCandles: cs.validity_candles,
-    tfExecution: cs.tf_execution,
-    primaryTf,
-  });
-  const pct = targetReachabilityFor(d);
-  return pct == null ? null : { pct, min: TARGET_UNREACHABLE_PCT, d };
-}
 
 /**
  * Calcula distancias en porcentaje a support/resistance más cercano.
@@ -671,26 +637,13 @@ export function assembleAnalyzeContext({ coin, primaryTf, sources, technical, bt
         : null,
   };
 
-  // HARD GATING determinista: los vetos de trade se precalculan aquí (utils/gating.js)
-  // en vez de dejar que el LLM recomponga el AND de tres condiciones con umbrales de %.
-  // El LLM recibe los flags en el bloque `gating` y solo obedece. S/R del TF primario.
-  // computeGating combina vetos (simétricos, fail-closed) + contradicciones (5 de 6;
-  // el LLM suma la 6ª) y aplica el dedupe veto↔contradicciones. Ver utils/gating.js.
-  const gating = computeGating({
-    technical,
-    openInterest: oi ? { change_24h_pct: oi.change_24h_pct } : null,
-    currentPrice,
-    primaryTf,
-  });
-
-  // DERIVATIVES SCORE determinista (2026-07-29). Antes lo puntuaba el LLM desde la sección A
-  // del prompt, cuyas dos únicas reglas numéricas disparaban el 0,0 % del tiempo sobre 90
-  // días × 3 monedas → salía 0 siempre, y como `Comprar` exige >=+1 y `Vender` <=-1, el
-  // sistema no podía emitir NINGUNA decisión direccional (6/6 `Esperar` en producción).
-  // Rúbrica medida en utils/derivativesScore.js. El precio de 24h se calcula desde las VELAS
-  // del TF primario, no desde `price_change_24h_pct` (CoinGecko, rolling, otra fuente): la
-  // banda está calibrada contra cierre-a-cierre de klines en fronteras de vela.
-  const derivativesScore = computeDerivativesScore({
+  // DERIVATIVES SCORE — ya NO gobierna ninguna puerta (pivot a ayudante de riesgo, ver
+  // CLAUDE.md §REORIENTACIÓN: ~20 hipótesis direccionales medidas, cero supervivientes). Se
+  // sigue calculando por sus hechos crudos (`basis`/`components`/`data_insufficient`), que
+  // son color de lectura de derivados legítimo para el narrador — el `.score` en sí (-2..+2)
+  // se retira antes de que nada lo consuma, para que no quede ni la tentación de leerlo como
+  // una decisión. Rúbrica medida en utils/derivativesScore.js.
+  const derivativesScoreRaw = computeDerivativesScore({
     oiChange24hPct:    oi?.change_24h_pct ?? null,
     priceChange24hPct: priceChange24hFromCandles(candles[primaryTf], primaryTf),
     atrPct:            technical[primaryTf]?.atr?.pct ?? null,
@@ -698,15 +651,17 @@ export function assembleAnalyzeContext({ coin, primaryTf, sources, technical, bt
     liquidations:      liq,
     funding:           fr,
   });
+  const { score: _derivativesScoreValue, ...derivativesScore } = derivativesScoreRaw;
 
-  // Guardia de divergencia de scores (auditoría C2): score direccional ESPERADO por el
-  // backend para Derivatives/Volume (los bloques que abren la puerta de Comprar/Vender).
-  // El validador compara el score del LLM contra este esperado y degrada si contradice
-  // flagrantemente el dato → la puerta deja de validarse solo contra el auto-reporte del LLM.
-  const expectedScores = computeExpectedScores(
-    { derivatives: { funding_rate: fr, long_short_ratio: lsr }, technical },
+  // GEOMETRÍA DE RIESGO — sustituye a `conditional_setup` (una dirección declarada por el
+  // LLM). Simétrica (largo+corto), calculada aquí sin esperar nada del LLM: no depende de
+  // ningún output suyo, a diferencia del viejo plan condicional. Ver utils/riskGeometry.js.
+  const riskGeometry = computeRiskGeometry({
+    currentPrice,
+    atrPct: technical[primaryTf]?.atr?.pct ?? null,
     primaryTf,
-  );
+    tMs: Date.now(),
+  });
 
   // D22: fuente del precio de referencia. El timestamp es el del FETCH real del precio
   // (sobrevive al TTL de cache de 30s) — antes se fabricaba con new Date() al construir
@@ -805,19 +760,12 @@ export function assembleAnalyzeContext({ coin, primaryTf, sources, technical, bt
 
     timeframe_analysis: tfConflicts,
 
-    gating,
-
-    // Derivatives Score determinista. A DIFERENCIA de `expected_scores` (que se excluye del
-    // dataset del LLM para que no pueda copiarlo y anular la guardia C2), este SÍ viaja al
-    // modelo: es el score, no una guardia contra él. El LLM lo lee y lo interpreta, no lo
-    // recalcula — mismo patrón que `gating`.
+    // Derivatives Score SIN `.score` (ver arriba): el LLM lee `basis`/`components` como
+    // lectura de derivados, no como una decisión que copiar.
     derivatives_score: derivativesScore,
 
-    // Scores esperados por el backend (guardia de divergencia, C2). buildPrompt los EXCLUYE
-    // del dataset que recibe el LLM (si los viera podría copiarlos y anular la guardia —
-    // auditoría #2, hallazgo 1); el validador los usa para detectar que el score de la
-    // puerta contradice el dato. Se persisten para calibración (LLM vs backend).
-    expected_scores: expectedScores,
+    // GEOMETRÍA DE RIESGO simétrica (largo+corto), ver utils/riskGeometry.js.
+    risk_geometry: riskGeometry,
 
     derivatives: {
       funding_rate: fr ? {
@@ -936,7 +884,19 @@ async function buildAnalyzeContext(coin, primaryTf) {
 /**
  * Builds the header object for the `analyses` table from context + LLM output.
  */
-export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs, sampleReason = 'unknown') {
+/**
+ * Construye la fila de `analyses` desde el contexto + la lectura del LLM.
+ *
+ * Pivot a ayudante de riesgo (ver CLAUDE.md §REORIENTACIÓN): el LLM ya no decide ni puntúa
+ * nada, así que TODAS las columnas de la vieja ruta de decisión (`action`, `confidence`,
+ * `risk_score`, `conviction`, `primary_driver`, `has_executable_setup`, `gating_*`,
+ * `contradiction*`, `deduped_by_veto`, `score_*`, `setup_*`, `conditional_setup`) se dejan en
+ * `null` explícito — las columnas siguen bindeadas en el INSERT preparado, no se pueden
+ * omitir. NO se borran ni se renombran: "los escritores dejan de producir, los lectores
+ * siguen entendiendo" (misma disciplina que la retirada de `Preparar`) — las filas anteriores
+ * al pivot siguen siendo un registro histórico legible.
+ */
+export function buildAnalysisHeader(id, coin, primaryTf, context, executiveSummary, ai_metadata, processingMs, sampleReason = 'unknown') {
   const fg    = context.sentiment?.fear_greed ?? null;
   const fgH   = context.sentiment?.fear_greed_history ?? null;
   const macro = context.macro ?? null;
@@ -948,7 +908,6 @@ export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai
   const liq   = context.derivatives?.liquidations_24h ?? null;
   const etf   = context.etf_flows ?? null;
   const ob    = context.order_book ?? null;
-  const setup = structured.setup ?? null;
 
   return {
     id,
@@ -1032,70 +991,48 @@ export function buildAnalysisHeader(id, coin, primaryTf, context, structured, ai
     btc_trend_1d: context.btc_context?.trend_1d ?? null,
     btc_trend_1w: context.btc_context?.trend_1w ?? null,
 
-    action:               structured.action ?? null,
-    confidence:           structured.confidence ?? null,
-    risk_score:           structured.risk_score ?? null,
-    conviction:           structured.conviction ?? null,
-    primary_driver:       structured.primary_driver ?? null,
-    has_executable_setup: structured.has_executable_setup ? 1 : 0,
-    // El veto del backend ya se impuso sobre `structured` en applyDecisionGates (antes de
-    // validar), así que aquí basta con persistir el flag tal cual — ya es autoritativo.
-    gating_active:        structured.gating_active ? 1 : 0,
-    gating_reason:        structured.gating_reason ?? null,
-    contradictions_found: structured.contradictions_found ? 1 : 0,
-    missing_confirmations: Array.isArray(structured.missing_confirmations) && structured.missing_confirmations.length > 0
-      ? JSON.stringify(structured.missing_confirmations)
-      : null,
-    // Contradicciones deterministas del backend (utils/gating.js) — telemetría separada
-    // del booleano contradictions_found del LLM. Persistimos conteo + códigos.
-    contradiction_count: context.gating?.contradiction_count ?? null,
-    // Los BLOQUES (volume/derivatives/structure) — `gating.js` ya los calcula y se tiraban.
-    // Son los que gobiernan la puerta del decay: el conteo cuenta BLOQUES, no señales.
-    contradiction_blocks: Array.isArray(context.gating?.contradiction_blocks) && context.gating.contradiction_blocks.length > 0
-      ? JSON.stringify(context.gating.contradiction_blocks)
-      : null,
-    // OJO: esta lista es POST-dedupe. Lo que el veto absorbió va en `deduped_by_veto`.
-    contradiction_codes: Array.isArray(context.gating?.contradictions) && context.gating.contradictions.length > 0
-      ? JSON.stringify(context.gating.contradictions.map((c) => c.code))
-      : null,
-    // Códigos que el veto absorbió (desaparecen de `contradiction_codes` al activarse) y
-    // conteo crudo sin deduplicar. Juntos permiten reconstruir a posteriori el efecto de
-    // cada dedupe, que es lo que el checkpoint necesita para falsar H1.
-    deduped_by_veto: Array.isArray(context.gating?.deduped_by_veto) && context.gating.deduped_by_veto.length > 0
-      ? JSON.stringify(context.gating.deduped_by_veto)
-      : null,
-    contradictions_signal_count: context.gating?.contradictions_signal_count ?? null,
+    // ── Retirado con el pivot (2026-08-1X) — ver comentario de cabecera de esta función ──
+    action:               null,
+    confidence:           null,
+    risk_score:           null,
+    conviction:           null,
+    primary_driver:       null,
+    has_executable_setup: 0,
+    gating_active:        0,
+    gating_reason:        null,
+    contradictions_found: 0,
+    missing_confirmations: null,
+    contradiction_count: null,
+    contradiction_blocks: null,
+    contradiction_codes: null,
+    deduped_by_veto: null,
+    contradictions_signal_count: null,
+    score_derivatives: null,
+    score_structure:   null,
+    score_volume:      null,
+    score_onchain:     null,
+    score_total:       null,
+    score_total_backend: null,
+    score_derivatives_backend:     null,
+    derivatives_score_components:  null,
+    derivatives_data_insufficient: 0,
+    score_derivatives_expected: null,
+    score_volume_expected:      null,
+    setup_entry_price:      null,
+    setup_stop_price:       null,
+    setup_tp1_price:        null,
+    setup_tp2_price:        null,
+    setup_validity_candles: null,
+    setup_tf_execution:     null,
+    conditional_setup: null,
+    // ── Fin de las columnas retiradas ──
 
-    score_derivatives: structured.scores?.derivatives ?? null,
-    score_structure:   structured.scores?.structure ?? null,
-    score_volume:      structured.scores?.volume ?? null,
-    score_onchain:     structured.scores?.onchain ?? null,
-    score_total:       structured.scores?.total ?? null,
-    // B2: total reproducible desde los componentes del LLM (no el decimal libre del LLM).
-    score_total_backend: backendScoreTotal(structured.scores),
-    score_derivatives_backend:     context.derivatives_score?.score ?? null,
-    derivatives_score_components:  context.derivatives_score?.components
-      ? JSON.stringify(context.derivatives_score.components) : null,
-    derivatives_data_insufficient: context.derivatives_score?.data_insufficient ? 1 : 0,
-    // C2: scores esperados por el backend (guardia de divergencia) — telemetría LLM vs dato.
-    // VESTIGIAL desde el 2026-07-29: la guardia C2 ya no calcula el término `derivatives`
-    // (ver utils/expectedScores.js), así que esto queda null. Se conserva la columna para no
-    // romper las filas históricas, que sí la tienen poblada.
-    score_derivatives_expected: context.expected_scores?.derivatives?.score ?? null,
-    score_volume_expected:      context.expected_scores?.volume?.score ?? null,
+    // GEOMETRÍA DE RIESGO simétrica — sustituye a `conditional_setup`. Ver utils/riskGeometry.js.
+    risk_geometry: context.risk_geometry ? JSON.stringify(context.risk_geometry) : null,
 
-    setup_entry_price:      setup?.entry_price ?? null,
-    setup_stop_price:       setup?.stop_price ?? null,
-    setup_tp1_price:        setup?.tp1_price ?? null,
-    setup_tp2_price:        setup?.tp2_price ?? null,
-    setup_validity_candles: setup?.validity_candles ?? null,
-    conditional_setup: structured?.conditional_setup
-      ? JSON.stringify(structured.conditional_setup) : null,
-    setup_tf_execution:     setup?.tf_execution ?? null,
-
-    executive_summary: structured.executive_summary ?? null,
-    ai_response_full:  null, // se rellena en analyze() con {structured, narrative} (narrative no llega aquí)
-    validation_warnings: null, // se rellena en analyze() tras validar (Fase 1: log + flag)
+    executive_summary: executiveSummary ?? null,
+    ai_response_full:  null, // se rellena en analyze() con {narrative, executive_summary}
+    validation_warnings: null, // no hay validador desde el pivot (§REORIENTACIÓN); columna conservada
 
     processing_time_ms: processingMs,
     input_tokens:       ai_metadata.input_tokens ?? null,
@@ -1304,43 +1241,17 @@ export async function analyze(req, res, next) {
     logger.info({ coin, primaryTf, model }, 'POST /api/analyze — calling Anthropic');
 
     // `model` viene del desplegable del frontend; analyzeMarket lo valida contra la
-    // whitelist (ANALYSIS_MODELS) y cae al default si no es válido.
-    const { structured: rawStructured, narrative, ai_metadata } = await analyzeMarket(context, model);
-
-    // Puertas de decisión sobre el output crudo (§6.4 + HARD GATING). Los hard gates del
-    // backend (veto determinista + conviction decay >=3) fuerzan Esperar SIEMPRE; las demás
-    // violaciones de reglas del prompt degradan solo con el fail-safe activo (flag de
-    // observación). Ver services/decisionGates.js.
-    const { structured, validation, degraded } = applyDecisionGates(
-      rawStructured,
-      context.gating,
-      env.analysisFailsafeEnabled,
-      env.gatingFailClosedOnMissing,
-      context.expected_scores,
-      context.price_current,
-      context.derivatives_score,
-      computeTargetReachability(rawStructured?.conditional_setup, context, primaryTf),
-    );
-    if (validation.warnings.length > 0) {
-      logger.warn(
-        { coin, action: rawStructured.action, hasSevere: validation.hasSevere, warnings: validation.warnings },
-        'POST /api/analyze — output del LLM viola reglas del prompt',
-      );
-    }
-    if (degraded) {
-      logger.warn(
-        { coin, original_action: rawStructured.action, rules: structured.fail_safe_rules },
-        'POST /api/analyze — FAIL-SAFE aplicado: acción degradada a Esperar',
-      );
-    }
+    // whitelist (ANALYSIS_MODELS) y cae al default si no es válido. Desde el pivot a
+    // ayudante de riesgo (§REORIENTACIÓN) el LLM solo narra: no hay `structured` con
+    // acción/scores que gatear — `risk_geometry` ya se calculó en `context`, sin depender
+    // de nada que el LLM declare.
+    const { narrative, executive_summary: executiveSummary, ai_metadata } = await analyzeMarket(context, model);
 
     const processingMs = Date.now() - start;
     const id = uuidv4();
 
-    const header = buildAnalysisHeader(id, coin, primaryTf, context, structured, ai_metadata, processingMs, sampleReason);
-    // Guardamos el structured final (ya con fail-safe si aplicó) junto al narrative.
-    header.ai_response_full = JSON.stringify({ structured, narrative });
-    header.validation_warnings = validation.warnings.length > 0 ? JSON.stringify(validation.warnings) : null;
+    const header = buildAnalysisHeader(id, coin, primaryTf, context, executiveSummary, ai_metadata, processingMs, sampleReason);
+    header.ai_response_full = JSON.stringify({ narrative, executive_summary: executiveSummary });
 
     const tfSnapshots = buildTfSnapshots(id, context.technical);
     const clusters    = buildClusterRows(id, context.derivatives?.liquidation_clusters, context.price_current);
@@ -1348,7 +1259,7 @@ export async function analyze(req, res, next) {
 
     saveAnalysis({ header, tfSnapshots, clusters, fvgs });
 
-    logger.info({ coin, action: structured.action, confidence: structured.confidence, ms: processingMs }, 'POST /api/analyze — done');
+    logger.info({ coin, ms: processingMs }, 'POST /api/analyze — done');
 
     res.json({
       meta: {
@@ -1361,21 +1272,14 @@ export async function analyze(req, res, next) {
       price_current: context.price_current,
       price_change_24h_pct: context.price_change_24h_pct,
       primary_tf: primaryTf,
-      structured,
       narrative,
+      executive_summary: executiveSummary,
       ai_metadata,
-      // Mismo dueño que en /api/data: el panel debe poder pintar el plan NADA MÁS lanzar el
-      // análisis, sin esperar al siguiente poll. ⚠️ Aquí NO existe todavía
-      // `atr_pct_at_analysis` (lo rellena el job de outcome minutos después), así que las dos
-      // curvas saldrán null en este primer render y aparecerán solas al refrescar. Estimarlas
-      // con el ATR de 180 sería mezclar ejes — la lección B1, que ya mordió tres veces.
-      conditional_plan: describeConditionalPlan({
-        conditionalSetup: structured?.conditional_setup ?? null,
-        atrPct__outcome_19: null,
-        priceAtAnalysis: context.price_current,
-        primaryTf,
-        timestamp: new Date().toISOString(),
-      }),
+      // Ya calculada en `assembleAnalyzeContext` con el ATR de DECISIÓN (180 velas, síncrono)
+      // — a diferencia del viejo `conditional_plan`, no hace falta esperar al job de outcome
+      // para tener las dos curvas medidas: el panel pinta la geometría completa desde el
+      // primer render.
+      risk_geometry: context.risk_geometry,
     });
 
   } catch (err) {

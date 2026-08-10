@@ -163,35 +163,22 @@ jest.unstable_mockModule('../src/services/deribitService.js', () => ({
   })),
 }));
 
-// anthropicService stub — mock returns new {structured, narrative, ai_metadata} format
+// anthropicService stub — mock returns el formato narrador {narrative, executive_summary,
+// ai_metadata} (pivot a ayudante de riesgo, §REORIENTACIÓN: el LLM ya no decide/puntúa nada).
 jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
   analyzeMarket: jest.fn(async () => ({
-    structured: {
-      action:               'Esperar',
-      confidence:           'Media',
-      risk_score:           6,
-      conviction:           0.4,
-      primary_driver:       'derivatives',
-      has_executable_setup: false,
-      gating_active:        false,
-      gating_reason:        null,
-      contradictions_found: true,
-      missing_confirmations: ['expansión de Open Interest', 'confirmación de ruptura con volumen'],
-      scores: { derivatives: 0, structure: -1, volume: 0, onchain: 0, total: -0.2 },
-      setup:            null,
-      executive_summary: 'Señales contradictorias entre derivados y estructura. Sin setup ejecutable en este momento.',
-    },
     narrative: {
-      smart_money_read:      'Liquidez profesional en modo observación.',
-      divergences_anomalies: 'CVD 1D divergente con precio.',
-      tactical_setup:        'Sin setup ejecutable.',
-      risk_analysis:         'Risk score 6/10 por conflicto de timeframes.',
-      recommendation_detail: 'Esperar confirmación estructural antes de entrar.',
-      invalidation:          'Cierre por debajo del soporte en 4h invalida el sesgo alcista.',
+      structure_read:          'Estructura 1D bajista, 4h en rango.',
+      divergences_anomalies:   'CVD 1D divergente con precio.',
+      key_levels_and_liquidity: 'Resistencia en 96000, soporte en 94000.',
+      volatility_and_regime:   'Régimen normal, sin squeeze activo.',
+      cycle_and_macro_read:    'Contexto macro mixto, sin sesgo claro.',
+      scenarios:               'Un cierre 4h por encima de 96000 invalidaría la lectura bajista.',
     },
+    executive_summary: 'Señales contradictorias entre derivados y estructura; sin lectura direccional clara.',
     ai_metadata: {
       model:          'stub',
-      prompt_version: 'v6_0_backend_gating',
+      prompt_version: 'v10_0_narrator',
       input_tokens:   0,
       output_tokens:  0,
     },
@@ -200,11 +187,11 @@ jest.unstable_mockModule('../src/services/anthropicService.js', () => ({
   buildLlmRequest: jest.fn((ctx) => ({
     model: 'claude-sonnet-5',
     max_tokens: 4096,
-    prompt_version: 'v6_0_backend_gating',
+    prompt_version: 'v10_0_narrator',
     system: 'stub system prompt',
     messages: [{ role: 'user', content: 'stub prompt' }],
   })),
-  PROMPT_VERSION: 'v6_0_backend_gating',
+  PROMPT_VERSION: 'v10_0_narrator',
 }));
 
 // ─── Import app AND mocked modules AFTER mocks are in place ──────────────────
@@ -389,29 +376,30 @@ describe('GET /api/analyze/payload', () => {
     const requiredKeys = [
       'coin', 'primary_tf', 'price_current', 'price_change_24h_pct',
       'global_market', 'coin_market', 'sentiment', 'technical',
-      'timeframe_analysis', 'gating', 'derivatives', 'onchain', 'etf_flows',
-      'macro', 'volatility', 'order_book', 'volume_history',
+      'timeframe_analysis', 'risk_geometry', 'derivatives_score', 'derivatives',
+      'onchain', 'etf_flows', 'macro', 'volatility', 'order_book', 'volume_history',
     ];
     for (const key of requiredKeys) {
       expect(p).toHaveProperty(key);
     }
+    // `gating`/`expected_scores` se retiraron con el pivot a ayudante de riesgo
+    // (§REORIENTACIÓN): sin puerta direccional que gatear, no hay nada que precalcular.
+    expect(p).not.toHaveProperty('gating');
+    expect(p).not.toHaveProperty('expected_scores');
   });
 
-  test('payload.gating exposes precomputed veto flags', async () => {
+  test('payload.risk_geometry exposes symmetric long/short geometry', async () => {
     const res = await request.get('/api/analyze/payload?coin=BTC&primary_tf=4h');
-    const g = res.body.payload.gating;
-    expect(g).toHaveProperty('veto_long');
-    expect(g).toHaveProperty('veto_short');
-    expect(g).toHaveProperty('veto_reason');
-    expect(typeof g.veto_long).toBe('boolean');
-    expect(typeof g.veto_short).toBe('boolean');
-    expect(g.conditions.sr_timeframe).toBe('4h');
-    // Fase 2: campos nuevos del gating consistente.
-    expect(g).toHaveProperty('data_insufficient');
-    expect(g).toHaveProperty('missing_inputs');
-    expect(g).toHaveProperty('contradiction_count');
-    expect(g).toHaveProperty('missing_structural_confirmation');
-    expect(g).toHaveProperty('deduped_by_veto');
+    const g = res.body.payload.risk_geometry;
+    expect(g).toHaveProperty('long');
+    expect(g).toHaveProperty('short');
+    expect(g.long.direction).toBe('long');
+    expect(g.short.direction).toBe('short');
+    // Simétrico por construcción: mismos múltiplos de ATR en ambas direcciones.
+    expect(g.long.rr).toBe(g.short.rr);
+    expect(g.long.breakeven_win_rate_pct).toBe(g.short.breakeven_win_rate_pct);
+    expect(g.validity_candles).toBe(6);
+    expect(g.tf_execution).toBe('4h');
   });
 
   test('response includes llm_request with system prompt + user message', async () => {
@@ -419,7 +407,7 @@ describe('GET /api/analyze/payload', () => {
     expect(res.status).toBe(200);
     expect(res.body.llm_request).toBeDefined();
     expect(res.body.llm_request.system).toEqual(expect.any(String));
-    expect(res.body.llm_request.prompt_version).toBe('v6_0_backend_gating');
+    expect(res.body.llm_request.prompt_version).toBe('v10_0_narrator');
     expect(Array.isArray(res.body.llm_request.messages)).toBe(true);
     expect(res.body.llm_request.messages[0].role).toBe('user');
   });
@@ -609,7 +597,7 @@ describe('GET /api/history/:coin', () => {
 // ─── POST /api/analyze ────────────────────────────────────────────────────────
 
 describe('POST /api/analyze', () => {
-  test('returns 200 with structured + narrative shape (stub LLM)', async () => {
+  test('returns 200 with narrative + risk_geometry shape (stub LLM, pivot a ayudante de riesgo)', async () => {
     const res = await request
       .post('/api/analyze')
       .send({ coin: 'BTC', primary_tf: '4h' });
@@ -619,56 +607,25 @@ describe('POST /api/analyze', () => {
     expect(res.body.coin).toBe('BTC');
     expect(res.body.primary_tf).toBe('4h');
 
-    // structured block
-    expect(res.body.structured).toBeDefined();
-    expect(res.body.structured.action).toBe('Esperar');
-    expect(res.body.structured.confidence).toBe('Media');
-    expect(typeof res.body.structured.risk_score).toBe('number');
-    expect(typeof res.body.structured.conviction).toBe('number');
-    expect(res.body.structured.scores).toBeDefined();
-    expect(typeof res.body.structured.scores.derivatives).toBe('number');
+    // El LLM ya no decide ni puntúa nada (§REORIENTACIÓN): no hay `structured`.
+    expect(res.body.structured).toBeUndefined();
 
     // narrative block
     expect(res.body.narrative).toBeDefined();
-    expect(typeof res.body.narrative.smart_money_read).toBe('string');
-    expect(typeof res.body.narrative.recommendation_detail).toBe('string');
+    expect(typeof res.body.narrative.structure_read).toBe('string');
+    expect(typeof res.body.narrative.scenarios).toBe('string');
+    expect(typeof res.body.executive_summary).toBe('string');
 
     // ai_metadata
     expect(res.body.ai_metadata).toBeDefined();
-    expect(res.body.ai_metadata.prompt_version).toBe('v6_0_backend_gating');
-  });
+    expect(res.body.ai_metadata.prompt_version).toBe('v10_0_narrator');
 
-  test('fail-safe: Comprar sin puerta se degrada a Esperar (§6.4 Fase 2)', async () => {
-    // El LLM devuelve un Comprar que no cumple la puerta (derivatives/volume < +1).
-    mockAnalyzeMarket.mockResolvedValueOnce({
-      structured: {
-        action: 'Comprar',
-        confidence: 'Alta',
-        risk_score: 4,
-        conviction: 0.7,
-        primary_driver: 'structure',
-        has_executable_setup: true,
-        gating_active: false,
-        gating_reason: null,
-        contradictions_found: false,
-        scores: { derivatives: 0, structure: 2, volume: 0, onchain: 0, total: 0.8 },
-        setup: { entry_price: 100, stop_price: 95, tp1_price: 110, tp2_price: 120, validity_candles: 8, tf_execution: '4h' },
-        executive_summary: 'Ruptura alcista con estructura fuerte.',
-      },
-      narrative: {
-        smart_money_read: 'x', divergences_anomalies: 'x', tactical_setup: 'x',
-        risk_analysis: 'x', recommendation_detail: 'x', invalidation: 'x',
-      },
-      ai_metadata: { model: 'stub', prompt_version: 'v6_0_backend_gating', input_tokens: 0, output_tokens: 0 },
-    });
-
-    const res = await request.post('/api/analyze').send({ coin: 'BTC', primary_tf: '4h' });
-    expect(res.status).toBe(200);
-    expect(res.body.structured.action).toBe('Esperar');       // degradado
-    expect(res.body.structured.fail_safe_applied).toBe(true);
-    expect(res.body.structured.fail_safe_original_action).toBe('Comprar');
-    expect(res.body.structured.has_executable_setup).toBe(false);
-    expect(res.body.structured.setup).toBeNull();
+    // geometría de riesgo SIMÉTRICA — calculada por el backend, no declarada por el LLM.
+    const g = res.body.risk_geometry;
+    expect(g).toBeDefined();
+    expect(g.long.direction).toBe('long');
+    expect(g.short.direction).toBe('short');
+    expect(g.long.rr).toBe(g.short.rr);
   });
 
   test('defaults coin=BTC primary_tf=4h when body omitted', async () => {
@@ -716,35 +673,20 @@ describe('POST /api/analyze', () => {
 
     const entry = histRes.body.analyses[0];
     expect(entry).toHaveProperty('id');
-    expect(entry).toHaveProperty('action');
-    expect(entry).toHaveProperty('confidence');
     expect(entry).toHaveProperty('executive_summary');
-    expect(entry.action).toBe('Esperar');
+    // Columnas retiradas con el pivot (§REORIENTACIÓN): siguen existiendo para las filas
+    // viejas, pero una fila nueva las deja en NULL — "los escritores dejan de producir".
+    expect(entry.action).toBeNull();
 
-    // missing_confirmations se persiste como JSON string y vuelve en el historial.
-    expect(entry).toHaveProperty('missing_confirmations');
-    expect(JSON.parse(entry.missing_confirmations)).toEqual([
-      'expansión de Open Interest',
-      'confirmación de ruptura con volumen',
-    ]);
-
-    // contradiction_count del backend (determinista) vuelve en el historial, separado
-    // del contradictions_found booleano del LLM.
-    expect(entry).toHaveProperty('contradiction_count');
-    expect(typeof entry.contradiction_count).toBe('number');
-    expect(entry).toHaveProperty('contradictions_found');
-
-    // `conditional_plan` (2026-08-09): cada fila del historial debe traer su plan derivado,
-    // no solo el análisis recién hecho vía `last_analysis` — si no, el modal de Historial
-    // pierde `trigger_prob_pct`/`target_reachability_pct` en cuanto un análisis deja de ser
-    // el último. Sin ATR persistido todavía (el job de outcome no ha corrido), las dos curvas
-    // salen null pero R:R/equilibrio son aritmética pura y sí deben estar.
-    expect(entry).toHaveProperty('conditional_plan');
-    if (entry.conditional_plan) {
-      expect(entry.conditional_plan).toHaveProperty('rr');
-      expect(entry.conditional_plan).toHaveProperty('trigger_prob_pct');
-      expect(entry.conditional_plan).toHaveProperty('target_reachability_pct');
-    }
+    // `risk_geometry`: a diferencia del viejo `conditional_plan`, no depende del job de
+    // outcome — se calcula con el ATR de decisión (síncrono) y llega completa desde el
+    // primer render. Cada fila del historial la trae, no solo el último análisis.
+    expect(entry).toHaveProperty('risk_geometry');
+    expect(entry.risk_geometry).not.toBeNull();
+    expect(entry.risk_geometry).toHaveProperty('long');
+    expect(entry.risk_geometry).toHaveProperty('short');
+    expect(entry.risk_geometry.long).toHaveProperty('rr');
+    expect(entry.risk_geometry.long).toHaveProperty('target_reachability_pct');
 
     // Deuda §6: analysis_fvg_snapshot existe y el POST la deja consultable sin romper la
     // transacción. NOTA: MOCK_CANDLES es una rampa lineal con rangos solapados, donde
