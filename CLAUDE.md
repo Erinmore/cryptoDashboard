@@ -487,7 +487,7 @@ Todos en `backend/src/utils/indicators.js`. Funciones exportadas:
 | | |
 |---|---|
 | Código | **`v9_2_trigger_price`** · gate `g2_no_prepare_gate` · feature `f2_sr_atr_norm_adx_deadband` · **831 tests** (38 suites) |
-| Fase | **Punto Cero 6 — fase 1 IMPLEMENTADA Y DESPLEGADA, fase 2 CERRADA SIN CÓDIGO (2026-08-09).** Fase 1: B1 (unifica los dos ATR%) + F2 (SR_TOLERANCE normalizado por ATR, k=0.30) + B4 (banda muerta ADX en `computeTrend`) — en producción. Fase 2 (C2 banda OI, C6 prompt anti-formulario): medida antes de reactivar el cron, las tres hipótesis se cayeron con la muestra de 56 análisis — **sin cambio de código**. Recogida sigue PAUSADA (H4 confirmada, ver SESSION_STATE.md §7) — solo queda ejecutar el ritual de punto cero (backup → `dbClear analyses` → resembrar → descomentar crons) para reanudar |
+| Fase | **Punto Cero 6 — fase 1 IMPLEMENTADA Y DESPLEGADA, fase 2 CERRADA SIN CÓDIGO (2026-08-09).** Fase 1: B1 (unifica los dos ATR%) + F2 (SR_TOLERANCE normalizado por ATR, k=0.30) + B4 (banda muerta ADX en `computeTrend`) — en producción. Fase 2 (C2 banda OI, C6 prompt anti-formulario): medida antes de reactivar el cron, las tres hipótesis se cayeron con la muestra de 56 análisis — **sin cambio de código**. **Bloque A+B agotado (09/10-08): ~20 hipótesis direccionales, cero supervivientes** — ver §REORIENTACIÓN abajo. Recogida sigue PAUSADA (H4 confirmada, ver SESSION_STATE.md §7) — solo queda ejecutar el ritual de punto cero (backup → `dbClear analyses` → resembrar → descomentar crons) para reanudar |
 | Producto | Lectura + geometría condicional + 3 cifras medidas + registro del shadow trade, en el panel |
 | Producción | Pi `192.168.1.250:8080` · **3 monedas** (SOL/BTC/ETH), fijo + oportunista |
 | Dónde mirar | **[`doc/REORIENTACION_LISTA_CERRADA.md`](./doc/REORIENTACION_LISTA_CERRADA.md)** §6-bis (sistema objetivo) · §7 (estado) · §7-bis (congelado) · **`SESSION_STATE.md` §0-R** (relato y motivo) |
@@ -509,6 +509,29 @@ antes de escribirlo**. Dos NO-GO independientes lo archivaron:
 del 16-27 %**. El mercado ofrece dirección de sobra; lo que no existe, con lo probado, es una
 feature que la capture. Reabrirlo exige features de otra naturaleza (microestructura, flujo de
 órdenes), no otro ajuste de las mismas.
+
+**▸ Extendido el 2026-08-09/10 — Bloque A+B: ~20 hipótesis probadas, cero supervivientes.**
+Tras la pausa de recogida (H4 confirmada con 56 análisis: el LLM dice `Esperar` incluso con
+las puertas deterministas abiertas), se completó el inventario que Fase 0/M9 no habían cerrado
+uno a uno: cada indicador/regla del sistema, aislado, con años de klines de Binance (no 90 días),
+anclajes DISJUNTOS (`scripts/lib/disjointAnchors.mjs`), control de reflexión y réplica en 3
+monedas. **Los 10 del "Bloque B" salieron NO-GO**: MACD, WaveTrend y StochRSI aislados (antes
+solo medidos mezclados en "ejecución"), `price_vs_vwap`, excursión de Volume Profile,
+`htf_conflict_1w_1d`, régimen ADX como filtro, SMC CHoCH (M9 solo probó BOS), FVG como imán de
+precio (cierra la pregunta D2, abierta desde julio) y divergencia CVD aislada — ningún IC de
+Wilson separa de su base en ninguna de las ~20 combinaciones moneda×hipótesis. Se sumó además,
+sobre la pata S/R del veto: **los toques de un nivel no predicen si aguanta** (0/6 combinaciones
+distinguen un nivel real de una línea sintética a igual distancia) y **el rechazo confirmado
+(mecha+cierre de vuelta) predice ROMPER MÁS, no menos** (6/6, al revés de la propuesta original
+de C3) — y, sobre la fila muda del cuadro OI×precio (D6), que **estructura+volumen bajistas
+tampoco predicen continuación** más allá del propio momentum (0/3, re-medido con mucha más
+potencia que la medición de enero). Scripts permanentes en `backend/scripts/audit*Signal.mjs` +
+`auditLevelRejectionVsBreakout.mjs`/`auditConfirmedRejectionVsProximity.mjs`/
+`auditBearishContinuationPower.mjs`. **Ningún cambio de código de producción** — es telemetría
+de lectura, no toca la ruta de decisión. Detalle completo (predicciones, n_ef, IC por celda) en
+`SESSION_STATE.md` §10 (no versionado). **Conclusión que no se reabre sin datos nuevos de otra
+naturaleza:** ninguna señal técnica determinista, aislada ni combinada, de las auditadas hasta
+la fecha predice la dirección a 24h con los datos y el método de este proyecto.
 
 **El producto resultante NO afirma ventaja direccional.** Da lectura, el plan condicional que
 tomaría, y las cifras **medidas** que dicen si ese plan es realista: R:R→equilibrio (aritmética),
@@ -1044,6 +1067,7 @@ celda que se iba a escribir al revés.
 
 - **No escribir NINGUNA constante de corte sin medir antes su distribución** — es la regla que destapó T1-T6, el F&G inerte al 87,8 %, el LSR constante y el Derivatives Score al 0,0 %. Si no se puede medir, no se escribe. Ver §CONGELACIÓN LEVANTADA arriba.
 - **No dejar campos huérfanos en el dataset del LLM** — cada dato, un dueño y un papel. Los cortes de calibración (`*_cuts`, `*_pctile`) NO viajan al modelo: lee la etiqueta, no el umbral con el que se generó.
+- **No re-testear un indicador técnico determinista como predictor direccional sin datos de otra naturaleza** — Fase 0 + M9 (03-08) y el Bloque A+B (09/10-08) ya probaron ~20 combinaciones (bias combinado, MACD/WaveTrend/StochRSI/VWAP/Volume Profile/HTF/ADX/SMC/FVG/CVD aislados, toques y rechazo de S/R, estructura+volumen bajistas) con años de klines, anclajes disjuntos y réplica en 3 monedas: cero supervivientes. Reabrir exige microestructura/flujo de órdenes u otra fuente distinta, no otro ajuste de lo mismo. Ver §REORIENTACIÓN arriba.
 - No cambiar PixiJS a v8 — se eligió v7.4.x deliberadamente
 - No añadir TypeScript — el proyecto usa JS puro con tipos via JSDoc si es necesario
 - No usar `require()` — solo ES modules
