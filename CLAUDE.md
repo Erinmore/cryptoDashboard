@@ -964,6 +964,47 @@ Cuatro entradas en el `crontab -l` del usuario `pi` (no están en el repo; los s
 - **Si algún día hace falta anclaje a UTC inmune al cambio de hora**, la vía es un timer de systemd (`OnCalendar=*-*-* 08,20:05:00 UTC`), no el crontab.
 - Los scripts usan `date -u` explícito en todos sus timestamps (log, marcador diario del oportunista, sello del backup), así que **no dependen de la TZ del cron**: quitar `CRON_TZ` no altera ningún dato.
 
+### Backup y health-check: migrados a systemd timers (2026-09-16)
+
+**C y D (backup diario 03:10 + health-check 06:40) dejaron de ser crontab y pasaron a
+`cryptex-backup.timer`/`cryptex-healthcheck.timer`** (unidades en `/etc/systemd/system/`, NO
+en el repo — igual que el resto de infra de la Pi). A y B (recogida fija/oportunista) siguen en
+crontab, PAUSADOS desde 2026-08-09 (ver §Estado ACTUAL).
+
+**Motivo, con causa raíz confirmada:** esta Pi no tiene RTC con pila (usa `fake-hwclock`, que
+solo guarda una foto aproximada al apagar). Tras varios apagones/reinicios provocados por uso
+doméstico normal de la máquina, `systemd-timesyncd` tardó **33-45 horas** en sincronizar de
+verdad con un servidor NTP (cortes de red, no fallo de NTP en sí). Mientras tanto el reloj local
+iba a ciegas, y al sincronizar por fin **salta hacia delante de golpe**. Cuando ese salto cruza
+por encima de las 03:10 o las 06:40, el cron clásico (sin `anacron`) **nunca ve pasar ese
+minuto exacto y no reintenta lo que se saltó** — confirmado cruzando `journalctl -u cron` (cero
+invocaciones `(pi) CMD` en varios días) con los logs de `systemd-timesyncd` (`System clock time
+unset or jumped backwards` + `Initial clock synchronization` con horas muy posteriores al
+arranque) y con el propio contador de `uptime` (marcaba horas de menos que el `who -b`
+registrado, señal directa de que el reloj saltó tras el arranque). Detectado el 2026-09-16
+porque `.collect/health.json` llevaba 5 días sin refrescarse y el backup diario llevaba el mismo
+tiempo sin generar fichero nuevo — los scripts en sí no tenían ningún fallo (verificado
+ejecutándolos a mano: `exit 0`, log limpio).
+
+**Por qué systemd timer y no otra cosa:** `Persistent=true` es justo la propiedad que faltaba —
+si el timer debía dispararse mientras el sistema estaba apagado o con el reloj todavía sin
+sincronizar, systemd lo ejecuta en cuanto puede tras el arranque en vez de perderlo en silencio.
+Es la misma disciplina que ya aplica `checkCollection.sh` a la recogida de análisis (H2, no
+perder observaciones sin que nadie se entere), aplicada esta vez a sus propias guardias.
+`OnCalendar` respeta la TZ del sistema (Europe/Madrid) igual que hacía el cron en local, así
+que no cambia la hora de disparo, solo la garantía de que se ejecuta.
+
+**Unidades** (`cryptex-backup.service`+`.timer`, `cryptex-healthcheck.service`+`.timer`):
+`Type=oneshot`, `User=pi`, mismos scripts y mismos ficheros de log que antes (`cron.err` de cada
+directorio). Instalación manual en la Pi (`sudo systemctl enable --now cryptex-*.timer`) — si se
+reconstruye la Pi desde cero, hay que recrearlas (no las toca `deploy.sh`, igual que no toca el
+`cryptex.service` principal). Verificar con `systemctl list-timers cryptex-*`.
+
+**Mitigación de raíz pendiente (no implementada):** un módulo RTC con pila (~5€, p. ej. DS3231)
+evitaría el problema de origen — la Pi arrancaría con la hora correcta sin depender de la red.
+Los timers de systemd son la mitigación del síntoma (no perder el job), no de la causa (el
+reloj sigue sin ser fiable justo tras un apagón).
+
 ### Integración kiosko (iframe) — 2 fixes de cabeceras en `security.js`
 
 CRYPTEX se embebe en un `<iframe>` dentro del kiosko de piAssistant (Chromium `--kiosk` → `http://localhost:8000`). El kiosko y CRYPTEX son **orígenes distintos** (`localhost:8000` vs `192.168.1.250:8080`), lo que obligó a relajar dos cabeceras. Ambos cambios viven en el código (los propaga `deploy.sh`), no solo en la Pi:
