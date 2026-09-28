@@ -14,7 +14,9 @@
 # Comprobaciones:
 #   1. Último análisis: no debería tener más de MAX_ANALYSIS_AGE_H horas (cron A dispara cada 12h)
 #   2. Backup del día: presente y con integridad verificada
-#   3. CVD/VWAP acumulando: una fila nueva por día (son series IRRECONSTRUIBLES)
+#   3. CVD/VWAP acumulando: una fila nueva por día (si no avanza, revisar si el historyPoller
+#      sigue vivo; son reconstruibles con backend/scripts/backfillHistorySeries.mjs, pero cuanto
+#      más tarde en notarse el hueco más días hay que rellenar a mano)
 #   4. Errores recientes en el log de recogida
 #
 # Uso:  ./checkCollection.sh          # imprime el informe y escribe el estado
@@ -150,12 +152,12 @@ else
   fi
 fi
 
-# 3 · CVD acumulando — la serie irreconstruible
+# 3 · CVD acumulando — indicador de vida del historyPoller
 say "  · CVD: $CVD_DAYS día(s) acumulados · outcomes: $OUTCOMES"
 if [ -n "$CVD_LAST" ]; then
   AGE_D=$(( ( $(date -u +%s) - CVD_LAST ) / 86400 ))
   if [ "$AGE_D" -gt 1 ]; then
-    PROBLEMS+=("CVD sin snapshot desde hace ${AGE_D}d — serie IRRECONSTRUIBLE")
+    PROBLEMS+=("CVD sin snapshot desde hace ${AGE_D}d — ¿historyPoller caído? (recuperable con backfillHistorySeries.mjs)")
     say "  ✗ CVD no avanza (${AGE_D}d) — ¿historyPoller caído?"
   fi
 fi
